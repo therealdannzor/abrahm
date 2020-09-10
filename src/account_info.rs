@@ -38,7 +38,6 @@ impl AccountID {
             Ok(_) => (),
             Err(e) => eprintln!{"failed to save public key at: {}, error: {}", public_path, e},
         }
-        
     
         let account_address = remove_trail_chars(public_hex);
         match account_address {
@@ -54,13 +53,8 @@ impl AccountID {
             tx_count: 0,
         };
 
-        println!{"Address: {}, path: {}, tx_count: {}",
-        account_id.address, account_id.key_path, account_id.tx_count};
-
         return account_id
     }
-
-
 }
 
 
