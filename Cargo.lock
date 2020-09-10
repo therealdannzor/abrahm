@@ -3,3 +3,51 @@
 [[package]]
 name = "abrahm"
 version = "0.1.0"
+dependencies = [
+ "hex",
+ "themis",
+]
+
+[[package]]
+name = "cc"
+version = "1.0.59"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66120af515773fb005778dc07c261bd201ec8ce50bd6e7144c927753fe013381"
+
+[[package]]
+name = "hex"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "644f9158b2f133fd50f5fb3242878846d9eb792e445c893805ff0e3824006e35"
+
+[[package]]
+name = "libthemis-sys"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc6c6a207fc49c8a5ce6d2cbc677cfb21b2261dc42f1f79f19f509dfc1e38b08"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
+
+[[package]]
+name = "pkg-config"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d36492546b6af1463394d46f0c834346f31548646f6ba10849802c9c9a27ac33"
+
+[[package]]
+name = "themis"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c1f5a3f2803bec69b2c6c3010c9a157a3b7e93d5cfd9ad407ca26a439d2495c"
+dependencies = [
+ "libthemis-sys",
+ "zeroize",
+]
+
+[[package]]
+name = "zeroize"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ddfeb6eee2fb3b262ef6e0898a52b7563bb8e0d5955a313b3cf2f808246ea14"
