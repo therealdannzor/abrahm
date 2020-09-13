@@ -1,5 +1,7 @@
+#[path = "./helper.rs"]
+mod helper;
+
 use themis::keygen::gen_ec_key_pair;
-use std::io::Write;
 use std::env;
 
 extern crate hex;
@@ -30,16 +32,16 @@ impl AccountID {
         let (secret_key, public_key) = gen_ec_key_pair().split();
         // convert public key to hexadecimal string as a more readable ID
         let public_hex: String = hex::encode(public_key);
-        match write_file(&secret_key, &secret_path) {
+        match helper::write_file(&secret_key, &secret_path) {
             Ok(_) => (),
             Err(e) => eprintln!{"failed to create secret key at: {}, error: {}", secret_path, e},
         }
-        match write_file(&public_hex, &public_path) {
+        match helper::write_file(&public_hex, &public_path) {
             Ok(_) => (),
             Err(e) => eprintln!{"failed to save public key at: {}, error: {}", public_path, e},
         }
-    
-        let account_address = remove_trail_chars(public_hex);
+
+        let account_address = helper::remove_trail_chars(public_hex);
         match account_address {
             Some(_) => (),
             None => {
@@ -57,30 +59,3 @@ impl AccountID {
     }
 }
 
-
-fn write_file<K: AsRef<[u8]>>(key: K, path: &str) -> std::io::Result<()> {
-    // no matter where we are in the project folder, always save the keys in the same
-    // directory as the cargo manifest
-    let new_path = remove_suffix(&path, "/src");
-    let mut f = std::fs::File::create(new_path)?;
-    f.write_all(key.as_ref())?;
-    Ok(())
-}
-
-fn remove_suffix<'a>(s: &'a &str, p: &str) -> &'a str {
-    if s.ends_with(p){
-        &s[..s.len() - p.len()]
-    } else {
-        s
-    }
-}
-
-fn remove_trail_chars(s: String) -> Option<String> {
-    // check we have a full public key string
-    if s.len() == 90 {
-        // let the last 40 characters be the account address
-        Some(s[50..].to_string())
-    } else {
-        None
-    }
-}
