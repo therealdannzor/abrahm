@@ -8,15 +8,15 @@ extern crate hex;
 
 pub struct AccountID {
     // The account identifier (in hexadecimal)
-    address: String,
+    pub address: String,
     // The file path to the secret key
-    key_path: String,
+    pub key_path: String,
     // The monotonic increasing count of transactions 
-    tx_count: u16,
+    pub tx_count: u16,
 }
 
 impl AccountID {
-    pub fn new() -> AccountID {
+    pub fn new() -> Self {
         // get path to the root of the project (location of cargo manifest)
         let cargo_path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
         // decide relative path of keys
@@ -49,13 +49,12 @@ impl AccountID {
             }
         }
 
-        let account_id = AccountID{
+        Self {
             address: account_address.unwrap(),
             key_path: secret_path,
             tx_count: 0,
-        };
+        }
 
-        return account_id
     }
 }
 
