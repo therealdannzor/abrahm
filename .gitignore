@@ -4,3 +4,6 @@
 # keypair
 private.key
 public.key
+
+# leveldb
+/leveldb
