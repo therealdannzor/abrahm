@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 themis = "0.13.0"
 hex = "0.4.2"
+leveldb = "0.8"
