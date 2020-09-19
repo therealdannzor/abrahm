@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::result::Result;
 use std::vec::Vec;
+use std::io::Error;
 
 extern crate leveldb;
 
@@ -13,16 +14,20 @@ use leveldb::kv::KV;
 pub trait KeyValueIO {
     // new creates a new key-value reader-writer
     fn new() -> Self;
+
     // put inserts the key-value pair in the data storage
-    fn put(&self, key: i32, value: &[u8]) -> Result<(), std::io::Error>;
-    // Delete removes the key from the data storage
-    fn delete(&self, key: i32) -> Result<(), std::io::Error>;
-    // Get retrieves the value of the key if it exists
+    fn put(&self, key: i32, value: &[u8]) -> Result<(), Error>;
+
+    // delete removes the key from the data storage
+    fn delete(&self, key: i32) -> Result<(), Error>;
+
+    // del retrieves the value of the key if it exists
     fn get(&self, key: i32) -> Vec<u8>;
 }
 
 pub struct StateDB {
-    db: Database<i32>
+    // The leveldb database
+    db: Database<i32>,
 }
 
 impl KeyValueIO for StateDB {
@@ -37,7 +42,7 @@ impl KeyValueIO for StateDB {
         Self { db: database }
     }
 
-    fn put(&self, key: i32, val: &[u8]) -> Result<(), std::io::Error> {
+    fn put(&self, key: i32, val: &[u8]) -> Result<(), Error> {
         let batch = &mut Writebatch::new();
         batch.put(key, val);
         let write_opts = WriteOptions::new();
@@ -48,7 +53,7 @@ impl KeyValueIO for StateDB {
         }
     }
 
-    fn delete(&self, key: i32) -> Result<(), std::io::Error> {
+    fn delete(&self, key: i32) -> Result<(), Error> {
         let batch = &mut Writebatch::new();
         batch.delete(key);
         let write_opts = WriteOptions::new();
