@@ -14,7 +14,7 @@ use self::crypto::digest::Digest;
 
 pub trait KeyValueIO {
     // new creates a new key-value reader-writer
-    fn new() -> StateDB;
+    fn new(path: &str) -> StateDB;
 
     // put inserts the key-value pair in the data storage
     fn put(&mut self, key: i32, value: &[u8]);
@@ -47,12 +47,10 @@ pub struct StateDB {
 }
 
 impl KeyValueIO for StateDB {
-    fn new() -> StateDB {
-        let mut db_path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
-        db_path.push_str("/leveldb");
+    fn new(path: &str) -> StateDB {
         let mut opts = Options::new();
         opts.create_if_missing = true;
-        let path_format = Path::new(&db_path);
+        let path_format = Path::new(&path);
         let database = Database::open(path_format, opts).unwrap();
 
         let mut hasher = Sha256::new();
@@ -134,4 +132,103 @@ fn del_db(db: &Database<i32>, key: i32) -> Result<(), leveldb::error::Error> {
    let write_opts = WriteOptions::new();
    let ack = db.write(write_opts, batch);
    ack
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempdir::TempDir;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn test_new_insert_expect_new_state_change() {
+        let mut db = setup();
+        let root = db.get_root_hash();
+
+        // fund account `1` with a balance
+        db.put(1, &[2]);
+        let new_root = db.get_root_hash();
+        assert_ne!(root, new_root);
+        assert_eq!(db.get_value(1), &[2]);
+        let root = new_root;
+
+        db.put(2, &[3]);
+        let new_root = db.get_root_hash();
+        assert_ne!(root, new_root);
+        assert_eq!(db.get_value(2), &[3]);
+
+        db.delete(1);
+        let new_root = db.get_root_hash();
+        assert_ne!(root, new_root);
+        assert_eq!(db.get_value(1), &[0]);
+        let root = new_root;
+
+        db.delete(9); // does not exist
+        let new_root = db.get_root_hash();
+        assert_eq!(root, new_root);
+
+    }
+
+    #[test]
+    #[serial]
+    fn test_new_insert_and_delete_expect_new_state() {
+        let mut db = setup();
+        let root = db.get_root_hash();
+
+        db.put(1, &[2]);
+        let new_root = db.get_root_hash();
+        assert_ne!(root, new_root);
+        assert_eq!(db.get_value(1), &[2]);
+        let root = new_root;
+
+        // remove all non-nil balance from account `1`
+        db.delete(1);
+        let new_root = db.get_root_hash();
+        assert_ne!(root, new_root);
+        assert_eq!(db.get_value(1), &[0]);
+
+    }
+
+    #[test]
+    #[serial]
+    fn test_delete_missing_key_expect_no_state_change() {
+        let mut db = setup();
+
+        db.put(1, &[2]);
+        let root = db.get_root_hash();
+        // send a delete cmd to a key which is missing
+        db.delete(5);
+        let new_root = db.get_root_hash();
+        assert_eq!(root, new_root);
+    }
+
+    #[test]
+    #[serial]
+    fn test_delete_key_with_no_balance_expect_no_state_change() {
+        let mut db = setup();
+
+        db.put(1, &[0]);
+        let root = db.get_root_hash();
+        // send delete cmd to a key which has no balance
+        db.delete(1);
+        let new_root = db.get_root_hash();
+        assert_eq!(root, new_root);
+    }
+
+    fn setup() -> StateDB {
+        let mut tmp_path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
+        tmp_path.push_str("/test");
+        let dir = TempDir::new(&tmp_path);
+        match dir {
+            Ok(_) => (),
+            Err(e) => panic!("could not create tmp dir: {:?}", e),
+        }
+        println!("path: {:?}", dir);
+
+        let db = StateDB::new(&tmp_path);
+        db
+    }
+
 }
