@@ -27,10 +27,10 @@ pub trait KeyValueIO {
     // it returns a dummy ouput of 0.
     fn get_value(&self, key: i32) -> Vec<u8>;
 
-    // update_root_hash receives a key-value pair and creates a hash 
-    // based on the existing root hash and this pair to represent a 
+    // update_root_hash receives a key-value pair and creates a hash
+    // based on the existing root hash and this pair to represent a
     // simple and traceable transition of state change
-    fn update_root_hash(&mut self, key: i32, val: &[u8]); 
+    fn update_root_hash(&mut self, key: i32, val: &[u8]);
 
     // get_root_hash retrieves the root hash of the state db which represents
     // the freshest and latest change to the db
@@ -63,42 +63,33 @@ impl KeyValueIO for StateDB {
     }
 
     fn put(&mut self, key: i32, val: &[u8]) {
-        let batch = &mut Writebatch::new();
-        batch.put(key, val);
-        let write_opts = WriteOptions::new();
-        let ack = self.db.write(write_opts, batch);
-        match ack {
-            Ok(_) => {
-                self.update_root_hash(key, val);
-            },
+        let res = write_db(&self.db, key, val);
+        match res {
+            Ok(_) => self.update_root_hash(key, val),
             Err(e) => panic!("write db error: {:?}", e),
         }
     }
 
     fn delete(&mut self, key: i32) {
-        let batch = &mut Writebatch::new();
-        batch.delete(key);
-        let write_opts = WriteOptions::new();
-        let ack = self.db.write(write_opts, batch);
+        let res = get_db(&self.db, key);
+        // if the value is empty we don't need to send a delete cmd
+        // since there is no balance-relevant state to change
+        if res == &[0] {
+            return
+        }
+
+        let ack = del_db(&self.db, key);
         match ack {
             Ok(_) => {
                 let empty = vec![0];
                 self.update_root_hash(key, &empty);
-            }, 
+            },
             Err(e) => panic!("write db error: {:?}", e),
         }
     }
 
     fn get_value(&self, key: i32) -> Vec<u8> {
-        let read_opts = ReadOptions::new();
-        let query_result = self.db.get(read_opts, key);
-        match query_result {
-            Ok(data) => {
-            // if entry does not exist, return a dummy output of [0]
-            data.unwrap_or(vec!(0))
-            },
-            Err(e) => panic!("read db error: {:?}", e),
-        }
+        get_db(&self.db, key)
     }
 
     fn update_root_hash(&mut self, key: i32, val: &[u8]) {
@@ -117,3 +108,30 @@ impl KeyValueIO for StateDB {
     }
 }
 
+fn get_db(db: &Database<i32>, key: i32) -> Vec<u8> {
+    let read_opts = ReadOptions::new();
+    let query_result = db.get(read_opts, key);
+    match query_result {
+        Ok(data) => {
+            // if entry does not exist, return a dummy output of [0]
+            data.unwrap_or(vec!(0))
+        },
+        Err(e) => panic!("read db error: {:?}", e),
+    }
+}
+
+fn write_db(db: &Database<i32>, key: i32, val: &[u8]) -> Result<(), leveldb::error::Error> {
+    let batch = &mut Writebatch::new();
+    batch.put(key, val);
+    let write_opts = WriteOptions::new();
+    let ack = db.write(write_opts, batch);
+    ack
+}
+
+fn del_db(db: &Database<i32>, key: i32) -> Result<(), leveldb::error::Error> {
+   let batch = &mut Writebatch::new();
+   batch.delete(key);
+   let write_opts = WriteOptions::new();
+   let ack = db.write(write_opts, batch);
+   ack
+}
