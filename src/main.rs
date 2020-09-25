@@ -1,3 +1,4 @@
+mod state_db;
+
 fn main() {
-    println!("Hello, world!");
 }
