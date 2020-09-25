@@ -138,7 +138,6 @@ fn del_db(db: &Database<i32>, key: i32) -> Result<(), leveldb::error::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempdir::TempDir;
     use serial_test::serial;
 
     #[test]
@@ -169,6 +168,7 @@ mod tests {
         let new_root = db.get_root_hash();
         assert_eq!(root, new_root);
 
+        teardown();
     }
 
     #[test]
@@ -189,6 +189,7 @@ mod tests {
         assert_ne!(root, new_root);
         assert_eq!(db.get_value(1), &[0]);
 
+        teardown();
     }
 
     #[test]
@@ -202,6 +203,8 @@ mod tests {
         db.delete(5);
         let new_root = db.get_root_hash();
         assert_eq!(root, new_root);
+
+        teardown();
     }
 
     #[test]
@@ -215,20 +218,32 @@ mod tests {
         db.delete(1);
         let new_root = db.get_root_hash();
         assert_eq!(root, new_root);
+
+        teardown();
     }
 
     fn setup() -> StateDB {
         let mut tmp_path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
         tmp_path.push_str("/test");
-        let dir = TempDir::new(&tmp_path);
+        let dir = std::fs::create_dir(&tmp_path);
         match dir {
             Ok(_) => (),
-            Err(e) => panic!("could not create tmp dir: {:?}", e),
+            Err(e) => panic!("could not create temporary dir: {:?}", e),
         }
-        println!("path: {:?}", dir);
 
         let db = StateDB::new(&tmp_path);
         db
     }
+
+    fn teardown() {
+        let mut tmp_path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
+        tmp_path.push_str("/test");
+        let ack = std::fs::remove_dir_all(&tmp_path);
+        match ack {
+            Ok(_) => (),
+            Err(e) => panic!("could not remove temporary dir: {:?}", e),
+        }
+    }
+
 
 }
