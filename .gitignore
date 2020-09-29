@@ -5,5 +5,5 @@
 private.key
 public.key
 
-# leveldb
-/leveldb
+# tmp test folder
+/test
