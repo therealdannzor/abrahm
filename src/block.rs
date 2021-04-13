@@ -1,50 +1,53 @@
-use std::fmt::{Display, Formatter}
+use std::fmt::{Display, Formatter};
 
-struct Block {
+#[derive(Clone, Debug)]
+pub struct Block {
     // The identifier of this block
-    hash: String,
+    hash: &'static str,
     // The previous block's hash
-    previous_hash: String,
-    // The uuid that solves the hashing algorithm 
+    previous_hash: &'static str,
+    // The uuid that solves the hashing algorithm
     nonce: i64,
     // The time this block was mined
-    timestamp: u64, 
+    timestamp: u64,
     // Information of (optional) operations encapsulated in this block
-    data: Option<String>,
+    data: &'static str,
 }
 
 impl Block {
+    #[allow(dead_code)]
     pub fn new(
-        hash: String,
-        previous_hash: String,
+        hash: &'static str,
+        previous_hash: &'static str,
         nonce: i64,
         timestamp: u64,
-        data: Option<String>,
+        data: &'static str,
     ) -> Self {
         Self {
             hash,
             previous_hash,
-            nonce, 
-            timestamp, 
+            nonce,
+            timestamp,
             data,
         }
     }
 
-    pub fn genesis(root_hash String) -> Self {
+    #[allow(dead_code)]
+    pub fn genesis(root_hash: &'static str) -> Self {
         Self {
             hash: root_hash,
-            previous_hash: "".to_string(),
+            previous_hash: "",
             nonce: 0,
             timestamp: 0,
-            data: "".to_string(),
+            data: "",
         }
     }
 
-    pub fn hash(&self) -> String {
+    pub fn hash(&self) -> &str {
         self.hash
     }
 
-    pub fn previous_hash(&self) -> String {
+    pub fn previous_hash(&self) -> &'static str {
         self.previous_hash
     }
 
@@ -56,19 +59,21 @@ impl Block {
         self.timestamp
     }
 
-    pub fn data(&self) -> Option(String) {
-        // returns `None` if data `self.data` is None
-        let dat: String = self.data?;
-        // else returns the data
-        Some(dat)
+    pub fn data(&self) -> &'static str {
+        self.data
     }
 }
 
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(
-            f, "<Block info> hash: {}, previous_hash: {}, nonce: {}, timestamp: {}, data: {}",
-            self.hash(), self.previous_hash(), self.nonce(), self.timestamp(), self.data(),
+            f,
+            "<Block info> hash: {}, previous_hash: {}, nonce: {}, timestamp: {}, data: {}",
+            self.hash(),
+            self.previous_hash(),
+            self.nonce(),
+            self.timestamp(),
+            self.data(),
         )
     }
 }
