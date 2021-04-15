@@ -1,3 +1,4 @@
+use chrono::prelude::*;
 use std::fmt::{Display, Formatter};
 
 struct Label {
@@ -12,11 +13,16 @@ impl Label {
     }
 }
 
+// Transaction is the main P2P transaction between two accounts
 pub struct Transaction {
+    // main payload of a transaction
     base: Label,
-    data: &'static str,
+    // transaction hash
     hash: &'static str,
+    // transaction TTL
     expiration_time: u64,
+    // local anti-spam mechanism
+    first_seen: i64,
 }
 
 impl Transaction {
@@ -25,15 +31,14 @@ impl Transaction {
         from: &'static str,
         to: &'static str,
         amount: i32,
-        data: &'static str,
         hash: &'static str,
         expiration_time: u64,
     ) -> Self {
         Self {
             base: Label::new(from, to, amount),
-            data,
             hash,
             expiration_time,
+            first_seen: Utc::now().timestamp_millis(),
         }
     }
 }
@@ -42,13 +47,8 @@ impl Display for Transaction {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(
             f,
-            "<Transaction> hash: {}, amount: {}, from: {}, to: {}, data: {}, expiration_time: {}",
-            self.hash,
-            self.base.amount,
-            self.base.from,
-            self.base.to,
-            self.data,
-            self.expiration_time,
+            "<Transaction> hash: {}, amount: {}, from: {}, to: {}, expiration_time: {}, first_seen: {}",
+            self.hash, self.base.amount, self.base.from, self.base.to, self.expiration_time, self.first_seen,
         )
     }
 }
