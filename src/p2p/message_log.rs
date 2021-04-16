@@ -30,6 +30,7 @@ pub struct MessageLog {
     config: StatusConfig,
 }
 
+#[allow(dead_code)]
 impl MessageLog {
     pub fn new(config: StatusConfig) -> Self {
         MessageLog {

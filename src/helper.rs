@@ -1,5 +1,6 @@
 use std::io::Write;
 
+#[allow(dead_code)]
 pub fn write_file<K: AsRef<[u8]>>(key: K, path: &str) -> std::io::Result<()> {
     // no matter where we are in the project folder, always save the keys in the same
     // directory as the cargo manifest
@@ -17,6 +18,7 @@ pub fn remove_suffix<'a>(s: &'a &str, p: &str) -> &'a str {
     }
 }
 
+#[allow(dead_code)]
 pub fn remove_trail_chars(s: String) -> Option<String> {
     // check we have a full public key string
     if s.len() == 90 {
@@ -26,4 +28,3 @@ pub fn remove_trail_chars(s: String) -> Option<String> {
         None
     }
 }
-
