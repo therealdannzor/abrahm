@@ -1,6 +1,7 @@
 use chrono::prelude::*;
 use std::fmt::{Display, Formatter};
 
+#[derive(Copy, Clone)]
 struct Label {
     from: &'static str,
     to: &'static str,
@@ -14,6 +15,7 @@ impl Label {
 }
 
 // Transaction is the main P2P transaction between two accounts
+#[derive(Copy, Clone)]
 pub struct Transaction {
     // main payload of a transaction
     base: Label,
