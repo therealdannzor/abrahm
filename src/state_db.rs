@@ -1,10 +1,9 @@
 extern crate rocksdb;
-use rocksdb::{DB, Options};
+use rocksdb::{Options, DB};
 
 extern crate crypto;
-use self::crypto::sha2::Sha256;
 use self::crypto::digest::Digest;
-
+use self::crypto::sha2::Sha256;
 
 pub trait KeyValueIO {
     // new creates a new key-value reader-writer
@@ -36,7 +35,7 @@ pub struct StateDB {
 
     // The hash of all the states. Each state consists of a key-value pair
     // which represents the account and its balance.
-    root_hash: String
+    root_hash: String,
 }
 
 impl KeyValueIO for StateDB {
@@ -49,7 +48,10 @@ impl KeyValueIO for StateDB {
         hasher.input(b"AbrahmChain");
         let hash_out = hasher.result_str();
 
-        StateDB { db: database, root_hash: hash_out }
+        StateDB {
+            db: database,
+            root_hash: hash_out,
+        }
     }
 
     fn put(&mut self, key: &str, val: &str) {
@@ -74,7 +76,7 @@ impl KeyValueIO for StateDB {
         match ack {
             Ok(_) => {
                 self.update_root_hash(key, &"0".to_string());
-            },
+            }
             Err(e) => panic!("write db error: {:?}", e),
         }
     }
@@ -83,7 +85,7 @@ impl KeyValueIO for StateDB {
         let res = &self.db.get(key);
         match res {
             Ok(Some(value)) => std::str::from_utf8(&value).unwrap().to_string(),
-            Ok(None) => "0".to_string(),  // dummy output (missing value)
+            Ok(None) => "0".to_string(), // dummy output (missing value)
             Err(e) => panic!("read db error: {:?}", e),
         }
     }
@@ -102,7 +104,6 @@ impl KeyValueIO for StateDB {
         self.root_hash.clone()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
