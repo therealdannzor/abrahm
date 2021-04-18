@@ -3,9 +3,9 @@ use std::fmt::{Display, Formatter};
 #[derive(Clone, Debug)]
 pub struct Block {
     // The identifier of this block
-    hash: &'static str,
+    hash: String,
     // The previous block's hash
-    previous_hash: &'static str,
+    previous_hash: String,
     // The uuid that solves the hashing algorithm
     nonce: i64,
     // The time this block was mined
@@ -17,8 +17,8 @@ pub struct Block {
 impl Block {
     #[allow(dead_code)]
     pub fn new(
-        hash: &'static str,
-        previous_hash: &'static str,
+        hash: String,
+        previous_hash: String,
         nonce: i64,
         timestamp: u64,
         data: &'static str,
@@ -33,10 +33,10 @@ impl Block {
     }
 
     #[allow(dead_code)]
-    pub fn genesis(root_hash: &'static str) -> Self {
+    pub fn genesis(root_hash: String) -> Self {
         Self {
             hash: root_hash,
-            previous_hash: "",
+            previous_hash: "".to_string(),
             nonce: 0,
             timestamp: 0,
             data: "",
@@ -44,11 +44,11 @@ impl Block {
     }
 
     pub fn hash(&self) -> &str {
-        self.hash
+        &self.hash
     }
 
-    pub fn previous_hash(&self) -> &'static str {
-        self.previous_hash
+    pub fn previous_hash(&self) -> &str {
+        &self.previous_hash
     }
 
     pub fn nonce(&self) -> i64 {
