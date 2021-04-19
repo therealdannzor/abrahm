@@ -1,6 +1,4 @@
-#[path = "./helper.rs"]
-mod helper;
-
+use crate::swiss_knife::helper;
 use std::env;
 use themis::keygen::gen_ec_key_pair;
 
