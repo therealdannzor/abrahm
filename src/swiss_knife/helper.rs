@@ -28,7 +28,7 @@ pub fn remove_trail_chars(s: String) -> Option<String> {
         None
     }
 }
-pub fn generate_hash_from_input(inp: String) -> String {
+pub fn generate_hash_from_input(inp: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.input(inp.as_bytes());
     let hash_out = hasher.result_str();
