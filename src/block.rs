@@ -5,7 +5,7 @@ use std::fmt::{Display, Formatter};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Block {
     // The identifier of this block
     this_hash: String,
@@ -34,9 +34,11 @@ impl Block {
     }
 
     #[allow(dead_code)]
-    pub fn genesis(anchor_str: &str) -> Self {
+    pub fn genesis(anchor_str: &'static str) -> Self {
+        let tmp = helper::generate_hash_from_input(anchor_str);
+        let h = &tmp.clone();
         Self {
-            this_hash: helper::generate_hash_from_input(anchor_str),
+            this_hash: h.to_string(),
             previous_hash: "".to_string(),
             timestamp: Utc::now().timestamp_millis(),
             data: "InitBlock",
@@ -48,7 +50,7 @@ impl Block {
     }
 
     #[allow(dead_code)]
-    pub fn set_hash(&mut self, plain_text: &str) {
+    pub fn set_hash(&mut self, plain_text: &'static str) {
         let s = helper::generate_hash_from_input(plain_text);
         // we enable a shared ownership of hash_out ..
         let hash_out = Rc::new(RefCell::new(s));
@@ -59,8 +61,8 @@ impl Block {
         self.this_hash = s1;
     }
 
-    pub fn set_prev_hash(&mut self, plain_text: &str) {
-        let s = helper::generate_hash_from_input(plain_text);
+    pub fn set_prev_hash(&mut self, plain_text: String) {
+        let s = helper::generate_hash_from_input(&plain_text);
         let hash_out = Rc::new(RefCell::new(s));
         let s = hash_out.clone();
         let s1 = s.borrow().to_string();
@@ -98,7 +100,7 @@ mod tests {
     use super::*;
     use crate::swiss_knife::helper;
 
-    fn hash_out(s: &str) -> String {
+    fn hash_out(s: &'static str) -> String {
         helper::generate_hash_from_input(s)
     }
 

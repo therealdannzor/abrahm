@@ -34,10 +34,10 @@ impl Blockchain {
     // The function then proceeds to link the current latest block's hash
     // to `b` through its field `previous_hash`
     #[allow(dead_code)]
-    pub fn append_block(&mut self, b: Block) {
-        let prev = self.chain.last().copied().unwrap();
+    pub fn append_block(&mut self, mut b: Block) {
+        let prev = self.chain.last().unwrap();
         let prev_hash = prev.hash();
-        b.set_prev_hash(prev_hash);
+        b.set_prev_hash(prev_hash.to_string());
         self.chain.push(b);
     }
 }
