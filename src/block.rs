@@ -34,14 +34,18 @@ impl Block {
     }
 
     #[allow(dead_code)]
-    pub fn genesis(anchor_str: &'static str) -> Self {
-        let tmp = helper::generate_hash_from_input(anchor_str);
+    // genesis creates the first block in the chain with is the only block with
+    // no link to a previous block (due to an empty `previous_hash`). It uses the
+    // param `init_verifier` to create the first identity anchor of a block as the
+    // chain's oldest ancestor.
+    pub fn genesis(init_verifier: &'static str) -> Self {
+        let tmp = helper::generate_hash_from_input(init_verifier);
         let h = &tmp.clone();
         Self {
             this_hash: h.to_string(),
             previous_hash: "".to_string(),
             timestamp: Utc::now().timestamp_millis(),
-            data: "InitBlock",
+            data: "The founding block of the blockchain",
         }
     }
 
@@ -109,7 +113,7 @@ mod tests {
         let block = Block::genesis("0x");
         let expected_root_hash = hash_out("0x");
         let expected_previous_hash = "";
-        let expected_block_data = "InitBlock";
+        let expected_block_data = "The founding block of the blockchain";
         assert_eq!(block.hash(), expected_root_hash);
         assert_eq!(block.previous_hash(), expected_previous_hash);
         assert_eq!(block.data(), expected_block_data);
