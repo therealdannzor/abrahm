@@ -26,7 +26,7 @@ impl Blockchain {
     pub fn new(genesis_block: Block, db_path: &str) -> Self {
         let mut chain = Vec::<Block>::new();
         chain.push(genesis_block);
-        let pool = create_new_tx_pool("0x", true);
+        let pool = create_new_tx_pool("0x");
 
         let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
         path.push_str(db_path);

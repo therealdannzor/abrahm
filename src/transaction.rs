@@ -43,6 +43,14 @@ impl Transaction {
             first_seen: Utc::now().timestamp_millis(),
         }
     }
+
+    pub fn sender(&self) -> &str {
+        return self.base.from;
+    }
+
+    pub fn hash(&self) -> &'static str {
+        return self.hash;
+    }
 }
 
 impl Display for Transaction {
