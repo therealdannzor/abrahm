@@ -9,10 +9,10 @@ use crate::transaction::Transaction;
 #[allow(dead_code)]
 #[derive(Clone)]
 struct IndexedTransaction {
-    // the address is extracted from the Transaction object
+    // the address is extracted from the Transaction struct
     address: String,
 
-    // the full Transaction object
+    // the full Transaction struct
     txn: Transaction,
 
     // the account nonce is being passed on from higher-layer abstractions which keeps count;
@@ -20,7 +20,7 @@ struct IndexedTransaction {
     account_nonce: u32,
 }
 
-// we do not want to compare entire Transaction objects so create a no-op to satisfy BinaryHeap
+// we do not want to compare entire Transaction structs so create a no-op to satisfy BinaryHeap
 impl Eq for IndexedTransaction {}
 
 // our primary way of comparisons in the priority queue will be through account nonces
