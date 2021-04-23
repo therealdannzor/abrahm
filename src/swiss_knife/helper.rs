@@ -34,3 +34,10 @@ pub fn generate_hash_from_input(inp: &str) -> String {
     let hash_out = hasher.result_str();
     hash_out
 }
+
+#[macro_export]
+macro_rules! hashed {
+    ($x:expr) => {
+        generate_hash_from_input($x)
+    };
+}

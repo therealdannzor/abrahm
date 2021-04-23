@@ -1,7 +1,6 @@
 use crate::block::Block;
 use crate::state_db::KeyValueIO;
 use crate::state_db::StateDB;
-use crate::txn_pool::create_new_tx_pool;
 use crate::txn_pool::TxPool;
 
 use std::vec::Vec;
@@ -26,7 +25,7 @@ impl Blockchain {
     pub fn new(genesis_block: Block, db_path: &str) -> Self {
         let mut chain = Vec::<Block>::new();
         chain.push(genesis_block);
-        let pool = create_new_tx_pool("0x");
+        let pool = TxPool::new();
 
         let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
         path.push_str(db_path);
