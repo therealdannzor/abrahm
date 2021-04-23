@@ -105,9 +105,9 @@ impl OrderedTransaction {
 #[allow(dead_code)]
 pub struct TxPool {
     // pending transactions that are to be processed
-    pending: HashMap<&'static str, OrderedTransaction>,
+    pending: HashMap<String, OrderedTransaction>,
     // unconfirmed transactions that cannot be executed until finalized consensus
-    unconfirmed: HashMap<&'static str, OrderedTransaction>,
+    unconfirmed: HashMap<String, OrderedTransaction>,
 }
 
 #[allow(dead_code)]
@@ -120,32 +120,33 @@ impl TxPool {
     }
 
     // insert a complete ordered transaction store to keep track of pending txs
-    fn new_pending_store(&mut self, key: &'static str, val: OrderedTransaction) {
-        self.pending.insert(key, val);
+    fn new_pending_store(&mut self, key: &str, val: OrderedTransaction) {
+        self.pending.insert(key.to_string(), val);
     }
     // insert a complete ordered transaction store to keep track of unconfirmed txs
-    fn new_unconfirmed_store(&mut self, key: &'static str, val: OrderedTransaction) {
-        self.unconfirmed.insert(key, val);
+    fn new_unconfirmed_store(&mut self, key: &str, val: OrderedTransaction) {
+        self.unconfirmed.insert(key.to_string(), val);
     }
     // insert a pending transaction for a target account
-    fn add_pending_tx(&mut self, target: &'static str, tx: Transaction) {
+    fn add_pending_tx(&mut self, target: &str, tx: Transaction) {
         if self.pending.contains_key(target) {
-            self.pending[target].insert(tx);
+            // circumvent the need to impl trait `IndexMut`
+            self.pending.get_mut(target).unwrap().insert(tx);
         }
         //TODO: error handling
     }
     // insert an unconfirmed transaction for a target account
-    fn add_unconfirmed_tx(&mut self, target: &'static str, tx: Transaction) {
+    fn add_unconfirmed_tx(&mut self, target: &str, tx: Transaction) {
         if self.unconfirmed.contains_key(target) {
-            self.unconfirmed[target].insert(tx);
+            self.unconfirmed.get_mut(target).unwrap().insert(tx);
         }
         //TODO: error handling
     }
     // removes the pending transaction with the highest priority for a target account
     // (same as picking the one with the lowest nonce)
-    fn pop_pending_tx(&mut self, target: &'static str) -> IndexedTransaction {
+    fn pop_pending_tx(&mut self, target: &str) -> IndexedTransaction {
         if self.pending.contains_key(target) {
-            self.pending[target].pop()
+            self.pending.get_mut(target).unwrap().pop()
         } else {
             //TODO: exit with more grace
             panic!("target account missing");
@@ -169,11 +170,11 @@ impl TxPool {
         return self.unconfirmed.len();
     }
     // amount of transactions a target account has in store (pending txs)
-    fn len_target_pending(&mut self, target: &'static str) -> usize {
+    fn len_target_pending(&mut self, target: &str) -> usize {
         return self.pending[target].len();
     }
     // amount of transactions a target account has in store (unconfirmed txs)
-    fn len_target_unconfirmed(&mut self, target: &'static str) -> usize {
+    fn len_target_unconfirmed(&mut self, target: &str) -> usize {
         return self.unconfirmed[target].len();
     }
 }
@@ -190,14 +191,12 @@ mod tests {
         Transaction::new(
             ALICE, // from
             BOB,   // to
-            0,
-            &String::from("xyz"), // hash
-            1,
+            amount, "xyz", 1,
         )
     }
 
     fn ord_tx_setup() -> OrderedTransaction {
-        let ord_tx = OrderedTransaction::new();
+        let mut ord_tx = OrderedTransaction::new();
         ord_tx.insert(new_tx(1));
         assert_eq!(ord_tx.len(), 1);
         assert_eq!(ord_tx.priority, 1);
@@ -205,9 +204,13 @@ mod tests {
     }
 
     fn pool_setup() -> TxPool {
-        let p = TxPool::new();
+        // empty pool so there are neither uncofirmed nor pending txs
+        let mut p = TxPool::new();
         assert!(p.empty_unconfirmed());
         assert!(p.empty_pending());
+
+        // there is now one account being tracked in the pool, both the pools
+        // and Alice's individual tx counts are 1
         p.new_unconfirmed_store(ALICE, ord_tx_setup());
         p.new_pending_store(ALICE, ord_tx_setup());
         assert_eq!(p.len_unconfirmed(), 1);
@@ -222,7 +225,7 @@ mod tests {
         // Create four pending transactions: first during setup and
         // then three consecutive ones. The account nonce should be
         // at 4, as should the amount of (pending) transactions.
-        let p = pool_setup();
+        let mut p = pool_setup();
         p.add_pending_tx(ALICE, new_tx(5));
         p.add_pending_tx(ALICE, new_tx(5));
         p.add_pending_tx(ALICE, new_tx(5));
@@ -235,7 +238,6 @@ mod tests {
         let idtx3 = p.pop_pending_tx(ALICE);
         let idtx4 = p.pop_pending_tx(ALICE);
         assert_eq!(p.len_target_pending(ALICE), 0);
-        assert!(p.empty_pending());
 
         // We verify we have pulled transactions in the correct order:
         // from 1 to 4. They are stored in the indexed transactions vars idtx_i,
