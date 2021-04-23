@@ -233,18 +233,47 @@ mod tests {
         // We have now four pending transactions for Alice. By pop'ing
         // four transactions, the pending pool should be empty..
         assert_eq!(p.len_target_pending(ALICE), 4);
-        let idtx1 = p.pop_pending_tx(ALICE);
-        let idtx2 = p.pop_pending_tx(ALICE);
-        let idtx3 = p.pop_pending_tx(ALICE);
-        let idtx4 = p.pop_pending_tx(ALICE);
+        let tx1 = p.pop_pending_tx(ALICE);
+        let tx2 = p.pop_pending_tx(ALICE);
+        let tx3 = p.pop_pending_tx(ALICE);
+        let tx4 = p.pop_pending_tx(ALICE);
         assert_eq!(p.len_target_pending(ALICE), 0);
 
         // We verify we have pulled transactions in the correct order:
         // from 1 to 4. They are stored in the indexed transactions vars idtx_i,
         // i = 1,2,3,4.
-        assert_eq!(idtx1.account_nonce, 1);
-        assert_eq!(idtx2.account_nonce, 2);
-        assert_eq!(idtx3.account_nonce, 3);
-        assert_eq!(idtx4.account_nonce, 4);
+        assert_eq!(tx1.account_nonce, 1);
+        assert_eq!(tx2.account_nonce, 2);
+        assert_eq!(tx3.account_nonce, 3);
+        assert_eq!(tx4.account_nonce, 4);
+    }
+
+    #[test]
+    fn test_unordered_tx_nonces() {
+        let mut p = pool_setup();
+        let mut ord_tx = ord_tx_setup();
+        // Assume account nonce 4 and 6 are rejected for some reason and 1, 2, 3, 5, and 7
+        // arrive out of order. It is expected that despite this, they are to be successfully
+        // prioritized, starting with nonce 1 and ending with 7.
+        ord_tx.min_heap.push(IndexedTransaction::new(new_tx(1), 2));
+        ord_tx.min_heap.push(IndexedTransaction::new(new_tx(1), 5));
+        ord_tx.min_heap.push(IndexedTransaction::new(new_tx(1), 3));
+        ord_tx.min_heap.push(IndexedTransaction::new(new_tx(1), 7));
+        p.new_pending_store(ALICE, ord_tx);
+
+        // 5 pending txs in total
+        assert_eq!(p.len_target_pending(ALICE), 5);
+        let tx1 = p.pop_pending_tx(ALICE);
+        let tx2 = p.pop_pending_tx(ALICE);
+        let tx3 = p.pop_pending_tx(ALICE);
+        let tx4 = p.pop_pending_tx(ALICE);
+        let tx5 = p.pop_pending_tx(ALICE);
+
+        // Make sure they get popped in right priority (ascending order)
+        assert_eq!(tx1.account_nonce, 1);
+        assert_eq!(tx2.account_nonce, 2);
+        assert_eq!(tx3.account_nonce, 3);
+        assert_eq!(tx4.account_nonce, 5);
+        assert_eq!(tx5.account_nonce, 7);
     }
 }
