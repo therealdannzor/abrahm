@@ -34,7 +34,7 @@ impl Block {
     }
 
     #[allow(dead_code)]
-    // genesis creates the first block in the chain with is the only block with
+    // genesis creates the first block in the chain which is the only block with
     // no link to a previous block (due to an empty `previous_hash`). It uses the
     // param `init_verifier` to create the first identity anchor of a block as the
     // chain's oldest ancestor.

@@ -101,7 +101,10 @@ impl OrderedTransaction {
     }
 }
 
-// TxPool is a memory pool which validates, orders, and broadcasts pending transactions.
+// TxPool is a local and shared memory pool which validates, orders, and broadcasts transactions.
+// Transactions which are confirmed are in a pending hashmap within each account while those
+// under the consensus process are treated as unconfirmed. The handler of this struct is the
+// pool manager.
 #[allow(dead_code)]
 pub struct TxPool {
     // pending transactions that are to be processed
