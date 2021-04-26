@@ -2,6 +2,7 @@ mod account_info;
 mod block;
 mod core;
 mod p2p;
+mod pool_manager;
 mod state_db;
 mod swiss_knife;
 mod transaction;
