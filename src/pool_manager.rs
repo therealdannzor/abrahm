@@ -29,21 +29,27 @@ struct PoolManager {
 #[cfg(test)]
 mod tests {
 
-    // tests external p2p messages (network layer) that are inbound
+    // tests external p2p messages (network layer) that are inbound [pool manager task #1]
     #[test]
     fn test_receive_blocks_and_deliver_unconfirmed_txs_to_pool() {
         assert_eq!(true, false);
     }
 
-    // tests internal worker messages (consensus layer)
+    // tests internal worker messages (consensus layer) [pool manager task #2]
     #[test]
     fn test_deliver_confirmed_blocks_as_txs_to_pool() {
         assert_eq!(true, false);
     }
 
-    // tests both external and internal messages
+    // tests both external and internal messages [pool manager tasks #1 and #2]
     #[test]
     fn test_deliver_high_amount_of_concurrent_messages_to_pool() {
+        assert_eq!(true, false);
+    }
+
+    // tests that outbound external messages are received properly [pool manager task #3]
+    #[test]
+    fn test_broadcast_confirmed_txs_as_blocks_to_other_peers() {
         assert_eq!(true, false);
     }
 }
