@@ -1,3 +1,4 @@
+use chrono::prelude::Utc;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 use std::io::Write;
@@ -33,6 +34,10 @@ pub fn generate_hash_from_input(inp: &str) -> String {
     hasher.input(inp.as_bytes());
     let hash_out = hasher.result_str();
     hash_out
+}
+
+pub fn new_timestamp() -> i64 {
+    Utc::now().timestamp_millis()
 }
 
 #[macro_export]

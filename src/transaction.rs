@@ -1,4 +1,4 @@
-use chrono::prelude::*;
+use crate::swiss_knife::helper;
 use std::fmt::{Display, Formatter};
 
 #[derive(Copy, Clone)]
@@ -40,7 +40,7 @@ impl Transaction {
             base: Label::new(from, to, amount),
             hash,
             expiration_time,
-            first_seen: Utc::now().timestamp_millis(),
+            first_seen: helper::new_timestamp(),
         }
     }
 

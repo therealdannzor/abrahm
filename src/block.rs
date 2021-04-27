@@ -1,5 +1,4 @@
 use crate::swiss_knife::helper;
-use chrono::prelude::*;
 use std::fmt::{Display, Formatter};
 
 use std::cell::RefCell;
@@ -44,7 +43,7 @@ impl Block {
         Self {
             this_hash: h.to_string(),
             previous_hash: "".to_string(),
-            timestamp: Utc::now().timestamp_millis(),
+            timestamp: helper::new_timestamp(),
             data: "The founding block of the blockchain",
         }
     }
