@@ -101,16 +101,13 @@ impl Display for Block {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::swiss_knife::helper;
-
-    fn hash_out(s: &'static str) -> String {
-        helper::generate_hash_from_input(s)
-    }
+    use crate::hashed; // macros are exported to the crate root level
+    use crate::swiss_knife::helper::generate_hash_from_input;
 
     #[test]
     fn test_genesis_block() {
         let block = Block::genesis("0x");
-        let expected_root_hash = hash_out("0x");
+        let expected_root_hash = hashed!("0x");
         let expected_previous_hash = "";
         let expected_block_data = "The founding block of the blockchain";
         assert_eq!(block.hash(), expected_root_hash);
@@ -121,13 +118,13 @@ mod tests {
     #[test]
     fn test_custom_block() {
         let mut block = Block::new(
-            hash_out("0x1"),
-            hash_out("0x"),
-            Utc::now().timestamp_millis(),
+            hashed!("0x1"),
+            hashed!("0x"),
+            helper::new_timestamp(),
             "data1",
         );
-        let expected_root_hash = hash_out("0x1");
-        let expected_previous_hash = hash_out("0x");
+        let expected_root_hash = hashed!("0x1");
+        let expected_previous_hash = hashed!("0x");
         let expected_block_data = String::from("data1");
         assert_eq!(block.hash(), expected_root_hash);
         assert_eq!(block.previous_hash(), expected_previous_hash);
@@ -135,7 +132,7 @@ mod tests {
 
         // change `current_hash`
         block.set_hash("0xa");
-        let expected_new_hash = hash_out("0xa");
+        let expected_new_hash = hashed!("0xa");
         assert_eq!(block.hash(), expected_new_hash);
     }
 }
