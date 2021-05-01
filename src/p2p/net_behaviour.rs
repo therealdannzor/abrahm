@@ -1,4 +1,5 @@
 use std::task::{Context, Poll};
+use void::Void;
 
 use libp2p::{
     core::connection::ConnectionId,
@@ -6,19 +7,17 @@ use libp2p::{
     Multiaddr, PeerId,
 };
 
-use void::Void;
-
-use super::handler::PeerManager;
+use super::proto_handler::PeerManager;
 
 #[derive(Debug)]
-pub enum MessageStatus {
+pub enum MessageCondition {
     Success,
 }
 
 #[derive(Debug)]
 pub struct PeerEvent {
     pub peer: PeerId,
-    pub result: MessageStatus,
+    pub result: MessageCondition,
 }
 
 pub struct StatusConfig {
@@ -53,15 +52,15 @@ impl NetworkBehaviour for MessageLog {
     }
 
     fn inject_connected(&mut self, _: &PeerId) {
-        log::debug!("dummy inject_connected");
+        log::debug!("Message: inject connected");
     }
 
     fn inject_disconnected(&mut self, _: &PeerId) {
-        log::debug!("dummy inject_disconnected");
+        log::debug!("Message: inject disconnected");
     }
 
-    fn inject_event(&mut self, peer: PeerId, _: ConnectionId, result: MessageStatus) {
-        log::debug!("dummy inject_event");
+    fn inject_event(&mut self, peer: PeerId, _: ConnectionId, result: MessageCondition) {
+        log::debug!("Message: inject_event");
         self.events.push_front(PeerEvent { peer, result })
     }
 
@@ -70,7 +69,6 @@ impl NetworkBehaviour for MessageLog {
         _: &mut Context<'_>,
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Void, PeerEvent>> {
-        log::debug!("Polling events: {:?}", self.events);
         if let Some(e) = self.events.pop_back() {
             Poll::Ready(NetworkBehaviourAction::GenerateEvent(e))
         } else {

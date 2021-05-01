@@ -24,7 +24,7 @@ impl InboundUpgrade<NegotiatedSubstream> for P2P {
     type Future = future::Ready<Result<Self::Output, Self::Error>>;
 
     fn upgrade_inbound(self, stream: NegotiatedSubstream, _: Self::Info) -> Self::Future {
-        log::debug!("[InboundUpgrade] dummy upgrade_inbound");
+        log::debug!("Protocol: upgrade inbound");
         future::ok(stream)
     }
 }
@@ -34,7 +34,7 @@ impl OutboundUpgrade<NegotiatedSubstream> for P2P {
     type Future = future::Ready<Result<Self::Output, Self::Error>>;
 
     fn upgrade_outbound(self, stream: NegotiatedSubstream, _: Self::Info) -> Self::Future {
-        log::debug!("[OutboundUpgrade] dummy upgrade_outbound");
+        log::debug!("Protocol: upgrade outbound");
         future::ok(stream)
     }
 }

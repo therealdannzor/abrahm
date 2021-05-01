@@ -16,8 +16,8 @@ use void::Void;
 use futures::future::BoxFuture;
 use futures::prelude::*;
 
-use super::message_log::MessageStatus;
-use super::protocol::P2P;
+use super::net_behaviour::MessageCondition;
+use super::proto_upgrade::P2P;
 
 type MessageFuture = BoxFuture<'static, Result<NegotiatedSubstream, io::Error>>;
 
@@ -25,67 +25,56 @@ pub struct PeerManager {
     inbound: Option<MessageFuture>,
     outbound: Option<MessageFuture>,
     status: bool,
-    already_echo: bool,
 }
 
+const MSG_SIZE: usize = 6;
 impl PeerManager {
     pub fn new(status: bool) -> Self {
         PeerManager {
             inbound: None,
             outbound: None,
             status,
-            already_echo: false,
         }
     }
 }
 
-const MSG_SIZE: usize = 6;
 pub async fn recv_msg<S>(mut stream: S) -> io::Result<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let mut payload = [0u8; MSG_SIZE];
-    log::debug!("recv_msg, wait for message");
 
     stream.read_exact(&mut payload).await?;
-    log::debug!("recv_msg, payload size in stream satisfied: {:?}", payload);
-
     stream.write_all(&payload).await?;
     stream.flush().await?;
-    log::debug!("recv_msg successfull for payload: {:?}", payload);
 
+    log::info!("received payload: {:?}", payload);
     Ok(stream)
 }
+
+use std::io::prelude::*;
 
 pub async fn send_msg<S>(mut stream: S) -> io::Result<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    // payload is the 2nd CLI arg
-    let arg1 = std::env::args().nth(2);
+    let mut stdin = io::BufReader::new(io::stdin());
+    let buf = stdin.fill_buf().unwrap();
 
-    let payload = arg1.unwrap();
-
-    stream.write_all(payload.as_bytes()).await?;
+    stream.write_all(buf).await?;
     stream.flush().await?;
 
     let mut recv_bytes_slice = [0u8; MSG_SIZE];
     stream.read_exact(&mut recv_bytes_slice).await?;
     let recv = str::from_utf8(&recv_bytes_slice);
-    log::info!("send_msg, clear for transmission: {:?}", recv);
-    if recv == Ok(&payload) {
-        Ok(stream)
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "payload length mismatch: confirm the payload byte size",
-        ))
-    }
+
+    log::info!("sent payload: {:?}", recv);
+    Ok(stream)
 }
 
 impl ProtocolsHandler for PeerManager {
     type InEvent = Void;
-    type OutEvent = MessageStatus;
+    type OutEvent = MessageCondition;
     type Error = ReadOneError;
     type InboundProtocol = P2P;
     type OutboundProtocol = P2P;
@@ -93,6 +82,7 @@ impl ProtocolsHandler for PeerManager {
     type InboundOpenInfo = ();
 
     fn listen_protocol(&self) -> SubstreamProtocol<P2P, ()> {
+        log::debug!("Peer manager: apply listen protocol");
         SubstreamProtocol::new(P2P, ())
     }
 
@@ -100,7 +90,7 @@ impl ProtocolsHandler for PeerManager {
         if self.inbound.is_some() {
             panic!("inbound exists already");
         }
-        log::debug!("dummy inject_fully_negotiated_inbound");
+        log::debug!("Peer manager: negotiated inbound injected, receive stream");
         self.inbound = Some(recv_msg(stream).boxed());
     }
 
@@ -108,15 +98,20 @@ impl ProtocolsHandler for PeerManager {
         if self.outbound.is_some() {
             panic!("outbound exists already");
         }
-        log::debug!("dummy inject_fully_negotiated_inbound");
+        log::debug!("Peer manager: negotiated outbound injected, send stream");
 
         self.outbound = Some(send_msg(stream).boxed());
     }
 
-    fn inject_event(&mut self, _: Void) {}
+    fn inject_event(&mut self, _: Void) {
+        log::debug!("Peer manager: inject event");
+    }
 
     fn inject_dial_upgrade_error(&mut self, _info: (), error: ProtocolsHandlerUpgrErr<Void>) {
-        log::debug!("dummy inject_dial_upgrade_error: {:?}", error);
+        log::debug!(
+            "Peer manager inject dial upgrade; resolved with:  {:?}",
+            error
+        );
     }
 
     fn connection_keep_alive(&self) -> KeepAlive {
@@ -126,23 +121,20 @@ impl ProtocolsHandler for PeerManager {
     fn poll(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<ProtocolsHandlerEvent<P2P, (), MessageStatus, Self::Error>> {
-        log::debug!("Polling initialized");
-
+    ) -> Poll<ProtocolsHandlerEvent<P2P, (), MessageCondition, Self::Error>> {
         if let Some(fut) = self.inbound.as_mut() {
             match fut.poll_unpin(cx) {
                 Poll::Pending => {
-                    log::debug!("Polling pending");
-                }
-                Poll::Ready(Err(e)) => {
-                    log::error!("Polling failed; resolved with error: {:?}", e);
-                    self.inbound = None;
-                    panic!();
+                    log::debug!("Polling: pending inbound");
                 }
                 Poll::Ready(Ok(stream)) => {
-                    log::debug!("Polled and received successfully");
+                    log::debug!("Polling: inbound received successfully");
                     self.inbound = Some(recv_msg(stream).boxed());
-                    return Poll::Ready(ProtocolsHandlerEvent::Custom(MessageStatus::Success));
+                    return Poll::Ready(ProtocolsHandlerEvent::Custom(MessageCondition::Success));
+                }
+                Poll::Ready(Err(e)) => {
+                    log::error!("Polling: inbound failed; resolved with error: {:?}", e);
+                    panic!();
                 }
             }
         }
@@ -151,24 +143,25 @@ impl ProtocolsHandler for PeerManager {
             Some(mut send_msg_future) => match send_msg_future.poll_unpin(cx) {
                 Poll::Pending => {
                     self.outbound = Some(send_msg_future);
-                    log::debug!("Polling outbound pending");
+                    log::debug!("Polling: outbound pending");
                 }
-                Poll::Ready(Ok(_stream)) => {
-                    log::debug!("Polling outbound successfully received");
-                    return Poll::Ready(ProtocolsHandlerEvent::Custom(MessageStatus::Success));
+                Poll::Ready(Ok(stream)) => {
+                    log::debug!(
+                        "Polling: outbound successfully received (stream: {:?})",
+                        stream
+                    );
+                    return Poll::Ready(ProtocolsHandlerEvent::Custom(MessageCondition::Success));
                 }
                 Poll::Ready(Err(e)) => {
-                    log::error!("Polling, outbound resolved with error: {:?}", e);
+                    log::error!("Polling: outbound resolved with error: {:?}", e);
                     panic!();
                 }
             },
             None => {
-                log::debug!(
-                    "Polling, outbound is none, waiting for negotation with outbound stream"
-                );
-                if self.status && !self.already_echo {
-                    self.already_echo = true;
+                if !self.status {
+                    self.status = true;
                     let protocol = SubstreamProtocol::new(P2P, ());
+                    log::debug!("Polling: outbound substream request");
                     return Poll::Ready(ProtocolsHandlerEvent::OutboundSubstreamRequest {
                         protocol,
                     });
