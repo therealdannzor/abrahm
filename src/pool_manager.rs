@@ -87,6 +87,8 @@ fn update_mutex_timestamp(m: &Mutex<i64>) {
 mod tests {
     use super::*;
     use crate::block::Block;
+    use crate::p2p::ws_routes::serve_routes;
+    use serde_json::Value;
 
     fn setup() -> (Vec<Block>, PoolManager) {
         // instead of intializing the whole tx pool struct together with
@@ -110,6 +112,59 @@ mod tests {
             res.push(b);
         }
         res
+    }
+
+    async fn curl_post(
+        endpoint: &str,
+        peer_id: usize,
+        topic: String,
+        message: String,
+    ) -> Result<Value, reqwest::Error> {
+        let mut url_addr: String = "http://127.0.0.1:8000".to_owned();
+        url_addr.push_str(endpoint);
+        let echo_json: Value = reqwest::Client::new()
+            .post(url_addr)
+            .json(&serde_json::json!({ "peer_id": peer_id, "topic": topic, "message": message }))
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        // return the uuid
+        Ok(echo_json)
+    }
+
+    async fn api_register(peer_id: usize) -> Result<Value, reqwest::Error> {
+        curl_post("/register", peer_id, String::from(""), String::from("")).await
+    }
+
+    #[allow(dead_code)]
+    async fn api_publish(peer_id: usize, topic: &str, message: &str) -> impl futures::Future {
+        curl_post("/publish", peer_id, topic.to_string(), message.to_string())
+    }
+
+    #[allow(dead_code)]
+    async fn api_info(uuid: &str) -> Result<Value, reqwest::Error> {
+        let mut uri: String = "http://127.0.0.1:8000/ws/".to_owned();
+        let uuid = uuid.replace("\"", "");
+        uri.push_str(&uuid);
+
+        let conn = reqwest::header::CONNECTION;
+        let upgrade = reqwest::header::UPGRADE;
+        let sec_v = reqwest::header::SEC_WEBSOCKET_VERSION;
+        let sec_k = reqwest::header::SEC_WEBSOCKET_KEY;
+        let echo_json: Value = reqwest::Client::new()
+            .get(uri)
+            .header(conn, "Upgrade")
+            .header(upgrade, "websocket")
+            .header(sec_v, 13)
+            .header(sec_k, "dGhlIHNhbXBsZSBub25jZQ==")
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        Ok(echo_json)
     }
 
     // mocks inbound messages and tests the send & receive channels [pool manager task #1 and #2]
@@ -141,8 +196,25 @@ mod tests {
     }
 
     // tests that outbound external messages are received properly [pool manager task #3]
-    #[test]
-    fn broadcasts_confirmed_txs_as_blocks_to_other_peers() {
-        assert_eq!(true, false);
+    #[actix_rt::test]
+    async fn broadcasts_confirmed_txs_as_blocks_to_other_peers() {
+        let shutdown_channel = serve_routes().await;
+
+        // register a peer ID
+        let peer_number = 1;
+        let mut register_response = api_register(peer_number).await.unwrap();
+        let peer_uuid = register_response["uuid"].take().to_string();
+
+        // publish new topic
+        let _ = api_publish(peer_number, "blocks", "block 1").await;
+
+        // check topics
+        let _ = match api_info(&peer_uuid).await {
+            Ok(_) => println!("Good value!"),
+            Err(e) => panic!("Something wrong: {:?}", e),
+        };
+
+        // teardown
+        let _ = shutdown_channel.send(true);
     }
 }
