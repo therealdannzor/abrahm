@@ -17,9 +17,9 @@ pub struct RegisterRequest {
     topic: String,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct RegisterResponse {
-    url: String,
+    pub uuid: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -37,7 +37,7 @@ pub async fn health() -> Result<impl Reply> {
     Ok(StatusCode::OK)
 }
 
-pub async fn conn_socket(ws: Ws, id: String, peers: Peers) -> Result<impl Reply> {
+pub async fn get_peer_info(ws: Ws, id: String, peers: Peers) -> Result<impl Reply> {
     let peer = peers.read().await.get(&id).cloned();
     match peer {
         Some(c) => Ok(ws.on_upgrade(move |socket| connect_peer(socket, id, c, peers))),
@@ -67,9 +67,7 @@ pub async fn register(body: RegisterRequest, peers: Peers) -> Result<impl Reply>
     let uuid = Uuid::new_v4().simple().to_string();
 
     register_client(uuid.clone(), peer_id, peer_topic, peers).await;
-    Ok(json(&RegisterResponse {
-        url: format!("ws://127.0.0.1:8000/ws/{}", uuid),
-    }))
+    Ok(json(&RegisterResponse { uuid }))
 }
 
 pub async fn publish(body: Event, peers: Peers) -> Result<impl Reply> {

@@ -18,7 +18,7 @@ pub async fn serve_routes() -> oneshot::Sender<bool> {
     let health_route = warp::path!("health").and_then(func::health);
 
     // register peer endpoint
-    let register = warp::path!("register");
+    let register = warp::path("register");
     let register_routes = register
         .and(warp::post())
         .and(warp::body::json())
@@ -41,7 +41,7 @@ pub async fn serve_routes() -> oneshot::Sender<bool> {
         .and(warp::ws())
         .and(warp::path::param())
         .and(with_peers(peers.clone()))
-        .and_then(func::conn_socket);
+        .and_then(func::get_peer_info);
 
     // warp filter of all the routes
     let routes = health_route
