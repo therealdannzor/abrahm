@@ -116,15 +116,14 @@ mod tests {
 
     async fn curl_post(
         endpoint: &str,
-        peer_id: usize,
-        topic: String,
+        user_id: usize,
         message: String,
     ) -> Result<Value, reqwest::Error> {
         let mut url_addr: String = "http://127.0.0.1:8000".to_owned();
         url_addr.push_str(endpoint);
         let echo_json: Value = reqwest::Client::new()
             .post(url_addr)
-            .json(&serde_json::json!({ "peer_id": peer_id, "topic": topic, "message": message }))
+            .json(&serde_json::json!({ "user_id": user_id, "message": message }))
             .send()
             .await?
             .json()
@@ -135,15 +134,13 @@ mod tests {
     }
 
     async fn api_register(peer_id: usize) -> Result<Value, reqwest::Error> {
-        curl_post("/register", peer_id, String::from(""), String::from("")).await
+        curl_post("/register", peer_id, String::from("")).await
     }
 
-    #[allow(dead_code)]
-    async fn api_publish(peer_id: usize, topic: &str, message: &str) -> impl futures::Future {
-        curl_post("/publish", peer_id, topic.to_string(), message.to_string())
+    async fn api_publish(peer_id: usize, message: &str) -> Result<Value, reqwest::Error> {
+        curl_post("/publish", peer_id, message.to_string()).await
     }
 
-    #[allow(dead_code)]
     async fn api_info(uuid: &str) -> Result<Value, reqwest::Error> {
         let mut uri: String = "http://127.0.0.1:8000/ws/".to_owned();
         let uuid = uuid.replace("\"", "");
@@ -153,7 +150,7 @@ mod tests {
         let upgrade = reqwest::header::UPGRADE;
         let sec_v = reqwest::header::SEC_WEBSOCKET_VERSION;
         let sec_k = reqwest::header::SEC_WEBSOCKET_KEY;
-        let echo_json: Value = reqwest::Client::new()
+        let echo_json = reqwest::Client::new()
             .get(uri)
             .header(conn, "Upgrade")
             .header(upgrade, "websocket")
@@ -205,15 +202,16 @@ mod tests {
         let mut register_response = api_register(peer_number).await.unwrap();
         let peer_uuid = register_response["uuid"].take().to_string();
 
-        // publish new topic
-        let _ = api_publish(peer_number, "blocks", "block 1").await;
+        // publish new message
+        let _ = api_publish(peer_number, "block 1").await;
 
-        // check topics
-        let _ = match api_info(&peer_uuid).await {
-            Ok(_) => println!("Good value!"),
-            Err(e) => panic!("Something wrong: {:?}", e),
+        // retrieve peer message(s)
+        let actual_peer_info = match api_info(&peer_uuid).await {
+            Ok(v) => v,
+            Err(e) => panic!("Something wrong with info: {:?}", e),
         };
 
+        assert_eq!(actual_peer_info, "a topic");
         // teardown
         let _ = shutdown_channel.send(true);
     }
