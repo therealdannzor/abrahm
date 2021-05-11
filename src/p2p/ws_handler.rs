@@ -11,10 +11,10 @@ use warp::{
     Reply,
 };
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 pub struct RegisterRequest {
-    peer_id: usize,
-    topic: String,
+    user_id: usize,
+    message: String,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -26,10 +26,8 @@ pub struct RegisterResponse {
 pub struct Event {
     // user_id is provided when an event message is unicast to
     // a particular peer in the network
-    peer_id: Option<usize>,
-    // topic of the event
-    topic: String,
-    // message is the payload of the event
+    user_id: Option<usize>,
+    // message is a new block event
     message: String,
 }
 
@@ -50,41 +48,41 @@ pub async fn unregister(id: String, peers: Peers) -> Result<impl Reply> {
     Ok(StatusCode::OK)
 }
 
-async fn register_client(id: String, peer_id: usize, topic: String, peers: Peers) {
+async fn register_client(id: String, user_id: usize, peers: Peers) {
     peers.write().await.insert(
         id,
         Peer {
-            id: peer_id,
-            topic_list: vec![topic],
+            user_id,
+            gossip_msg: std::vec::Vec::new(),
             channel: None,
         },
     );
 }
 
 pub async fn register(body: RegisterRequest, peers: Peers) -> Result<impl Reply> {
-    let peer_id = body.peer_id;
-    let peer_topic = body.topic;
+    let user_id = body.user_id;
     let uuid = Uuid::new_v4().simple().to_string();
 
-    register_client(uuid.clone(), peer_id, peer_topic, peers).await;
+    register_client(uuid.clone(), user_id, peers).await;
     Ok(json(&RegisterResponse { uuid }))
 }
 
 pub async fn publish(body: Event, peers: Peers) -> Result<impl Reply> {
+    let peer_number = body.user_id;
     peers
         .read()
         .await
         .iter()
-        .filter(|(_, peer)| match body.peer_id {
-            Some(v) => peer.id == v,
+        .filter(|(_, p)| match peer_number {
+            Some(v) => p.user_id == v,
             None => true,
         })
-        .filter(|(_, peer)| peer.topic_list.contains(&body.topic))
-        .for_each(|(_, peer)| {
-            if let Some(sender) = &peer.channel {
+        .for_each(|(_, p)| {
+            if let Some(sender) = &p.channel {
                 let _ = sender.send(Ok(Message::text(body.message.clone())));
             }
         });
 
-    Ok(StatusCode::OK)
+    let sender_id = vec![peer_number];
+    Ok(json(&sender_id))
 }

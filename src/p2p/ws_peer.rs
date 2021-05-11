@@ -3,7 +3,7 @@
 #![allow(unused)]
 
 use futures::{FutureExt, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::from_str;
 use std::{collections::HashMap, sync::Arc, vec::Vec};
 use tokio::sync::{mpsc, RwLock};
@@ -17,9 +17,9 @@ use warp::{
 #[derive(Debug, Clone)]
 pub struct Peer {
     // peer identifier
-    pub id: usize,
-    // list of topics this peer is subscribed to
-    pub topic_list: Vec<String>,
+    pub user_id: usize,
+    // list of messages this peer has received
+    pub gossip_msg: Vec<String>,
     // channel to this peer
     pub channel: Option<mpsc::UnboundedSender<std::result::Result<Message, Error>>>,
 }
@@ -28,7 +28,7 @@ pub type Result<T> = std::result::Result<T, Rejection>;
 
 pub type Peers = Arc<RwLock<HashMap<String, Peer>>>;
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TopicsRequest {
     topics: Vec<String>,
 }
@@ -85,6 +85,6 @@ async fn peer_msg(id: &str, msg: Message, peers: &Peers) {
 
     let mut locked = peers.write().await;
     if let Some(v) = locked.get_mut(id) {
-        v.topic_list = tp_req.topics;
+        v.gossip_msg = tp_req.topics;
     }
 }
