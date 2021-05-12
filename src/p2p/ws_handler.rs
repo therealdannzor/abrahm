@@ -30,9 +30,11 @@ pub async fn health() -> Result<impl Reply> {
 }
 
 pub async fn get_peer_info(ws: Ws, id: String, peers: Peers) -> Result<impl Reply> {
-    let result: Vec<String> = vec![];
-    //let cpy = Arc::clone(&peers);
-    //let res = cpy.clone().read().await.get(&id);
+    let mut map = peers.lock().unwrap();
+    let mut result: Vec<String> = vec![];
+    if map.contains_key(&id) {
+        result = map.get_mut(&id).unwrap().gossip_msg.clone();
+    }
 
     Ok(json(&result))
 }

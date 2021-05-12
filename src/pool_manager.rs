@@ -143,7 +143,7 @@ mod tests {
         uuid: String,
         message: &str,
     ) -> Result<Value, reqwest::Error> {
-        curl_post("/publish", peer_id, uuid, message.to_string()).await
+        curl_post("/publish", peer_id, uuid.clone(), message.to_string()).await
     }
 
     async fn api_info(uuid: &str) -> Result<Value, reqwest::Error> {
@@ -203,23 +203,33 @@ mod tests {
         let shutdown_channel = serve_routes().await;
 
         // register a peer ID
-        //let peer_number = 1;
-        let mut register_response = api_register(1).await.unwrap();
+        let peer_no = 1;
+        let mut register_response = api_register(peer_no).await.unwrap();
         let peer_uuid = register_response["uuid"].take().to_string();
         let extra_uuid = peer_uuid.clone();
 
-        // publish new message
-        let publish_response = api_publish(1, peer_uuid, "block 1").await.unwrap();
-        let expected_response = "block 1";
-        assert_eq!(publish_response.get(0).unwrap(), expected_response);
+        // publish 3 messages
+        let mut pub_resp = api_publish(peer_no, peer_uuid.clone(), "block 1")
+            .await
+            .unwrap();
+        let mut expected_pub_resp = "block 1";
+        assert_eq!(pub_resp.get(0).unwrap(), expected_pub_resp);
+        pub_resp = api_publish(peer_no, peer_uuid.clone(), "block 2")
+            .await
+            .unwrap();
+        expected_pub_resp = "block 2";
+        assert_eq!(pub_resp.get(1).unwrap(), expected_pub_resp);
+        pub_resp = api_publish(peer_no, peer_uuid.clone(), "block 3")
+            .await
+            .unwrap();
+        expected_pub_resp = "block 3";
+        assert_eq!(pub_resp.get(2).unwrap(), expected_pub_resp);
 
         // retrieve peer message(s)
-        let actual_peer_info = match api_info(&extra_uuid).await {
-            Ok(v) => v,
-            Err(e) => panic!("Something wrong with info: {:?}", e),
-        };
+        let get_messages_resp = api_info(&extra_uuid).await.unwrap();
+        let expected_amount = 3;
+        assert_eq!(get_messages_resp.as_array().unwrap().len(), expected_amount);
 
-        assert_eq!(actual_peer_info, "a topic");
         // teardown
         let _ = shutdown_channel.send(true);
     }
