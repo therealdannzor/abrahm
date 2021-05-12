@@ -117,13 +117,14 @@ mod tests {
     async fn curl_post(
         endpoint: &str,
         user_id: usize,
+        uuid: String,
         message: String,
     ) -> Result<Value, reqwest::Error> {
         let mut url_addr: String = "http://127.0.0.1:8000".to_owned();
         url_addr.push_str(endpoint);
         let echo_json: Value = reqwest::Client::new()
             .post(url_addr)
-            .json(&serde_json::json!({ "user_id": user_id, "message": message }))
+            .json(&serde_json::json!({ "user_id": user_id, "uuid": uuid, "message": message }))
             .send()
             .await?
             .json()
@@ -134,11 +135,15 @@ mod tests {
     }
 
     async fn api_register(peer_id: usize) -> Result<Value, reqwest::Error> {
-        curl_post("/register", peer_id, String::from("")).await
+        curl_post("/register", peer_id, String::from(""), String::from("")).await
     }
 
-    async fn api_publish(peer_id: usize, message: &str) -> Result<Value, reqwest::Error> {
-        curl_post("/publish", peer_id, message.to_string()).await
+    async fn api_publish(
+        peer_id: usize,
+        uuid: String,
+        message: &str,
+    ) -> Result<Value, reqwest::Error> {
+        curl_post("/publish", peer_id, uuid, message.to_string()).await
     }
 
     async fn api_info(uuid: &str) -> Result<Value, reqwest::Error> {
@@ -198,15 +203,18 @@ mod tests {
         let shutdown_channel = serve_routes().await;
 
         // register a peer ID
-        let peer_number = 1;
-        let mut register_response = api_register(peer_number).await.unwrap();
+        //let peer_number = 1;
+        let mut register_response = api_register(1).await.unwrap();
         let peer_uuid = register_response["uuid"].take().to_string();
+        let extra_uuid = peer_uuid.clone();
 
         // publish new message
-        let _ = api_publish(peer_number, "block 1").await;
+        let publish_response = api_publish(1, peer_uuid, "block 1").await.unwrap();
+        let expected_response = "block 1";
+        assert_eq!(publish_response.get(0).unwrap(), expected_response);
 
         // retrieve peer message(s)
-        let actual_peer_info = match api_info(&peer_uuid).await {
+        let actual_peer_info = match api_info(&extra_uuid).await {
             Ok(v) => v,
             Err(e) => panic!("Something wrong with info: {:?}", e),
         };

@@ -1,7 +1,11 @@
 // Adapted from https://blog.logrocket.com/how-to-build-a-websocket-server-with-rust/
 
-use std::{collections::HashMap, convert::Infallible, sync::Arc};
-use tokio::sync::{oneshot, RwLock};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::oneshot;
 use warp::Filter;
 
 use super::ws_handler as func;
@@ -12,7 +16,7 @@ fn with_peers(peers: Peers) -> impl Filter<Extract = (Peers,), Error = Infallibl
 }
 
 pub async fn serve_routes() -> oneshot::Sender<bool> {
-    let peers: Peers = Arc::new(RwLock::new(HashMap::new()));
+    let peers: Peers = Arc::new(Mutex::new(HashMap::new()));
 
     // heartbeat endpoint
     let health_route = warp::path!("health").and_then(func::health);
@@ -31,7 +35,7 @@ pub async fn serve_routes() -> oneshot::Sender<bool> {
             .and_then(func::unregister));
 
     // publish event endpoint
-    let publish = warp::path!("publish")
+    let publish = warp::path("publish")
         .and(warp::body::json())
         .and(with_peers(peers.clone()))
         .and_then(func::publish);

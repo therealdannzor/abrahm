@@ -1,15 +1,9 @@
 // Adapted from https://blog.logrocket.com/how-to-build-a-websocket-server-with-rust/
 #![allow(unused)]
-
-use super::ws_peer::{connect_peer, Peer, Peers, Result};
+use super::ws_peer::{Peer, Peers, Result};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use warp::{
-    http::StatusCode,
-    reply::json,
-    ws::{Message, Ws},
-    Reply,
-};
+use warp::{http::StatusCode, reply::json, ws::Ws, Reply};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct RegisterRequest {
@@ -24,9 +18,9 @@ pub struct RegisterResponse {
 
 #[derive(Deserialize, Debug)]
 pub struct Event {
-    // user_id is provided when an event message is unicast to
-    // a particular peer in the network
     user_id: Option<usize>,
+    uuid: String,
+
     // message is a new block event
     message: String,
 }
@@ -36,20 +30,21 @@ pub async fn health() -> Result<impl Reply> {
 }
 
 pub async fn get_peer_info(ws: Ws, id: String, peers: Peers) -> Result<impl Reply> {
-    let peer = peers.read().await.get(&id).cloned();
-    match peer {
-        Some(c) => Ok(ws.on_upgrade(move |socket| connect_peer(socket, id, c, peers))),
-        None => Err(warp::reject::not_found()),
-    }
+    let result: Vec<String> = vec![];
+    //let cpy = Arc::clone(&peers);
+    //let res = cpy.clone().read().await.get(&id);
+
+    Ok(json(&result))
 }
 
 pub async fn unregister(id: String, peers: Peers) -> Result<impl Reply> {
-    peers.write().await.remove(&id);
+    //peers.lock().write().await.remove(&id);
     Ok(StatusCode::OK)
 }
 
 async fn register_client(id: String, user_id: usize, peers: Peers) {
-    peers.write().await.insert(
+    let id = id.replace("\"", "");
+    peers.lock().unwrap().insert(
         id,
         Peer {
             user_id,
@@ -68,21 +63,22 @@ pub async fn register(body: RegisterRequest, peers: Peers) -> Result<impl Reply>
 }
 
 pub async fn publish(body: Event, peers: Peers) -> Result<impl Reply> {
-    let peer_number = body.user_id;
-    peers
-        .read()
-        .await
-        .iter()
-        .filter(|(_, p)| match peer_number {
-            Some(v) => p.user_id == v,
-            None => true,
-        })
-        .for_each(|(_, p)| {
-            if let Some(sender) = &p.channel {
-                let _ = sender.send(Ok(Message::text(body.message.clone())));
-            }
-        });
+    let peer_uuid = body.uuid.clone();
+    let peer_uuid = peer_uuid.replace("\"", "");
+    let uuid_cpy = peer_uuid.clone();
+    let new_message = body.message.clone();
 
-    let sender_id = vec![peer_number];
-    Ok(json(&sender_id))
+    let mut map = peers.lock().unwrap();
+    if map.contains_key(&peer_uuid) {
+        map.get_mut(&peer_uuid)
+            .unwrap()
+            .gossip_msg
+            .push(new_message);
+    } else {
+        println!("couldn't find key: {}", peer_uuid);
+    }
+
+    let new_msg_state = map.get_mut(&uuid_cpy).unwrap().gossip_msg.clone();
+
+    Ok(json(&new_msg_state))
 }
