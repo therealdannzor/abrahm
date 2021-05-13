@@ -63,8 +63,8 @@ impl Transition {
 }
 
 // Transact is the internal representation of a transaction between accounts. Note that its purpose
-// is to make sure that a transaction is *feasible* from a spending perspective and not from a
-// validity perspective.
+// is to make sure that a transaction is *possible* from a spending perspective (i.e. it's not
+// overspending a balance). It does not worry about the actual execution.
 //
 // In contrast, an external transaction is handled in conjunction with including it to a mempool.
 // Hence, we only require checks that relates to the state db in this transaction.
