@@ -15,6 +15,7 @@ fn with_peers(peers: Peers) -> impl Filter<Extract = (Peers,), Error = Infallibl
     warp::any().map(move || peers.clone())
 }
 
+#[allow(dead_code)]
 pub async fn serve_routes() -> oneshot::Sender<bool> {
     let peers: Peers = Arc::new(Mutex::new(HashMap::new()));
 
