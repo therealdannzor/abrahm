@@ -62,9 +62,8 @@ impl Transition {
     }
 
     pub fn digest(&self) -> String {
-        let hash_out = Sha256::new();
-        let res: String = "".to_string();
-        res.push_str(&self.to_root_hash.clone());
+        let mut hash_out = Sha256::new();
+        let mut res = self.to_root_hash.clone();
         res.push_str(&self.from_root_hash.clone());
         hash_out.input_str(&res);
         hash_out.result_str()
@@ -107,8 +106,7 @@ impl Transact {
     // pack all components and hash
     pub fn serialize(&self) -> String {
         let mut hash_out = Sha256::new();
-        let res: String = "".to_string();
-        res.push_str(&self.from.clone());
+        let mut res = self.from.clone();
         res.push_str(&self.to.clone());
         res.push_str(&self.amount.to_string());
         hash_out.input_str(&res);

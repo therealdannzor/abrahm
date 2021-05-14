@@ -1,4 +1,4 @@
-use crypto::sha2::Sha256;
+use crypto::{digest::Digest, sha2::Sha256};
 
 use super::transition::Transition;
 use crate::swiss_knife::helper;
@@ -34,11 +34,15 @@ impl Request {
     }
 
     pub fn from(&self) -> String {
-        self.origin_id
+        self.origin_id.clone()
     }
 
     pub fn digest(&self) -> String {
-        let hash_out = Sha256::new();
-        let res = self.timestamp.to_string();
+        let mut hash_out = Sha256::new();
+        let ts = self.timestamp.to_string();
+        let transit = self.next_state.digest();
+        hash_out.input_str(&ts);
+        hash_out.input_str(&transit);
+        hash_out.result_str()
     }
 }

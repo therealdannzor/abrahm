@@ -1,12 +1,16 @@
 #![allow(unused)]
 
 use crate::consensus::common::{Committer, View};
+use crate::consensus::messages_tp::{Commit, Prepare, Preprepare};
 use crate::consensus::request::Request;
 use std::collections::HashMap;
 
 // Backlog contains the different messages that each peer accumulates as part of the SMR process
 pub struct Backlog {
     request: Request,
+    preprepare: Preprepare,
+    prepare: Prepare,
+    commit: Commit,
 }
 
 pub struct Engine {
