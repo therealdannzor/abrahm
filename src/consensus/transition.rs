@@ -60,6 +60,15 @@ impl Transition {
             to_root_hash: next_state,
         }
     }
+
+    pub fn digest(&self) -> String {
+        let hash_out = Sha256::new();
+        let res: String = "".to_string();
+        res.push_str(&self.to_root_hash.clone());
+        res.push_str(&self.from_root_hash.clone());
+        hash_out.input_str(&res);
+        hash_out.result_str()
+    }
 }
 
 // Transact is the internal representation of a transaction between accounts. Note that its purpose
@@ -93,5 +102,16 @@ impl Transact {
             to: to.to_string(),
             amount,
         }
+    }
+
+    // pack all components and hash
+    pub fn serialize(&self) -> String {
+        let mut hash_out = Sha256::new();
+        let res: String = "".to_string();
+        res.push_str(&self.from.clone());
+        res.push_str(&self.to.clone());
+        res.push_str(&self.amount.to_string());
+        hash_out.input_str(&res);
+        hash_out.result_str()
     }
 }

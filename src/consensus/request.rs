@@ -1,3 +1,5 @@
+use crypto::sha2::Sha256;
+
 use super::transition::Transition;
 use crate::swiss_knife::helper;
 #[allow(dead_code)]
@@ -25,5 +27,18 @@ impl Request {
             next_state,
             origin_id: id.to_string(),
         }
+    }
+
+    pub fn timestamp(&self) -> String {
+        self.timestamp.to_string()
+    }
+
+    pub fn from(&self) -> String {
+        self.origin_id
+    }
+
+    pub fn digest(&self) -> String {
+        let hash_out = Sha256::new();
+        let res = self.timestamp.to_string();
     }
 }
