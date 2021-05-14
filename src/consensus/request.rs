@@ -1,8 +1,8 @@
+#![allow(unused)]
 use crypto::{digest::Digest, sha2::Sha256};
 
 use super::transition::Transition;
 use crate::swiss_knife::helper;
-#[allow(dead_code)]
 
 // Request corresponds to a proposal of a state machine operation, sent by the primary.
 //
@@ -20,7 +20,6 @@ pub struct Request {
 }
 
 impl Request {
-    #[allow(dead_code)]
     pub fn new(next_state: Transition, id: &str) -> Self {
         Self {
             timestamp: helper::new_timestamp(),

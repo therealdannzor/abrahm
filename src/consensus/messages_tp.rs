@@ -1,5 +1,5 @@
+#![allow(unused)]
 use crate::consensus::common::{SequenceNumber, View};
-use crate::consensus::request::Request;
 
 ///! Contains the message types for the three-phase consensus (PREPREPARE, PREPARE, COMMIT)
 
@@ -11,12 +11,20 @@ pub struct Preprepare {
 }
 
 impl Preprepare {
-    pub fn new(r: Request) -> Self {
-        Self {
-            v: 0,
-            n: 0,
-            d: r.digest(),
-        }
+    pub fn new(v: View, n: SequenceNumber, d: String) -> Self {
+        Self { v, n, d }
+    }
+
+    pub fn view(&self) -> View {
+        self.v.clone()
+    }
+
+    pub fn seq(&self) -> SequenceNumber {
+        self.n.clone()
+    }
+
+    pub fn digest(&self) -> String {
+        self.d.clone()
     }
 }
 
@@ -32,6 +40,18 @@ impl Prepare {
     pub fn new(v: View, n: SequenceNumber, d: String, i: u8) -> Self {
         Self { v, n, d, i }
     }
+
+    pub fn view(&self) -> View {
+        self.v.clone()
+    }
+
+    pub fn seq(&self) -> SequenceNumber {
+        self.n.clone()
+    }
+
+    pub fn digest(&self) -> String {
+        self.d.clone()
+    }
 }
 
 // Commit finalizes the proposal request and starts the commit phase
@@ -45,5 +65,17 @@ pub struct Commit {
 impl Commit {
     pub fn new(v: View, n: SequenceNumber, d: String, i: u8) -> Self {
         Self { v, n, d, i }
+    }
+
+    pub fn view(&self) -> View {
+        self.v.clone()
+    }
+
+    pub fn seq(&self) -> SequenceNumber {
+        self.n.clone()
+    }
+
+    pub fn digest(&self) -> String {
+        self.d.clone()
     }
 }
