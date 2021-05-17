@@ -1,19 +1,10 @@
 #![allow(unused)]
 
-use crate::consensus::common::{Committer, ValidatorSet, View};
+use crate::consensus::common::{Committer, SequenceNumber, ValidatorSet, View};
 use crate::consensus::messages_tp::{Commit, Prepare, Preprepare};
 use crate::consensus::request::Request;
 use std::collections::HashMap;
 use std::vec::Vec;
-
-// Backlog contains the different messages that each peer accumulates as part of the SMR process
-pub struct Backlog {
-    v: View,
-    request: Request,
-    preprepare: Preprepare,
-    prepare: Prepare,
-    commit: Commit,
-}
 
 // Engine is the second highest abstraction of the consensus engine (after Consensus) which contains
 // all the neccessary information for a validator to participate in a the replication process.
@@ -22,12 +13,6 @@ pub struct Backlog {
 pub struct Engine {
     // The latest view, from the perspective of the client
     v: View,
-
-    // Created and broadcast messages
-    broadcast: Vec<Backlog>,
-
-    // Received messages from other peers
-    received: HashMap<Committer, Vec<Backlog>>,
 
     // The nodes part of the consensus process.
     val_set: ValidatorSet,
@@ -44,11 +29,21 @@ impl Engine {
     pub fn new(validators: ValidatorSet) -> Self {
         Self {
             v: 0,
-            broadcast: Vec::new(),
-            received: HashMap::new(),
             val_set: validators,
             stable_checkpoint: 0,
             latest_checkpoint: 0,
         }
+    }
+
+    pub fn inc_v(mut self) {
+        self.v = self.v + 1;
+    }
+
+    pub fn inc_stable_cp(mut self) {
+        self.stable_checkpoint = self.stable_checkpoint + 1;
+    }
+
+    pub fn inc_latest_cp(mut self) {
+        self.latest_checkpoint = self.latest_checkpoint + 1;
     }
 }

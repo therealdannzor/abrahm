@@ -1,5 +1,5 @@
 #![allow(unused)]
-use crate::consensus::common::{SequenceNumber, View};
+use crate::consensus::common::{Committer, SequenceNumber, View};
 
 ///! Contains the message types for the three-phase consensus (PREPREPARE, PREPARE, COMMIT)
 
@@ -8,11 +8,12 @@ pub struct Preprepare {
     v: View,
     n: SequenceNumber,
     d: String, // message digest
+    c: Committer,
 }
 
 impl Preprepare {
-    pub fn new(v: View, n: SequenceNumber, d: String) -> Self {
-        Self { v, n, d }
+    pub fn new(v: View, n: SequenceNumber, d: String, c: Committer) -> Self {
+        Self { v, n, d, c }
     }
 
     pub fn view(&self) -> View {
