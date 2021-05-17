@@ -2,8 +2,10 @@
 #![allow(unused)]
 use super::ws_peer::{Peer, Peers, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::vec::Vec;
 use uuid::Uuid;
-use warp::{http::StatusCode, reply::json, ws::Ws, Reply};
+use warp::{http::StatusCode, reply::json, ws::Ws, Filter, Reply};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct RegisterRequest {
@@ -18,25 +20,56 @@ pub struct RegisterResponse {
 
 #[derive(Deserialize, Debug)]
 pub struct Event {
+    // easy identifier
     user_id: Option<usize>,
-    uuid: String,
 
-    // message is a new block event
-    message: String,
+    // consensus messages
+    view: u32,
+    round: u32,
+    author_uuid: String, // websocket id used as validator address
+}
+
+enum MessageType {
+    Preprepare,
+    Prepare,
+    Commit,
 }
 
 pub async fn health() -> Result<impl Reply> {
     Ok(StatusCode::OK)
 }
 
-pub async fn get_peer_info(ws: Ws, id: String, peers: Peers) -> Result<impl Reply> {
-    let mut map = peers.lock().unwrap();
-    let mut result: Vec<String> = vec![];
-    if map.contains_key(&id) {
-        result = map.get_mut(&id).unwrap().gossip_msg.clone();
+// returns stored consensus messages from other peers
+pub async fn messagestore(
+    ws: Ws,
+    peers: Peers,
+    param_tail: warp::path::Tail,
+) -> Result<impl Reply> {
+    let params: Vec<&str> = param_tail.as_str().split('/').collect();
+    if params.len() != 2 {
+        Err(warp::reject());
     }
 
-    Ok(json(&result))
+    let client_id = params[0];
+    let target_id = params[1];
+    let mut map = peers.lock().unwrap();
+    let mut p: Peer;
+    if map.contains_key(&client_id) {
+        let mut result: Vec<String> = vec![];
+        result = map
+            .get_mut(&id)
+            .unwrap()
+            .clone()
+            .preprepare_msg
+            .clone()
+            .get_mut(&target_id)
+            .unwrap()
+            .clone();
+
+        Ok(json(&result))
+    } else {
+        Err(warp::reject())
+    }
 }
 
 pub async fn unregister(id: String, peers: Peers) -> Result<impl Reply> {
@@ -50,7 +83,9 @@ async fn register_client(id: String, user_id: usize, peers: Peers) {
         id,
         Peer {
             user_id,
-            gossip_msg: std::vec::Vec::new(),
+            preprepare_msg: HashMap::new(),
+            prepare_msg: HashMap::new(),
+            commit_msg: HashMap::new(),
             channel: None,
         },
     );
@@ -65,7 +100,7 @@ pub async fn register(body: RegisterRequest, peers: Peers) -> Result<impl Reply>
 }
 
 pub async fn publish(body: Event, peers: Peers) -> Result<impl Reply> {
-    let peer_uuid = body.uuid.clone();
+    let peer_uuid = body.author_uuid.clone();
     let peer_uuid = peer_uuid.replace("\"", "");
     let uuid_cpy = peer_uuid.clone();
     let new_message = body.message.clone();
