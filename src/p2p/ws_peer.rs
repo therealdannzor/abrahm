@@ -12,17 +12,25 @@ use tokio::sync::mpsc::UnboundedSender;
 use warp::{ws::Message, Error, Rejection};
 #[derive(Debug, Clone)]
 pub struct Peer {
-    // peer identifier
+    // Local identifier
     pub user_id: usize,
-    // list of messages this peer has received
-    pub gossip_msg: Vec<String>,
-    // channel to this peer
+
+    // Collection of consensus messages buffered from other peers. The maps are from user_id to the
+    // buffered set of messages. Each message has the form:
+    // '{"user_id": <usize>, "view": <usize>, "digest": <String>}'
+    //
+    // TODO: find a better solution to avoid needing separate maps for each connected peer.
+    pub preprepare_msg: HashMap<usize, Vec<String>>,
+    pub prepare_msg: HashMap<usize, Vec<String>>,
+    pub commit_msg: HashMap<usize, Vec<String>>,
+
+    // Conduit to reach this peer
     pub channel: Option<UnboundedSender<std::result::Result<Message, Error>>>,
 }
 
 pub type Result<T> = std::result::Result<T, Rejection>;
 
-pub type Peers = Arc<Mutex<HashMap<String, Peer>>>;
+pub type Peers = Arc<Mutex<Peer>>;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct TopicsRequest {
