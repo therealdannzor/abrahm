@@ -42,11 +42,11 @@ pub async fn serve_routes() -> oneshot::Sender<bool> {
         .and_then(func::publish);
 
     // websocket
-    let ws_route = warp::path("ws")
+    let ws_route = warp::path("store")
         .and(warp::ws())
-        .and(warp::path::param())
         .and(with_peers(peers.clone()))
-        .and_then(func::get_peer_info);
+        .and(warp::path::tail())
+        .and_then(func::messagestore);
 
     // warp filter of all the routes
     let routes = health_route
