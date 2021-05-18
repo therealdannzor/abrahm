@@ -8,12 +8,6 @@ use uuid::Uuid;
 use warp::{http::StatusCode, reply::json, ws::Ws, Filter, Reply};
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct RegisterRequest {
-    user_id: usize,
-    message: String,
-}
-
-#[derive(Deserialize, Serialize, Debug)]
 pub struct RegisterResponse {
     pub user_id: String,
 }
@@ -27,6 +21,17 @@ pub struct Event {
     phase: String,
     view: u32,
     round: u32,
+}
+
+impl Event {
+    pub fn new(user_id: usize, phase: String, view: u32, round: u32) -> Self {
+        Self {
+            user_id,
+            phase,
+            view,
+            round,
+        }
+    }
 }
 
 enum MessageType {
@@ -61,9 +66,10 @@ pub async fn messagestore(
     Ok(json(&res))
 }
 
-pub async fn register(target_id: usize, peers: Peers) -> Result<impl Reply> {
+pub async fn register(body: Event, peers: Peers) -> Result<impl Reply> {
+    let target_id = body.user_id;
     let mut p = peers.lock().unwrap();
-    let mut res: &Vec<String> = &vec![String::from("")];
+
     if !p.preprepare_msg.contains_key(&target_id) {
         p.preprepare_msg.insert(target_id, Vec::new());
     }
@@ -74,7 +80,7 @@ pub async fn register(target_id: usize, peers: Peers) -> Result<impl Reply> {
         p.commit_msg.insert(target_id, Vec::new());
     }
 
-    Ok(warp::reply())
+    Ok(json(&body))
 }
 
 pub async fn publish(body: Event, peers: Peers) -> Result<impl Reply> {
@@ -103,5 +109,5 @@ pub async fn publish(body: Event, peers: Peers) -> Result<impl Reply> {
         _ => log::info!("invalid consensus message"),
     }
 
-    Ok(warp::reply())
+    Ok(json(&body))
 }

@@ -15,9 +15,7 @@ pub struct Peer {
     // Local identifier
     pub user_id: usize,
 
-    // Collection of consensus messages buffered from other peers. The maps are from user_id to the
-    // buffered set of messages. Each message has the form:
-    // '{"user_id": <usize>, "view": <usize>, "digest": <String>}'
+    // Collection of consensus messages buffered from other peers.
     //
     // TODO: find a better solution to avoid needing separate maps for each connected peer.
     pub preprepare_msg: HashMap<usize, Vec<String>>,

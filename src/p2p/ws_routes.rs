@@ -21,7 +21,6 @@ pub async fn serve_routes() -> oneshot::Sender<bool> {
     // register peer endpoint
     let register = warp::path("register");
     let register_routes = register
-        .and(warp::post())
         .and(warp::body::json())
         .and(with_peers(peers.clone()))
         .and_then(func::register);
