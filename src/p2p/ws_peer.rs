@@ -28,6 +28,18 @@ pub struct Peer {
     pub channel: Option<UnboundedSender<std::result::Result<Message, Error>>>,
 }
 
+impl Peer {
+    pub fn new(user_id: usize) -> Self {
+        Self {
+            user_id,
+            preprepare_msg: HashMap::new(),
+            prepare_msg: HashMap::new(),
+            commit_msg: HashMap::new(),
+            channel: None,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Rejection>;
 
 pub type Peers = Arc<Mutex<Peer>>;

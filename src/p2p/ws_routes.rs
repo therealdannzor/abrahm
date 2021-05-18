@@ -1,7 +1,6 @@
 // Adapted from https://blog.logrocket.com/how-to-build-a-websocket-server-with-rust/
 
 use std::{
-    collections::HashMap,
     convert::Infallible,
     sync::{Arc, Mutex},
 };
@@ -9,7 +8,7 @@ use tokio::sync::oneshot;
 use warp::Filter;
 
 use super::ws_handler as func;
-use super::ws_peer::Peers;
+use super::ws_peer::{Peer, Peers};
 
 fn with_peers(peers: Peers) -> impl Filter<Extract = (Peers,), Error = Infallible> + Clone {
     warp::any().map(move || peers.clone())
@@ -17,10 +16,7 @@ fn with_peers(peers: Peers) -> impl Filter<Extract = (Peers,), Error = Infallibl
 
 #[allow(dead_code)]
 pub async fn serve_routes() -> oneshot::Sender<bool> {
-    let peers: Peers = Arc::new(Mutex::new(HashMap::new()));
-
-    // heartbeat endpoint
-    let health_route = warp::path!("health").and_then(func::health);
+    let peers: Peers = Arc::new(Mutex::new(Peer::new(0)));
 
     // register peer endpoint
     let register = warp::path("register");
@@ -28,12 +24,7 @@ pub async fn serve_routes() -> oneshot::Sender<bool> {
         .and(warp::post())
         .and(warp::body::json())
         .and(with_peers(peers.clone()))
-        .and_then(func::register)
-        .or(register
-            .and(warp::delete())
-            .and(warp::path::param())
-            .and(with_peers(peers.clone()))
-            .and_then(func::unregister));
+        .and_then(func::register);
 
     // publish event endpoint
     let publish = warp::path("publish")
@@ -49,10 +40,9 @@ pub async fn serve_routes() -> oneshot::Sender<bool> {
         .and_then(func::messagestore);
 
     // warp filter of all the routes
-    let routes = health_route
-        .or(register_routes)
-        .or(ws_route)
+    let routes = register_routes
         .or(publish)
+        .or(ws_route)
         .with(warp::cors().allow_any_origin());
 
     // setup server so that it can exist in a gracefully way through a tx channel
