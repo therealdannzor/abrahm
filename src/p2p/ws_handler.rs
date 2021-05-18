@@ -15,28 +15,24 @@ pub struct RegisterRequest {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct RegisterResponse {
-    pub uuid: String,
+    pub user_id: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Event {
     // easy identifier
-    user_id: Option<usize>,
+    user_id: usize,
 
     // consensus messages
+    phase: String,
     view: u32,
     round: u32,
-    author_uuid: String, // websocket id used as validator address
 }
 
 enum MessageType {
     Preprepare,
     Prepare,
     Commit,
-}
-
-pub async fn health() -> Result<impl Reply> {
-    Ok(StatusCode::OK)
 }
 
 // returns stored consensus messages from other peers
@@ -47,75 +43,65 @@ pub async fn messagestore(
 ) -> Result<impl Reply> {
     let params: Vec<&str> = param_tail.as_str().split('/').collect();
     if params.len() != 2 {
-        Err(warp::reject());
+        warp::reject();
     }
 
-    let client_id = params[0];
+    let message_type = params[0];
     let target_id = params[1];
-    let mut map = peers.lock().unwrap();
-    let mut p: Peer;
-    if map.contains_key(&client_id) {
-        let mut result: Vec<String> = vec![];
-        result = map
-            .get_mut(&id)
-            .unwrap()
-            .clone()
-            .preprepare_msg
-            .clone()
-            .get_mut(&target_id)
-            .unwrap()
-            .clone();
-
-        Ok(json(&result))
-    } else {
-        Err(warp::reject())
+    let target_id = target_id.parse::<usize>().unwrap();
+    let mut p = peers.lock().unwrap();
+    let mut res: &Vec<String> = &vec![String::from("")];
+    match message_type {
+        "preprepare" => res = p.preprepare_msg.get_mut(&target_id).unwrap(),
+        "prepare" => res = p.prepare_msg.get_mut(&target_id).unwrap(),
+        "commit" => res = p.commit_msg.get_mut(&target_id).unwrap(),
+        _ => log::info!("invalid consensus message"),
     }
+
+    Ok(json(&res))
 }
 
-pub async fn unregister(id: String, peers: Peers) -> Result<impl Reply> {
-    //peers.lock().write().await.remove(&id);
-    Ok(StatusCode::OK)
-}
+pub async fn register(target_id: usize, peers: Peers) -> Result<impl Reply> {
+    let mut p = peers.lock().unwrap();
+    let mut res: &Vec<String> = &vec![String::from("")];
+    if !p.preprepare_msg.contains_key(&target_id) {
+        p.preprepare_msg.insert(target_id, Vec::new());
+    }
+    if !p.prepare_msg.contains_key(&target_id) {
+        p.prepare_msg.insert(target_id, Vec::new());
+    }
+    if !p.commit_msg.contains_key(&target_id) {
+        p.commit_msg.insert(target_id, Vec::new());
+    }
 
-async fn register_client(id: String, user_id: usize, peers: Peers) {
-    let id = id.replace("\"", "");
-    peers.lock().unwrap().insert(
-        id,
-        Peer {
-            user_id,
-            preprepare_msg: HashMap::new(),
-            prepare_msg: HashMap::new(),
-            commit_msg: HashMap::new(),
-            channel: None,
-        },
-    );
-}
-
-pub async fn register(body: RegisterRequest, peers: Peers) -> Result<impl Reply> {
-    let user_id = body.user_id;
-    let uuid = Uuid::new_v4().simple().to_string();
-
-    register_client(uuid.clone(), user_id, peers).await;
-    Ok(json(&RegisterResponse { uuid }))
+    Ok(warp::reply())
 }
 
 pub async fn publish(body: Event, peers: Peers) -> Result<impl Reply> {
-    let peer_uuid = body.author_uuid.clone();
-    let peer_uuid = peer_uuid.replace("\"", "");
-    let uuid_cpy = peer_uuid.clone();
-    let new_message = body.message.clone();
+    let target_id = body.user_id;
+    let message_type = body.phase.clone();
+    let message_type = message_type.as_str();
 
-    let mut map = peers.lock().unwrap();
-    if map.contains_key(&peer_uuid) {
-        map.get_mut(&peer_uuid)
-            .unwrap()
-            .gossip_msg
-            .push(new_message);
-    } else {
-        println!("couldn't find key: {}", peer_uuid);
+    let mut p = peers.lock().unwrap();
+    let msg = serde_json::to_string(&body).unwrap();
+    match message_type {
+        "preprepare" => {
+            if p.preprepare_msg.contains_key(&target_id) {
+                p.preprepare_msg.get_mut(&target_id).unwrap().push(msg);
+            }
+        }
+        "prepare" => {
+            if p.prepare_msg.contains_key(&target_id) {
+                p.prepare_msg.get_mut(&target_id).unwrap().push(msg);
+            }
+        }
+        "commit" => {
+            if p.commit_msg.contains_key(&target_id) {
+                p.commit_msg.get_mut(&target_id).unwrap().push(msg);
+            }
+        }
+        _ => log::info!("invalid consensus message"),
     }
 
-    let new_msg_state = map.get_mut(&uuid_cpy).unwrap().gossip_msg.clone();
-
-    Ok(json(&new_msg_state))
+    Ok(warp::reply())
 }
