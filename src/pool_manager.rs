@@ -86,9 +86,12 @@ fn update_mutex_timestamp(m: &Mutex<i64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
     use crate::p2p::ws_routes::serve_routes;
+    use crate::{block::Block, p2p::ws_handler::Event};
     use serde_json::Value;
+    use std::borrow::Borrow;
+    use tokio_test::assert_ok;
+    use warp::reply::json;
 
     fn setup() -> (Vec<Block>, PoolManager) {
         // instead of intializing the whole tx pool struct together with
@@ -117,14 +120,15 @@ mod tests {
     async fn curl_post(
         endpoint: &str,
         user_id: usize,
-        uuid: String,
-        message: String,
+        consensus_message: &str,
+        view: u32,
+        round: u32,
     ) -> Result<Value, reqwest::Error> {
         let mut url_addr: String = "http://127.0.0.1:8000".to_owned();
         url_addr.push_str(endpoint);
         let echo_json: Value = reqwest::Client::new()
             .post(url_addr)
-            .json(&serde_json::json!({ "user_id": user_id, "uuid": uuid, "message": message }))
+            .json(&serde_json::json!({ "user_id": user_id, "phase": consensus_message.to_string(), "view": view, "round": round }))
             .send()
             .await?
             .json()
@@ -134,22 +138,24 @@ mod tests {
         Ok(echo_json)
     }
 
-    async fn api_register(peer_id: usize) -> Result<Value, reqwest::Error> {
-        curl_post("/register", peer_id, String::from(""), String::from("")).await
+    async fn api_register(user_id: usize) -> Result<Value, reqwest::Error> {
+        curl_post("/register", user_id, "", 0, 0).await
     }
 
     async fn api_publish(
         peer_id: usize,
-        uuid: String,
-        message: &str,
+        consensus_message: &str,
+        view: u32,
+        round: u32,
     ) -> Result<Value, reqwest::Error> {
-        curl_post("/publish", peer_id, uuid.clone(), message.to_string()).await
+        curl_post("/publish", peer_id, consensus_message, view, round).await
     }
 
-    async fn api_info(uuid: &str) -> Result<Value, reqwest::Error> {
-        let mut uri: String = "http://127.0.0.1:8000/ws/".to_owned();
-        let uuid = uuid.replace("\"", "");
-        uri.push_str(&uuid);
+    async fn api_info(peer_id: usize, consensus_message: &str) -> Result<Value, reqwest::Error> {
+        let mut uri: String = "http://127.0.0.1:8000/store/".to_owned();
+        uri.push_str(consensus_message);
+        uri.push_str("/");
+        uri.push_str(&peer_id.to_string());
 
         let conn = reqwest::header::CONNECTION;
         let upgrade = reqwest::header::UPGRADE;
@@ -204,31 +210,24 @@ mod tests {
 
         // register a peer ID
         let peer_no = 1;
-        let mut register_response = api_register(peer_no).await.unwrap();
-        let peer_uuid = register_response["uuid"].take().to_string();
-        let extra_uuid = peer_uuid.clone();
+        let register_response = api_register(peer_no).await;
+        assert_ok!(register_response);
 
         // publish 3 messages
-        let mut pub_resp = api_publish(peer_no, peer_uuid.clone(), "block 1")
-            .await
-            .unwrap();
-        let mut expected_pub_resp = "block 1";
-        assert_eq!(pub_resp.get(0).unwrap(), expected_pub_resp);
-        pub_resp = api_publish(peer_no, peer_uuid.clone(), "block 2")
-            .await
-            .unwrap();
-        expected_pub_resp = "block 2";
-        assert_eq!(pub_resp.get(1).unwrap(), expected_pub_resp);
-        pub_resp = api_publish(peer_no, peer_uuid.clone(), "block 3")
-            .await
-            .unwrap();
-        expected_pub_resp = "block 3";
-        assert_eq!(pub_resp.get(2).unwrap(), expected_pub_resp);
+        let pub_resp = api_publish(peer_no, "preprepare", 0, 0).await;
+        assert_ok!(pub_resp);
 
-        // retrieve peer message(s)
-        let get_messages_resp = api_info(&extra_uuid).await.unwrap();
-        let expected_amount = 3;
-        assert_eq!(get_messages_resp.as_array().unwrap().len(), expected_amount);
+        // retrieve Preprepare message
+        let get_preprepare = api_info(peer_no, "preprepare").await;
+        assert_ok!(get_preprepare.borrow());
+        // check if it contains valid json
+        let json_result = get_preprepare.unwrap();
+        let expected =
+            serde_json::to_string(&Event::new(1, String::from("preprepare"), 0, 0)).unwrap();
+        let expected = vec![expected];
+        let expected = json(&expected);
+
+        assert_eq!(json_result, expected);
 
         // teardown
         let _ = shutdown_channel.send(true);
