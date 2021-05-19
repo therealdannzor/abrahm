@@ -86,12 +86,11 @@ fn update_mutex_timestamp(m: &Mutex<i64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::Block;
     use crate::p2p::ws_routes::serve_routes;
-    use crate::{block::Block, p2p::ws_handler::Event};
     use serde_json::Value;
     use std::borrow::Borrow;
     use tokio_test::assert_ok;
-    use warp::reply::json;
 
     fn setup() -> (Vec<Block>, PoolManager) {
         // instead of intializing the whole tx pool struct together with
@@ -203,6 +202,7 @@ mod tests {
         assert_eq!(b3.previous_hash(), blocks_to_send[2].previous_hash());
     }
 
+    use serde_json::json;
     // tests that outbound external messages are received properly [pool manager task #3]
     #[actix_rt::test]
     async fn broadcasts_confirmed_txs_as_blocks_to_other_peers() {
@@ -216,17 +216,31 @@ mod tests {
         // publish 3 messages
         let pub_resp = api_publish(peer_no, "preprepare", 0, 0).await;
         assert_ok!(pub_resp);
+        let pub_resp = api_publish(peer_no, "prepare", 0, 1).await;
+        assert_ok!(pub_resp);
+        let pub_resp = api_publish(peer_no, "commit", 0, 2).await;
+        assert_ok!(pub_resp);
 
         // retrieve Preprepare message
-        let get_preprepare = api_info(peer_no, "preprepare").await;
-        assert_ok!(get_preprepare.borrow());
+        let get_message = api_info(peer_no, "preprepare").await;
+        assert_ok!(get_message.borrow());
         // check if it contains valid json
-        let json_result = get_preprepare.unwrap();
-        let expected =
-            serde_json::to_string(&Event::new(1, String::from("preprepare"), 0, 0)).unwrap();
-        let expected = vec![expected];
-        let expected = json(&expected);
+        let json_result = get_message.unwrap();
+        let expected = json!(["{\"user_id\":1,\"phase\":\"preprepare\",\"view\":0,\"round\":0}"]);
+        assert_eq!(json_result, expected);
 
+        // retrieve Prepare message
+        let get_message = api_info(peer_no, "prepare").await;
+        assert_ok!(get_message.borrow());
+        let json_result = get_message.unwrap();
+        let expected = json!(["{\"user_id\":1,\"phase\":\"prepare\",\"view\":0,\"round\":1}"]);
+        assert_eq!(json_result, expected);
+
+        // retrieve Commit message
+        let get_message = api_info(peer_no, "commit").await;
+        assert_ok!(get_message.borrow());
+        let json_result = get_message.unwrap();
+        let expected = json!(["{\"user_id\":1,\"phase\":\"commit\",\"view\":0,\"round\":2}"]);
         assert_eq!(json_result, expected);
 
         // teardown
