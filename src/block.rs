@@ -14,6 +14,8 @@ pub struct Block {
     timestamp: i64,
     // Information of (optional) operations encapsulated in this block
     data: &'static str,
+    // The place in the chain this block has. The genesis is 0 (first).
+    number: u32,
 }
 
 impl Block {
@@ -23,12 +25,14 @@ impl Block {
         previous_hash: String,
         timestamp: i64,
         data: &'static str,
+        number: u32,
     ) -> Self {
         Self {
             this_hash,
             previous_hash,
             timestamp,
             data,
+            number,
         }
     }
 
@@ -45,6 +49,7 @@ impl Block {
             previous_hash: "".to_string(),
             timestamp: helper::new_timestamp(),
             data: "The founding block of the blockchain",
+            number: 0,
         }
     }
 
@@ -83,17 +88,22 @@ impl Block {
     pub fn data(&self) -> &'static str {
         self.data
     }
+
+    pub fn number(&self) -> u32 {
+        self.number
+    }
 }
 
 impl Display for Block {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(
             f,
-            "<Block info> hash: {}, previous_hash: {}, timestamp: {}, data: {}",
+            "<Block info> hash: {}, previous_hash: {}, timestamp: {}, data: {}, number: {}",
             self.hash(),
             self.previous_hash(),
             self.timestamp(),
             self.data(),
+            self.number(),
         )
     }
 }
@@ -122,6 +132,7 @@ mod tests {
             hashed!("0x"),
             helper::new_timestamp(),
             "data1",
+            0,
         );
         let expected_root_hash = hashed!("0x1");
         let expected_previous_hash = hashed!("0x");

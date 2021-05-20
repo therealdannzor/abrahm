@@ -7,8 +7,13 @@ use std::vec::Vec;
 
 #[allow(dead_code)]
 pub struct Blockchain {
+    // contiguous link of blocks
     chain: Vec<Block>,
+
+    // memory pool of transactions
     pool: TxPool,
+
+    // account states
     account_db: StateDB,
 }
 
@@ -24,7 +29,7 @@ impl Blockchain {
     #[allow(dead_code)]
     pub fn new(genesis_block: Block, db_path: &str) -> Self {
         let mut chain = Vec::<Block>::new();
-        chain.push(genesis_block);
+        chain.push(genesis_block.clone());
         let pool = TxPool::new();
 
         let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
@@ -88,7 +93,7 @@ mod tests {
         let sec_hash = hashed!("0x1");
         let genesis_hash = bc.latest_block().hash().to_string();
         let genesis_time = bc.latest_block().timestamp();
-        let sec_block = Block::new(sec_hash, genesis_hash, genesis_time + 1, "blockData");
+        let sec_block = Block::new(sec_hash, genesis_hash, genesis_time + 1, "blockData", 0);
         bc.append_block(sec_block);
 
         let exp_len = 2;
