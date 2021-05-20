@@ -1,7 +1,9 @@
 #![allow(unused)]
 use super::engine::Engine;
+use crate::block::Block;
 use crate::core::Blockchain;
 use crate::state_db::StateDB;
+use std::sync::mpsc;
 
 // ConsensusChain represents the blockchain replication process to order and finalize state,
 // what is considered the 'truth'. We call this continuous activity state negotiation.
@@ -14,9 +16,41 @@ pub struct ConsensusChain {
     // Drives the PBFT consensus process and mechanisms
     engine: Engine,
 
+    // Leading block; the last appended block
+    head_block: Block,
+
     // The client identity
     id: String,
 
     // The client in charge of proposing a state change
     proposer: String,
+
+    // The channel to send updates to the core blockchain
+    sender: mpsc::Sender<Block>,
+}
+
+impl ConsensusChain {
+    pub fn new(
+        engine: Engine,
+        head_block: Block,
+        id: String,
+        proposer: String,
+        sender: mpsc::Sender<Block>,
+    ) -> Self {
+        Self {
+            engine,
+            head_block,
+            id,
+            proposer,
+            sender,
+        }
+    }
+
+    pub fn switch_proposer(&mut self, new: String) {
+        self.proposer = new
+    }
+
+    pub fn latest_block(self) -> Block {
+        self.head_block
+    }
 }
