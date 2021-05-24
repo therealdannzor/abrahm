@@ -224,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_three_pending_and_then_pop() {
+    fn add_three_pending_and_then_pop() {
         // Create four pending transactions: first during setup and
         // then three consecutive ones. The account nonce should be
         // at 4, as should the amount of (pending) transactions.
@@ -252,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unordered_tx_nonces() {
+    fn unordered_tx_nonces() {
         let mut p = pool_setup();
         let mut ord_tx = ord_tx_setup();
         // Assume account nonce 4 and 6 are rejected for some reason and 1, 2, 3, 5, and 7

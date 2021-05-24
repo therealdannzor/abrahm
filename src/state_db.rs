@@ -112,7 +112,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_new_insert_expect_new_state_change() {
+    fn new_insert_expect_new_state_change() {
         let mut db = setup();
         let root = db.get_root_hash();
 
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_new_insert_and_delete_expect_new_state() {
+    fn new_insert_and_delete_expect_new_state() {
         let mut db = setup();
         let root = db.get_root_hash();
 
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_delete_missing_key_expect_no_state_change() {
+    fn delete_missing_key_expect_no_state_change() {
         let mut db = setup();
 
         db.put("1", "2");
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_delete_key_with_no_balance_expect_no_state_change() {
+    fn delete_key_with_no_balance_expect_no_state_change() {
         let mut db = setup();
 
         db.put("1", "0");
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_add_large_key_expect_state_change() {
+    fn add_large_key_expect_state_change() {
         let mut db = setup();
 
         let genesis_root = db.get_root_hash();
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_empty_key_expect_no_state_change() {
+    fn empty_key_expect_no_state_change() {
         let mut db = setup();
         let genesis_root = db.get_root_hash();
 
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_empty_value_expect_no_state_change() {
+    fn empty_value_expect_no_state_change() {
         let mut db = setup();
         let genesis_root = db.get_root_hash();
 

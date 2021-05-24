@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_block_init_and_insertion() {
+    fn block_init_and_insertion() {
         let genesis = Block::genesis("0x");
         let mut bc = Blockchain::new(genesis, "/test");
 

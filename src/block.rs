@@ -115,7 +115,7 @@ mod tests {
     use crate::swiss_knife::helper::generate_hash_from_input;
 
     #[test]
-    fn test_genesis_block() {
+    fn genesis_block() {
         let block = Block::genesis("0x");
         let expected_root_hash = hashed!("0x");
         let expected_previous_hash = "";
@@ -126,7 +126,7 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_block() {
+    fn custom_block() {
         let mut block = Block::new(
             hashed!("0x1"),
             hashed!("0x"),
