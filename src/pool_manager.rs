@@ -110,6 +110,7 @@ mod tests {
                 (i - 1).to_string(),
                 helper::new_timestamp(),
                 "data",
+                u32::from(i),
             );
             res.push(b);
         }
