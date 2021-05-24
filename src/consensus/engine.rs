@@ -1,12 +1,11 @@
 #![allow(unused)]
 
-use crate::consensus::common::{Committer, SequenceNumber, ValidatorSet, View};
-use crate::consensus::messages_tp::{Commit, Prepare, Preprepare};
-use crate::consensus::request::Request;
-use std::collections::HashMap;
-use std::ops::Deref;
-use std::sync::mpsc;
-use std::vec::Vec;
+use crate::consensus::{
+    common::{Committer, SequenceNumber, ValidatorSet, View},
+    messages_tp::{Commit, Prepare, Preprepare},
+    request::Request,
+};
+use std::{collections::HashMap, ops::Deref, sync::mpsc, vec::Vec};
 
 // Engine is the second highest abstraction of the consensus engine (after Consensus) which contains
 // all the neccessary information for a validator to participate in a the replication process.
@@ -17,7 +16,7 @@ pub struct Engine {
     v: View,
 
     // The current phase the client is in as part of the consensus process
-    current_phase: String,
+    current_phase: State,
 
     // The nodes part of the consensus process.
     val_set: ValidatorSet,
@@ -107,33 +106,69 @@ fn filter_phase(needle: State, haystack: Vec<M>) -> Vec<M> {
 
 // Returns true if all identities in the haystack are unique. Used to assert
 // that the message set contains no duplicates.
-fn is_unique(needle: String, haystack: Vec<M>) -> bool {
+fn is_unique(needle: State, haystack: Vec<M>) -> bool {
     let mut chk = HashMap::new();
+    let num = needle.parse();
     for m in haystack.iter().clone() {
-        if chk.contains_key(&needle) {
+        if chk.contains_key(&num) {
             false;
         } else {
-            chk.insert(&needle, "dummy");
+            chk.insert(&num, "dummy");
         }
     }
     true
 }
 
-// Assert ageement of at least F+1 (>2/3) out of a total of N=3F+1 nodes.
-// Assumes that the message set is for a particular view.
-fn is_quorum(validators: ValidatorSet, message_set: Vec<M>) {
-    let set = validators.len();
-    if set < 4 {
-        panic!("invalid committee, need at least 4");
+// Returns the data payload (embedded in M) in which there have been most votes for
+// and the amount of votes for it.
+fn count_votes(haystack: Vec<M>) -> (String, usize) {
+    let mut most_popular = String::from("");
+    let mut most_amount = 0;
+    let mut map = HashMap::new();
+    for m in haystack.iter() {
+        let c = map.entry(m.d.clone()).or_insert(0);
+        *c += 1;
+        if *c > most_amount {
+            most_popular = m.d.clone();
+        }
     }
-    // Total replicas:      N = 3F + 1
-    // Maximum Byzantine    F = (N - 1) / 3
-    // Maximum sleeping:    F
-    // Quorum:              F + 1
-    let quorum = ((validators.len() - 1) / 3) + 1;
+
+    (most_popular, most_amount)
 }
 
 impl Engine {
+    // Assert ageement of at least F+1 (>2/3) out of a total of N=3F+1 nodes.
+    // Assumes that the message set is for a particular view.
+    fn is_quorum(self, message_set: Vec<M>) -> Result<String, &'static str> {
+        if self.val_set.len() < 4 {
+            panic!("invalid validator set size, this should not happen");
+        }
+
+        // Make sure we have messages from:
+        // unique peers
+        let ft = is_unique(self.current_phase.clone(), self.message_buffer.clone());
+        // in the same phase
+        let ft = filter_phase(self.current_phase, self.message_buffer);
+        // and in the same view.
+        let ft = filter_view(self.v, ft);
+
+        // total unique votes (N)
+        let n = ft.len();
+
+        // Total replicas:         N = 3F + 1
+        // Maximum Byzantine:      F = (N - 1) / 3
+        // Quorum:                 2F + 1
+        let quorum = 2 * ((n - 1) / 3) + 1;
+
+        let (vote, amount) = count_votes(ft);
+
+        if amount >= quorum {
+            Ok(vote)
+        } else {
+            Err("no quorum achieved")
+        }
+    }
+
     pub fn add_message(mut self, msg: M) {
         self.message_buffer.push(msg);
     }
@@ -148,7 +183,7 @@ impl Engine {
     pub fn new(validators: ValidatorSet) -> Self {
         Self {
             v: 0,
-            current_phase: String::from("StateAcceptRequest"),
+            current_phase: State::init(),
             val_set: validators,
             stable_checkpoint: 0,
             latest_checkpoint: 0,
