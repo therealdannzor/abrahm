@@ -5,6 +5,7 @@ use crate::consensus::{
     messages_tp::{Commit, Prepare, Preprepare},
     request::Request,
 };
+use crate::{hashed, swiss_knife::helper::generate_hash_from_input};
 use std::{collections::HashMap, ops::Deref, sync::mpsc, vec::Vec};
 
 // Engine is the second highest abstraction of the consensus engine (after Consensus) which contains
@@ -30,11 +31,30 @@ pub struct Engine {
 
     // Consensus messages
     message_buffer: Vec<M>,
+
+    // View messages
+    view_buffer: HashMap<View, AckMessagesView>,
+
+    // Amount of time before resending a message
+    timeout: std::time::Duration,
+
+    // Only accept sequence numbers above this
+    low_watermark: u64,
+
+    // Only accept sequence numbers below this
+    high_watermark: u64,
+}
+
+// Accepted messages (Preprepare, Prepare, Commit) for a view
+struct AckMessagesView {
+    preprepare: Option<M>,
+    prepare: Option<M>,
+    commit: Option<M>,
 }
 
 #[derive(Clone)]
 // Phase messages
-struct State(u8);
+pub struct State(u8);
 impl State {
     pub fn init() -> Self {
         Self(0)
@@ -48,15 +68,15 @@ impl State {
     // 4 = VIEW CHANGE
     // 5 = NEW VIEW
     // 6 = CHECKPOINT
-    pub fn change(mut self, num: u8) {
+    pub fn new(num: u8) -> Self {
         if num < 7 {
-            self.0 = num;
+            Self(num)
         } else {
             panic!("cannot create invalid state");
         }
     }
 
-    pub fn parse(self) -> u8 {
+    pub fn into_inner(self) -> u8 {
         self.0
     }
 }
@@ -69,11 +89,74 @@ impl PartialEq for State {
 // Represents the format of all the consensus messages between peers
 #[derive(Clone)]
 pub struct M {
+    // denotes the type of the message
     phase: State,
-    id: String,
+    // identity of the replcia
+    i: String,
+    // provides liveness by allowing changes if (when) primary fails
     v: View,
+    // order requests with consecutive sequence numbers for each replica
+    n: SequenceNumber,
+    // message digest
     d: String,
 }
+impl M {
+    pub fn new(
+        phase: State,
+        i: String,
+        v: View,
+        n: SequenceNumber,
+        digest_fn: fn(phase: State, i: String, v: View, n: SequenceNumber) -> String,
+    ) -> Self {
+        Self {
+            phase: phase.clone(),
+            i: i.clone(),
+            v,
+            n,
+            d: digest_fn(phase, i, v, n),
+        }
+    }
+
+    pub fn init(
+        self,
+        i: String,
+        digest_fn: fn(phase: State, i: String, v: View, n: SequenceNumber) -> String,
+    ) -> Self {
+        Self {
+            phase: State::init(),
+            i: i.clone(),
+            v: 0,
+            n: 0,
+            d: digest_fn(self.phase, i, 0, 0),
+        }
+    }
+
+    fn mut_phase(mut self, phase: State) {
+        self.phase = phase;
+    }
+
+    fn next_phase(mut self) {
+        let curr = self.phase.into_inner();
+        match curr {
+            0 => self.phase = State::new(1), // proceed to PREPREPARE
+            1 => self.phase = State::new(2), // proceed to PREPARE
+            2 => self.phase = State::new(3), // proceed to COMMIT
+            3 => self.phase = State::new(0), // proceed to ACCEPT REQUESTS
+            _ => log::debug!("no next phase: given phase not part of 3-phase-consensus"),
+        }
+    }
+}
+
+// TODO: proper signing for each peer because as it stands now, it is possible
+// for replicas to masquerade one another
+fn digest_m(phase: State, i: String, v: View, n: SequenceNumber) -> String {
+    let mut to_hash = "".to_string();
+    to_hash.push_str(&phase.into_inner().to_string());
+    to_hash.push_str(&v.to_string());
+    to_hash.push_str(&n.to_string());
+    hashed!(&to_hash.to_string())
+}
+
 impl Deref for M {
     type Target = u64; // View
 
@@ -108,7 +191,7 @@ fn filter_phase(needle: State, haystack: Vec<M>) -> Vec<M> {
 // that the message set contains no duplicates.
 fn is_unique(needle: State, haystack: Vec<M>) -> bool {
     let mut chk = HashMap::new();
-    let num = needle.parse();
+    let num = needle.into_inner();
     for m in haystack.iter().clone() {
         if chk.contains_key(&num) {
             false;
@@ -137,19 +220,49 @@ fn count_votes(haystack: Vec<M>) -> (String, usize) {
 }
 
 impl Engine {
-    // Assert ageement of at least F+1 (>2/3) out of a total of N=3F+1 nodes.
-    // Assumes that the message set is for a particular view.
+    fn valid_preprepare(self, message: M) -> bool {
+        // (Section 4.2) Normal-Case Operation.
+        // A backup accepts a pre-prepare message provided:
+
+        //   the signatures in the request and the pre-prepare
+        //   messages are correct and `d` is the digest for `m`;
+        if message.d != digest_m(message.phase, message.i, message.v, message.n) {
+            false;
+
+        //   it is in view `v`;
+        } else if message.v != self.v {
+            false;
+        //   it has not accepted a pre-prepare message for view `v`
+        //   and sequence number `n` containing a different digest;
+        } else if self.view_buffer.contains_key(&message.v)
+            && self
+                .view_buffer
+                .get(&message.v)
+                .unwrap()
+                .preprepare
+                .is_some()
+        {
+            false;
+        //   the sequence number in the pre-prepare message is between
+        //   a low water mark `h`, and a high water mark, `H`.
+        } else if message.n < self.low_watermark || message.n > self.high_watermark {
+            false;
+        }
+        true
+    }
+
+    // Assert ageement of at least 2F+1 (>2/3) out of a total of N=3F+1 nodes.
+    // Assumes that the message set is for a particular view and that we do not
+    // accept duplicates to the message set.
     fn is_quorum(self, message_set: Vec<M>) -> Result<String, &'static str> {
         if self.val_set.len() < 4 {
             panic!("invalid validator set size, this should not happen");
         }
 
         // Make sure we have messages from:
-        // unique peers
-        let ft = is_unique(self.current_phase.clone(), self.message_buffer.clone());
-        // in the same phase
+        // the same phase
         let ft = filter_phase(self.current_phase, self.message_buffer);
-        // and in the same view.
+        // and the same view.
         let ft = filter_view(self.v, ft);
 
         // total unique votes (N)
@@ -173,7 +286,7 @@ impl Engine {
         self.message_buffer.push(msg);
     }
 
-    // TODO: expand with rest of the blockchain system only after internal consensus mechanism has
+    // TODO: integrate with the rest of the blockchain system only after internal consensus mechanism has
     // been completed and tested with a minimal working version
     pub fn start() -> (mpsc::Sender<M>, mpsc::Receiver<M>) {
         let (rx, tx): (mpsc::Sender<M>, mpsc::Receiver<M>) = mpsc::channel();
@@ -188,6 +301,10 @@ impl Engine {
             stable_checkpoint: 0,
             latest_checkpoint: 0,
             message_buffer: std::vec::Vec::new(),
+            view_buffer: HashMap::new(),
+            timeout: std::time::Duration::from_secs(5), // initial guesstimate
+            low_watermark: 0,
+            high_watermark: 100, // initial guesstimate
         }
     }
 
