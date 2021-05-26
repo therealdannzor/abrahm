@@ -187,21 +187,6 @@ fn filter_phase(needle: State, haystack: Vec<M>) -> Vec<M> {
     result
 }
 
-// Returns true if all identities in the haystack are unique. Used to assert
-// that the message set contains no duplicates.
-fn is_unique(needle: State, haystack: Vec<M>) -> bool {
-    let mut chk = HashMap::new();
-    let num = needle.into_inner();
-    for m in haystack.iter().clone() {
-        if chk.contains_key(&num) {
-            false;
-        } else {
-            chk.insert(&num, "dummy");
-        }
-    }
-    true
-}
-
 // Returns the data payload (embedded in M) in which there have been most votes for
 // and the amount of votes for it.
 fn count_votes(haystack: Vec<M>) -> (String, usize) {
