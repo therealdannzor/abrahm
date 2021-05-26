@@ -14,13 +14,13 @@ use super::common::{count_votes, digest_m, filter_phase, filter_view};
 //
 // The scope of this struct is exclusively the PBFT protocol.
 pub struct Engine {
-    // The latest view, from the perspective of the client
+    // Latest view
     v: View,
 
-    // The current phase the client is in as part of the consensus process
+    // Current phase
     current_phase: State,
 
-    // The nodes part of the consensus process.
+    // Nodes able to validate blocks (active participators of the consensus process)
     val_set: ValidatorSet,
 
     // The last point where messages up to this sequence number are finalized, i.e. there is a consensus.
@@ -30,11 +30,11 @@ pub struct Engine {
     // The most recent checkpoint confirmed.
     latest_checkpoint: u64,
 
-    // Consensus messages
-    message_buffer: Vec<M>,
+    // Temporary mem buffer, purged periodically.
+    working_buffer: Vec<M>,
 
-    // View messages
-    view_buffer: HashMap<View, AckMessagesView>,
+    // Log with replica messages
+    message_log: HashMap<View, AckMessagesView>,
 
     // Amount of time before resending a message
     timeout: std::time::Duration,
@@ -46,11 +46,25 @@ pub struct Engine {
     high_watermark: u64,
 }
 
-// Accepted messages (Preprepare, Prepare, Commit) for a view
+// Accepted messages (Request, Preprepare, Prepare, Commit) for a view
 struct AckMessagesView {
+    // The operation being negotiated to perform. This is either created locally
+    // by the replice, or is received as a proposal from another replica.
+    request: Option<Request>,
+
+    // Latest preprepare with the most fresh sequence number `n`. This field is used
+    // to distinguish if (at least) a message has been broadcast by the local replica.
     preprepare: Option<M>,
+    // Includes the latest preprepare and contains messages from other replicas.
+    preprepare_sigs: Vec<M>,
+
+    // Prepare phase
     prepare: Option<M>,
+    prepare_sigs: Vec<M>,
+
+    // Commit phase
     commit: Option<M>,
+    commit_sigs: Vec<M>,
 }
 
 #[derive(Clone)]
@@ -157,6 +171,69 @@ impl Deref for M {
 }
 
 impl Engine {
+    fn prepared(self, m: Request, v: View, n: SequenceNumber, i: String) -> bool {
+        // (Section 4.2) Normal-Case Operation.
+        // The predicate _prepared(m,v,n,i)_ is true iff:
+
+        // The replica has inserted the request in its log
+        if self.message_log.get(&self.v).unwrap().request.is_none() {
+            log::debug!("phase: preprepare, predicate failed due to missing request in log");
+            false;
+        // A pre-prepare for the request in the same `v` and `n`
+        } else if self.message_log.get(&v).unwrap().preprepare.is_some() {
+            // check if the view of the stored preprepare message is the same as what we expect
+            if v != self
+                .message_log
+                .get(&self.v)
+                .unwrap()
+                .preprepare
+                .as_ref()
+                .unwrap()
+                .v
+            {
+                log::debug!(
+                    "phase: {}, predicate failed due to `v`, expected: {}, got: {}",
+                    "preprepare",
+                    v,
+                    self.message_log
+                        .get(&self.v)
+                        .unwrap()
+                        .preprepare
+                        .as_ref()
+                        .unwrap()
+                        .v
+                );
+                false;
+            // and do the same with the sequence number `n`
+            } else if n
+                != self
+                    .message_log
+                    .get(&v)
+                    .unwrap()
+                    .preprepare
+                    .as_ref()
+                    .unwrap()
+                    .n
+            {
+                log::debug!(
+                    "phase: {}, predicate failed due to `n`, expected: {}, got: {}",
+                    "preprepare",
+                    n,
+                    self.message_log
+                        .get(&self.v)
+                        .unwrap()
+                        .preprepare
+                        .as_ref()
+                        .unwrap()
+                        .v
+                );
+                return false;
+            }
+        } //TODO: add check that there are 2F prepares from different replicas that match the preprepare
+
+        true
+    }
+
     fn valid_preprepare(self, message: M) -> bool {
         // (Section 4.2) Normal-Case Operation.
         // A backup accepts a pre-prepare message provided:
@@ -171,9 +248,9 @@ impl Engine {
             false;
         //   it has not accepted a pre-prepare message for view `v`
         //   and sequence number `n` containing a different digest;
-        } else if self.view_buffer.contains_key(&message.v)
+        } else if self.message_log.contains_key(&message.v)
             && self
-                .view_buffer
+                .message_log
                 .get(&message.v)
                 .unwrap()
                 .preprepare
@@ -198,7 +275,7 @@ impl Engine {
 
         // Make sure we have messages from:
         // the same phase
-        let ft = filter_phase(self.current_phase, self.message_buffer);
+        let ft = filter_phase(self.current_phase, self.working_buffer);
         // and the same view.
         let ft = filter_view(self.v, ft);
 
@@ -220,7 +297,7 @@ impl Engine {
     }
 
     pub fn add_message(mut self, msg: M) {
-        self.message_buffer.push(msg);
+        self.working_buffer.push(msg);
     }
 
     // TODO: integrate with the rest of the blockchain system only after internal consensus mechanism has
@@ -237,8 +314,8 @@ impl Engine {
             val_set: validators,
             stable_checkpoint: 0,
             latest_checkpoint: 0,
-            message_buffer: std::vec::Vec::new(),
-            view_buffer: HashMap::new(),
+            working_buffer: std::vec::Vec::new(),
+            message_log: HashMap::new(),
             timeout: std::time::Duration::from_secs(5), // initial guesstimate
             low_watermark: 0,
             high_watermark: 100, // initial guesstimate
