@@ -13,6 +13,7 @@ pub type ValidatorSet = std::vec::Vec<Committer>;
 pub fn digest_m(phase: State, i: String, v: View, n: SequenceNumber) -> String {
     let mut to_hash = "".to_string();
     to_hash.push_str(&phase.into_inner().to_string());
+    to_hash.push_str(&i);
     to_hash.push_str(&v.to_string());
     to_hash.push_str(&n.to_string());
     hashed!(&to_hash.to_string())
@@ -44,13 +45,14 @@ pub fn filter_phase(needle: State, haystack: Vec<M>) -> Vec<M> {
 // and the amount of votes for it.
 pub fn count_votes(haystack: Vec<M>) -> (String, usize) {
     let mut most_popular = String::from("");
-    let most_amount = 0;
+    let mut most_amount = 0;
     let mut map = HashMap::new();
     for m in haystack.iter() {
         let c = map.entry(m.d.clone()).or_insert(0);
         *c += 1;
         if *c > most_amount {
             most_popular = m.d.clone();
+            most_amount = *c;
         }
     }
 
