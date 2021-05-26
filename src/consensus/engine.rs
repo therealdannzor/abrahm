@@ -5,8 +5,9 @@ use crate::consensus::{
     messages_tp::{Commit, Prepare, Preprepare},
     request::Request,
 };
-use crate::{hashed, swiss_knife::helper::generate_hash_from_input};
 use std::{collections::HashMap, ops::Deref, sync::mpsc, vec::Vec};
+
+use super::common::{count_votes, digest_m, filter_phase, filter_view};
 
 // Engine is the second highest abstraction of the consensus engine (after Consensus) which contains
 // all the neccessary information for a validator to participate in a the replication process.
@@ -90,15 +91,15 @@ impl PartialEq for State {
 #[derive(Clone)]
 pub struct M {
     // denotes the type of the message
-    phase: State,
+    pub phase: State,
     // identity of the replcia
-    i: String,
+    pub i: String,
     // provides liveness by allowing changes if (when) primary fails
-    v: View,
+    pub v: View,
     // order requests with consecutive sequence numbers for each replica
-    n: SequenceNumber,
+    pub n: SequenceNumber,
     // message digest
-    d: String,
+    pub d: String,
 }
 impl M {
     pub fn new(
@@ -147,61 +148,12 @@ impl M {
     }
 }
 
-// TODO: proper signing for each peer because as it stands now, it is possible
-// for replicas to masquerade one another
-fn digest_m(phase: State, i: String, v: View, n: SequenceNumber) -> String {
-    let mut to_hash = "".to_string();
-    to_hash.push_str(&phase.into_inner().to_string());
-    to_hash.push_str(&v.to_string());
-    to_hash.push_str(&n.to_string());
-    hashed!(&to_hash.to_string())
-}
-
 impl Deref for M {
     type Target = u64; // View
 
     fn deref(&self) -> &Self::Target {
         &self.v
     }
-}
-
-// Filters all messages of the same view. We leave the input vector untouched.
-fn filter_view(needle: View, haystack: Vec<M>) -> Vec<M> {
-    let mut result: Vec<M> = Vec::new();
-    for m in haystack.iter().clone() {
-        if m.v == needle {
-            result.push(m.clone());
-        }
-    }
-    result
-}
-
-// Filters all messages in the same consensus phase. Does not modify input.
-fn filter_phase(needle: State, haystack: Vec<M>) -> Vec<M> {
-    let mut result: Vec<M> = Vec::new();
-    for m in haystack.iter().clone() {
-        if m.phase == needle {
-            result.push(m.clone());
-        }
-    }
-    result
-}
-
-// Returns the data payload (embedded in M) in which there have been most votes for
-// and the amount of votes for it.
-fn count_votes(haystack: Vec<M>) -> (String, usize) {
-    let mut most_popular = String::from("");
-    let mut most_amount = 0;
-    let mut map = HashMap::new();
-    for m in haystack.iter() {
-        let c = map.entry(m.d.clone()).or_insert(0);
-        *c += 1;
-        if *c > most_amount {
-            most_popular = m.d.clone();
-        }
-    }
-
-    (most_popular, most_amount)
 }
 
 impl Engine {
