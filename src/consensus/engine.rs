@@ -4,7 +4,8 @@ use crate::consensus::request::Request;
 use std::{collections::HashMap, sync::mpsc, vec::Vec};
 
 use super::common::{
-    count_votes, digest_m, filter_phase, filter_view, Committer, SequenceNumber, ValidatorSet, View,
+    count_votes, digest_m, filter_phase, filter_view, same_message_in_set, Committer,
+    SequenceNumber, ValidatorSet, View,
 };
 pub use super::state::{State, M};
 
@@ -67,7 +68,7 @@ struct AckMessagesView {
 }
 
 impl Engine {
-    fn prepared(self, m: Request, v: View, n: SequenceNumber, i: String) -> bool {
+    fn prepared(self, m: Request, v: View, n: SequenceNumber) -> bool {
         // (Section 4.2) Normal-Case Operation.
         // The predicate _prepared(m,v,n,i)_ is true iff:
 
@@ -125,7 +126,26 @@ impl Engine {
                 );
                 return false;
             }
-        } //TODO: add check that there are 2F prepares from different replicas that match the preprepare
+        }
+        //
+        else if !same_message_in_set(
+            self.message_log
+                .get(&v)
+                .as_ref()
+                .unwrap()
+                .preprepare
+                .clone(),
+            self.message_log
+                .get(&v)
+                .as_ref()
+                .unwrap()
+                .prepare_sigs
+                .to_owned(),
+        ) {
+            log::debug!("phase: {}, predicate failed due to non-matching preprepare in prepare set, expected: {:?}, got: {:?}",
+                "preprepare", self.message_log.get(&v).as_ref().unwrap().prepare.clone(), self.message_log.get(&v).as_ref().unwrap().preprepare_sigs.to_owned());
+            return false;
+        }
 
         true
     }

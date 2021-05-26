@@ -1,9 +1,10 @@
 #![allow(unused)]
 
 use super::common::{SequenceNumber, View};
+use std::cmp::PartialEq;
 use std::ops::Deref;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 // Phase messages
 pub struct State(u8);
 impl State {
@@ -38,7 +39,7 @@ impl PartialEq for State {
 }
 
 // Represents the format of all the consensus messages between peers
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct M {
     // denotes the type of the message
     pub phase: State,
@@ -104,5 +105,13 @@ impl Deref for M {
 
     fn deref(&self) -> &Self::Target {
         &self.v
+    }
+}
+
+impl PartialEq for M {
+    // Two messages are equal if they are in the same view, have the same sequence number,
+    // and the same message digest. The identities and phase message type may vary.
+    fn eq(&self, other: &Self) -> bool {
+        self.v == other.v && self.n == other.n && self.d == other.d
     }
 }

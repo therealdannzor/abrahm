@@ -58,3 +58,17 @@ pub fn count_votes(haystack: Vec<M>) -> (String, usize) {
 
     (most_popular, most_amount)
 }
+
+// Returns true if `haystack` contains equivalent `m` messages, else false
+pub fn same_message_in_set(m: Option<M>, haystack: Vec<M>) -> bool {
+    if m.is_none() {
+        false;
+    }
+
+    for n in haystack.iter().clone() {
+        if m.clone().unwrap() != *n {
+            false;
+        }
+    }
+    true
+}
