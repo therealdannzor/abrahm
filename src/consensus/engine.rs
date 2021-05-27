@@ -4,8 +4,8 @@ use crate::consensus::request::Request;
 use std::{collections::HashMap, sync::mpsc, vec::Vec};
 
 use super::common::{
-    count_votes, digest_m, filter_phase, filter_view, same_message_in_set, Committer,
-    SequenceNumber, ValidatorSet, View,
+    correct_message_set, count_votes, digest_m, filter_phase, filter_view, gt_two_thirds,
+    Committer, SequenceNumber, ValidatorSet, View,
 };
 pub use super::state::{State, M};
 
@@ -68,14 +68,15 @@ struct AckMessagesView {
 }
 
 impl Engine {
-    fn prepared(self, m: Request, v: View, n: SequenceNumber) -> bool {
+    // prepared orders requests in a view. Returns true when the predicate is true.
+    fn prepared(&self, m: Request, v: View, n: SequenceNumber) -> bool {
         // (Section 4.2) Normal-Case Operation.
         // The predicate _prepared(m,v,n,i)_ is true iff:
 
         // The replica has inserted the request in its log
         if self.message_log.get(&self.v).unwrap().request.is_none() {
             log::debug!("phase: preprepare, predicate failed due to missing request in log");
-            false;
+            return false;
         // A pre-prepare for the request in the same `v` and `n`
         } else if self.message_log.get(&v).unwrap().preprepare.is_some() {
             // check if the view of the stored preprepare message is the same as what we expect
@@ -100,7 +101,7 @@ impl Engine {
                         .unwrap()
                         .v
                 );
-                false;
+                return false;
             // and do the same with the sequence number `n`
             } else if n
                 != self
@@ -126,9 +127,12 @@ impl Engine {
                 );
                 return false;
             }
+        } else {
+            log::debug!("phase: preprepare, predicate failed due to missing preprepare in log");
+            return false;
         }
-        //
-        else if !same_message_in_set(
+
+        if !correct_message_set(
             self.message_log
                 .get(&v)
                 .as_ref()
@@ -141,14 +145,67 @@ impl Engine {
                 .unwrap()
                 .prepare_sigs
                 .to_owned(),
+            gt_two_thirds(
+                self.message_log
+                    .get(&v)
+                    .as_ref()
+                    .unwrap()
+                    .prepare_sigs
+                    .len(),
+            ),
         ) {
-            log::debug!("phase: {}, predicate failed due to non-matching preprepare in prepare set, expected: {:?}, got: {:?}",
+            log::debug!("phase: {}, predicate failed due to non-matching preprepare in prepare set or not sufficient amount of messages, expected: {:?}, got: {:?}",
                 "preprepare", self.message_log.get(&v).as_ref().unwrap().prepare.clone(), self.message_log.get(&v).as_ref().unwrap().preprepare_sigs.to_owned());
             return false;
         }
 
         true
     }
+
+    // committed is the finally check before we finalize consensus on a request `m`.
+    // Returns true if there is a consensus agreement on `m`.
+    // It takes ownership of self but uses a reference to self through prepared.
+    fn committed(self, m: Request, v: View, n: SequenceNumber) -> bool {
+        // (Section 4.2) Normal-Case Operation.
+        // The predicate _committed(m,v,n)_ is true iff:
+
+        let m_dig = m.digest();
+
+        // If prepared is true for all i in a set of F+1 non-faulty replicas. By calling prepared,
+        // we do not need to check preprepare and prepare messages.
+        if !self.prepared(m, v, n) {
+            log::debug!(
+                "phase: preprepare, predicate failed since it needs to be in prepare state before asserting committed"
+            );
+            return false;
+        } else {
+            // A pre-preprepare for the request in the same `v` and `n`
+            if self.message_log.get(&v).unwrap().commit.is_some() {
+                // check if the view of the stored preprepare is the same as what we expect
+                if !correct_message_set(
+                    self.message_log.get(&v).as_ref().unwrap().commit.clone(),
+                    self.message_log
+                        .get(&v)
+                        .as_ref()
+                        .unwrap()
+                        .commit_sigs
+                        .to_owned(),
+                    gt_two_thirds(self.message_log.get(&v).as_ref().unwrap().commit_sigs.len()),
+                ) {
+                    log::debug!("phase: prepare, predicate failed due to not enough matching commits, expected: {:?}, got{:?}",
+                        self.message_log.get(&v).as_ref().unwrap().commit, self.message_log.get(&v).as_ref().unwrap().commit_sigs,
+                        );
+                    return false;
+                }
+            } else {
+                log::debug!("phase: prepare, predicate failed due to missing local commit");
+                return false;
+            }
+        }
+        true
+    }
+
+    // prepared checks if the replicas is ready to broadcast commit messages.
 
     fn valid_preprepare(self, message: M) -> bool {
         // (Section 4.2) Normal-Case Operation.
@@ -201,7 +258,7 @@ impl Engine {
         // Total replicas:         N = 3F + 1
         // Maximum Byzantine:      F = (N - 1) / 3
         // Quorum:                 2F + 1
-        let quorum = 2 * ((n - 1) / 3) + 1;
+        let quorum = gt_two_thirds(n);
 
         let (vote, amount) = count_votes(ft);
 

@@ -59,16 +59,24 @@ pub fn count_votes(haystack: Vec<M>) -> (String, usize) {
     (most_popular, most_amount)
 }
 
-// Returns true if `haystack` contains equivalent `m` messages, else false
-pub fn same_message_in_set(m: Option<M>, haystack: Vec<M>) -> bool {
+// Returns true if `haystack` contains at least `count` messages `m`, else false
+pub fn correct_message_set(m: Option<M>, haystack: Vec<M>, count: usize) -> bool {
+    let mut counter = 0;
     if m.is_none() {
         false;
     }
 
     for n in haystack.iter().clone() {
-        if m.clone().unwrap() != *n {
+        // only verify that the digests are equal (i.e. same Request)
+        if m.clone().unwrap().d != *n.d {
             false;
+        } else {
+            counter += 1;
         }
     }
-    true
+    counter >= count
+}
+
+pub fn gt_two_thirds(set_size: usize) -> usize {
+    2 * ((set_size - 1) / 3) + 1
 }
