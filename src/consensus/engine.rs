@@ -8,6 +8,7 @@ use super::common::{
     Committer, SequenceNumber, ValidatorSet, View,
 };
 pub use super::state::{State, M};
+use super::view::{CheckPoint, ViewChangeMessage};
 
 // Engine is the second highest abstraction of the consensus engine (after Consensus) which contains
 // all the neccessary information for a validator to participate in a the replication process.
@@ -33,8 +34,15 @@ pub struct Engine {
     // Temporary mem buffer, purged periodically.
     working_buffer: Vec<M>,
 
-    // Log with replica messages
+    // Collection of replica messages by view.
     message_log: HashMap<View, AckMessagesView>,
+
+    // Collection of checkpoint messages by sequence number.
+    checkpoint_log: HashMap<SequenceNumber, Vec<CheckPoint>>,
+
+    // Collection of view change messages retrieved by the sequence number of
+    // the latest stable checkpoint.
+    viewchange_log: HashMap<SequenceNumber, ViewChangeMessage>,
 
     // Amount of time before resending a message
     timeout: std::time::Duration,
@@ -169,8 +177,6 @@ impl Engine {
         // (Section 4.2) Normal-Case Operation.
         // The predicate _committed(m,v,n)_ is true iff:
 
-        let m_dig = m.digest();
-
         // If prepared is true for all i in a set of F+1 non-faulty replicas. By calling prepared,
         // we do not need to check preprepare and prepare messages.
         if !self.prepared(m, v, n) {
@@ -205,8 +211,7 @@ impl Engine {
         true
     }
 
-    // prepared checks if the replicas is ready to broadcast commit messages.
-
+    // valid_preprepare checks if the message is a valid preprepare
     fn valid_preprepare(self, message: M) -> bool {
         // (Section 4.2) Normal-Case Operation.
         // A backup accepts a pre-prepare message provided:
@@ -289,6 +294,8 @@ impl Engine {
             latest_checkpoint: 0,
             working_buffer: std::vec::Vec::new(),
             message_log: HashMap::new(),
+            checkpoint_log: HashMap::new(),
+            viewchange_log: HashMap::new(),
             timeout: std::time::Duration::from_secs(5), // initial guesstimate
             low_watermark: 0,
             high_watermark: 100, // initial guesstimate

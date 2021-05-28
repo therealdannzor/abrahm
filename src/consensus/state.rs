@@ -43,7 +43,7 @@ impl PartialEq for State {
 pub struct M {
     // denotes the type of the message
     pub phase: State,
-    // identity of the replcia
+    // identity of the replica
     pub i: String,
     // provides liveness by allowing changes if (when) primary fails
     pub v: View,
