@@ -54,19 +54,13 @@ pub struct M {
 }
 
 impl M {
-    pub fn new(
-        phase: State,
-        i: String,
-        v: View,
-        n: SequenceNumber,
-        digest_fn: fn(phase: State, i: String, v: View, n: SequenceNumber) -> String,
-    ) -> Self {
+    pub fn new(phase: State, i: String, v: View, n: SequenceNumber, d: String) -> Self {
         Self {
             phase: phase.clone(),
             i: i.clone(),
             v,
             n,
-            d: digest_fn(phase, i, v, n),
+            d,
         }
     }
 
