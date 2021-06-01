@@ -60,11 +60,12 @@ impl CheckPoint {
     }
 }
 
+#[derive(Clone)]
 // Prepared set: a quorum of pre-prepares
 pub struct P {
     // A valid pre-preprepare message (without the corresponding request)
     valid_preprepare: Option<M>,
-    // 2F matching pre-prepare messages from other unique replicas.
+    // 2F matching prepare messages from other unique replicas.
     matching_prepares: Vec<M>,
 }
 impl P {
@@ -99,7 +100,7 @@ impl BigO {
     }
 }
 
-fn determine_min_max_s(big_v: Vec<ViewChangeMessage>) -> (SequenceNumber, SequenceNumber) {
+fn determine_min_max_s(big_v: &Vec<ViewChangeMessage>) -> (SequenceNumber, SequenceNumber) {
     if big_v.len() < 1 {
         panic!("cannot determine min-max-s due to empty view change log");
     }
@@ -184,11 +185,19 @@ pub struct NewViewMessage {
     big_o: BigO,
 }
 impl NewViewMessage {
-    pub fn new(v: View, big_v: Vec<ViewChangeMessage>) -> Self {
+    pub fn new(v: View, big_v: Vec<ViewChangeMessage>, i: String) -> Self {
+        if big_v.len() < 4 {
+            panic!("need at least a quorum of view change messages to construct new view message");
+        }
+
+        let (min_s, max_s) = determine_min_max_s(&big_v);
+        // assume P is identitical at all replicas, only differed by order depending on when
+        // they were received locally
+        let vec_m = new_preprepare_message(big_v[0].big_p.clone(), min_s, max_s, i);
         Self {
             v,
             big_v: Vec::new(),
-            big_o: BigO::new(Vec::new()),
+            big_o: BigO::new(vec_m),
         }
     }
 }
