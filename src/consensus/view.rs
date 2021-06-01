@@ -77,10 +77,16 @@ impl P {
     }
 
     pub fn insert_valid(&mut self, m: M) {
+        if m.phase != State::new(1) {
+            panic!("must insert preprepares as state");
+        }
         self.valid_preprepare = Some(m);
     }
 
     pub fn insert_matching(&mut self, m: M) {
+        if m.phase != State::new(2) {
+            panic!("must insert prepares as state");
+        }
         self.matching_prepares.push(m);
     }
 }
@@ -108,11 +114,11 @@ fn determine_min_max_s(big_v: &Vec<ViewChangeMessage>) -> (SequenceNumber, Seque
     let mut min_s = u64::MIN;
     let mut max_s = u64::MIN;
 
-    for (i, val) in big_v.iter().enumerate().clone() {
+    for (i, val) in big_v.iter().enumerate() {
         if val.n > min_s {
             min_s = val.n.clone();
         } else if val.big_p[i].matching_prepares[i].n > max_s {
-            max_s = val.big_p[i].matching_prepares[i].n;
+            max_s = val.big_p[i].matching_prepares[i].n.clone();
         } else {
             log::debug!("couldn't find either min_s or max_s in vc vector");
         }
@@ -191,7 +197,7 @@ impl NewViewMessage {
         }
 
         let (min_s, max_s) = determine_min_max_s(&big_v);
-        // assume P is identitical at all replicas, only differed by order depending on when
+        // assume P is identical at all replicas, only differed by order depending on when
         // they were received locally
         let vec_m = new_preprepare_message(big_v[0].big_p.clone(), min_s, max_s, i);
         Self {
@@ -199,5 +205,131 @@ impl NewViewMessage {
             big_v: Vec::new(),
             big_o: BigO::new(vec_m),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::iter::Map;
+
+    const DIG: &str = "dig"; // digest
+    const ALICE: &str = "Alice"; // address from
+
+    fn create_quorum_checkpoints(faulty: u8, n: SequenceNumber) -> Vec<CheckPoint> {
+        let mut vcp: Vec<CheckPoint> = Vec::new();
+        for i in 0..2 * faulty + 1 {
+            vcp.push(CheckPoint::new(i.to_string(), n, DIG.to_string()));
+        }
+        vcp
+    }
+
+    fn create_quorum_preprepares(faulty: u8, v: View, n: SequenceNumber) -> Vec<P> {
+        let mut vpp: Vec<P> = Vec::new();
+        for i in 0..2 * faulty + 1 {
+            let mut p = P::new();
+            p.insert_valid(M::new(State::new(1), i.to_string(), v, n, DIG.to_string()));
+            for i in 0..2 * faulty + 1 {
+                p.insert_matching(M::new(State::new(2), i.to_string(), v, n, DIG.to_string()));
+            }
+            vpp.push(p);
+        }
+
+        vpp
+    }
+
+    fn generate_big_c_p_pair(faulty: u8, v: View, n: SequenceNumber) -> (Vec<CheckPoint>, Vec<P>) {
+        (
+            create_quorum_checkpoints(faulty, n),
+            create_quorum_preprepares(faulty, v, n),
+        )
+    }
+
+    fn create_view_change_message(
+        curr_v: View,
+        n: SequenceNumber,
+        mut validator_set: Vec<String>,
+        faulty: usize,
+        amount: usize,
+    ) -> Vec<ViewChangeMessage> {
+        let v = curr_v + 1;
+        let mut res: Vec<ViewChangeMessage> = Vec::new();
+        for i in 0..amount {
+            let f = faulty as u8;
+            let (big_c, big_p) =
+                generate_big_c_p_pair(f, curr_v /* proofs for current view */, n);
+            let vc = ViewChangeMessage::new(
+                validator_set[i].clone(),
+                v, /* next view */
+                n,
+                big_c,
+                big_p,
+            );
+            res.push(vc);
+        }
+        res
+    }
+
+    #[test]
+    fn create_new_view_message() {
+        let mut all_vc_messages: Vec<ViewChangeMessage> = Vec::new();
+        let vals: Vec<String> = vec!["A", "B", "C", "D"]
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        let vc_messages = create_view_change_message(1, 1, vals.clone(), 2, 1);
+        all_vc_messages.extend(vc_messages);
+        let vc_messages = create_view_change_message(1, 3, vals.clone(), 2, 1);
+        all_vc_messages.extend(vc_messages);
+        let vc_messages = create_view_change_message(1, 4, vals.clone(), 2, 1);
+        all_vc_messages.extend(vc_messages);
+        let vc_messages = create_view_change_message(1, 6, vals.clone(), 2, 1);
+        all_vc_messages.extend(vc_messages);
+        let vc_messages = create_view_change_message(1, 7, vals.clone(), 2, 1);
+        all_vc_messages.extend(vc_messages);
+
+        let nv_message = NewViewMessage::new(1, all_vc_messages, ALICE.to_string());
+        let length = nv_message.big_o.new_view_preprepares.len();
+        assert_eq!(5, length);
+        let actual_view = nv_message.big_o.new_view_preprepares[0].v;
+        let expected_view = 2;
+        assert_eq!(expected_view, actual_view);
+    }
+
+    #[test]
+    #[should_panic]
+    fn create_invalid_new_view_message() {
+        let vals: Vec<String> = vec!["A", "B", "C"] // less than 4 validators
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        let vc_messages = create_view_change_message(1, 1, vals, 1, 1);
+        let nv_message = NewViewMessage::new(1, vc_messages, ALICE.to_string());
+    }
+
+    #[test]
+    #[should_panic]
+    fn create_invalid_big_o_message() {
+        let mut p = P::new();
+        p.insert_valid(M::new(
+            State::new(0), /* ACCEPT REQUEST state instead of PREPREPARE (1) */
+            ALICE.to_string(),
+            1,
+            0,
+            DIG.to_string(),
+        ));
+    }
+
+    #[test]
+    #[should_panic]
+    fn create_invalid_big_c_message() {
+        let mut p = P::new();
+        p.insert_matching(M::new(
+            State::new(1), /* PREPREPARE state instead of PREPARE (2) */
+            ALICE.to_string(),
+            1,
+            0,
+            DIG.to_string(),
+        ));
     }
 }
