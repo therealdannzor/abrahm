@@ -165,20 +165,22 @@ fn new_preprepare_message(
     //       to the one of a special null request.
 
     for iter in big_v.valid_vc_rcv.iter().clone() {
-        let targ_n = iter.big_p[0].valid_preprepare.clone().unwrap().n;
-        // the valid preprepare should contain the exact same information as in matching prepares
-        println!("targ_n: {}, min_s: {}, max_s: {}", targ_n, min_s, max_s);
+        let targ_n = iter.big_p[0].matching_prepares[0].clone().n;
         if targ_n >= min_s && targ_n <= max_s {
             let case_1_message = inc_v(
                 iter.i.clone(),
                 iter.next_view.clone(),
-                iter.n.clone(),
+                targ_n.clone(), // n_pp, where n_pp >= n_cp
                 iter.big_p[0].matching_prepares[0].d.clone(),
             );
+            // a new and valid pp-message is created (carried over to the next view) if its sequence number
+            // is within the min-max-s range
             res.push(case_1_message);
         } else {
+            // a new dummy pp-message is created (and carried over to the next view) since
+            // its sequence number is not within the min-max-range
             let case_2_message =
-                inc_v_and_no_op(iter.i.clone(), iter.next_view.clone(), iter.n.clone());
+                inc_v_and_no_op(iter.i.clone(), iter.next_view.clone(), targ_n.clone());
             res.push(case_2_message);
         }
     }
@@ -339,6 +341,41 @@ mod tests {
             assert_eq!(expected_view, actual_view);
             assert_eq!(expected_nonce, actual_nonce);
             assert_eq!(DIG, actual_digest);
+        }
+
+        let mut all_vc_m: Vec<ViewChangeMessage> = Vec::new();
+        // add VC messages for a case with messages n_cp_stable <= n_pp which means that
+        // certain messages will be reverted to a no-op due to not fresh enough.
+        //
+        // In this case we will have a min_s = n_cp = 4 and a max_s = n_pp = 8. This implies that
+        // sequence numbers less than 4 will be deemed invalid, which we have two of.
+        let vc_m = create_view_change_message(2, 3, 4, DIG, vals.clone(), 2, 1);
+        all_vc_m.extend(vc_m);
+        let vc_m = create_view_change_message(2, 3, 1, DIG, vals.clone(), 2, 1);
+        all_vc_m.extend(vc_m);
+        let vc_m = create_view_change_message(2, 3, 2, DIG, vals.clone(), 2, 1);
+        all_vc_m.extend(vc_m);
+        let vc_m = create_view_change_message(2, 4, 4, DIG, vals.clone(), 2, 1);
+        all_vc_m.extend(vc_m);
+        let vc_m = create_view_change_message(2, 4, 5, DIG, vals.clone(), 2, 1);
+        all_vc_m.extend(vc_m);
+        let vc_m = create_view_change_message(2, 4, 8, DIG, vals.clone(), 2, 1);
+        all_vc_m.extend(vc_m);
+
+        let nv_message = NewViewMessage::new(2, BigV::new(all_vc_m), ALICE.to_string());
+        let length = nv_message.big_o.new_view_preprepares.len();
+        assert_eq!(6, length);
+        let expected_view = 3;
+        let expected_n_seq = vec![4, 1, 2, 4, 5, 8];
+        let expected_digests = vec![DIG, "NOOP", "NOOP", DIG, DIG, DIG];
+        for i in 0..length {
+            let actual_view = nv_message.big_o.new_view_preprepares[i].v;
+            let actual_nonce = nv_message.big_o.new_view_preprepares[i].n;
+            let actual_digest = nv_message.big_o.new_view_preprepares[i].d.clone();
+            let expected_nonce = expected_n_seq[i];
+            assert_eq!(expected_view, actual_view);
+            assert_eq!(expected_nonce, actual_nonce);
+            assert_eq!(expected_digests[i], actual_digest);
         }
     }
 
