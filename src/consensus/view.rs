@@ -111,20 +111,25 @@ fn determine_min_max_s(big_v: &Vec<ViewChangeMessage>) -> (SequenceNumber, Seque
         panic!("cannot determine min-max-s due to empty view change log");
     }
 
-    let mut min_s = big_v[0].n;
-    let mut max_s = big_v[0].big_p[0].matching_prepares[0].n;
+    let mut min_s = u64::MAX;
+    let mut max_s = u64::MIN;
 
     for iter in big_v.iter() {
-        // latest stable checkpoint in V
-        if iter.n > min_s {
-            min_s = iter.n.clone();
-        }
         // scan the replica's P-set to look for the highest sequence number
         let repl_max_n = determine_max_prepare_n(iter.big_p.clone());
         // save the current highest sequence number as we know
         if repl_max_n > max_s {
-            max_s = iter.big_p[0].matching_prepares[0].n;
+            max_s = repl_max_n;
         }
+
+        // latest stable checkpoint in V
+        if iter.n < min_s {
+            min_s = iter.n.clone();
+        }
+    }
+
+    if min_s == max_s {
+        panic!("min_s and max_s should not be equal");
     }
 
     (min_s, max_s)
@@ -162,6 +167,7 @@ fn new_preprepare_message(
     for iter in big_v.valid_vc_rcv.iter().clone() {
         let targ_n = iter.big_p[0].valid_preprepare.clone().unwrap().n;
         // the valid preprepare should contain the exact same information as in matching prepares
+        println!("targ_n: {}, min_s: {}, max_s: {}", targ_n, min_s, max_s);
         if targ_n >= min_s && targ_n <= max_s {
             let case_1_message = inc_v(
                 iter.i.clone(),
@@ -328,9 +334,11 @@ mod tests {
         for i in 0..length {
             let actual_view = nv_message.big_o.new_view_preprepares[i].v;
             let actual_nonce = nv_message.big_o.new_view_preprepares[i].n;
+            let actual_digest = nv_message.big_o.new_view_preprepares[i].d.clone();
             let expected_nonce = expected_n_seq[i];
             assert_eq!(expected_view, actual_view);
             assert_eq!(expected_nonce, actual_nonce);
+            assert_eq!(DIG, actual_digest);
         }
     }
 
