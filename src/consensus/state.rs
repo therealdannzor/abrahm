@@ -31,6 +31,38 @@ impl State {
     pub fn into_inner(self) -> u8 {
         self.0
     }
+
+    // Start the view change process
+    pub fn enter_vc(mut self) {
+        self.0 = 4;
+    }
+
+    pub fn enter_cp(mut self) {
+        self.0 = 6;
+    }
+
+    // Advance to the next stage of a state
+    pub fn next(mut self) {
+        match self.0 {
+            // Normal case operations is:
+            // ACCEPT REQ -> PREPREPARE -> PREPARE -> COMMIT -> ACCEPT REQ ..
+            //
+            // View change process is when the normal case is interrupted:
+            // ACCEPT REQ / PREPREPARE / PREPARE / COMMIT -> VIEW CHANGE ->
+            // NEW-VIEW -> ACCEPT REQ ..
+            //
+            // The checkpoint state happens periodically as the process progresses.
+            // COMMIT -> CHECKPOINT -> ACCEPT REQ ...
+            0 => self.0 = 1,
+            1 => self.0 = 2,
+            2 => self.0 = 3,
+            3 => self.0 = 0,
+            4 => self.0 = 5,
+            5 => self.0 = 0,
+            6 => self.0 = 0,
+            _ => panic!("this should never happen"),
+        }
+    }
 }
 impl PartialEq for State {
     fn eq(&self, other: &Self) -> bool {
