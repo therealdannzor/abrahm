@@ -7,6 +7,7 @@ use super::common::{
     correct_message_set, count_votes, digest_m, filter_phase, filter_view, gt_two_thirds,
     Committer, SequenceNumber, ValidatorSet, View,
 };
+use super::leader_process::ValidatorProcess;
 pub use super::state::{State, M};
 use super::view::{CheckPoint, ViewChangeMessage};
 
@@ -15,14 +16,11 @@ use super::view::{CheckPoint, ViewChangeMessage};
 //
 // The scope of this struct is exclusively the PBFT protocol.
 pub struct Engine {
-    // Latest view
-    v: View,
-
-    // Current phase
-    current_phase: State,
-
-    // Nodes able to validate blocks (active participators of the consensus process)
-    val_set: ValidatorSet,
+    // ValidatorProcess drives the leader election process.
+    //
+    // In addition, it contains the ID of the replica, the current view, the primary of this and previous
+    // views, the sets of validators, and the current PBFT phase.
+    val_engine: ValidatorProcess,
 
     // The last point where messages up to this sequence number are finalized, i.e. there is a consensus.
     // This is strictly less than or equal to the latest checkpoint.
@@ -82,7 +80,13 @@ impl Engine {
         // The predicate _prepared(m,v,n,i)_ is true iff:
 
         // The replica has inserted the request in its log
-        if self.message_log.get(&self.v).unwrap().request.is_none() {
+        if self
+            .message_log
+            .get(&self.val_engine.view())
+            .unwrap()
+            .request
+            .is_none()
+        {
             log::debug!("phase: preprepare, predicate failed due to missing request in log");
             return false;
         // A pre-prepare for the request in the same `v` and `n`
@@ -90,7 +94,7 @@ impl Engine {
             // check if the view of the stored preprepare message is the same as what we expect
             if v != self
                 .message_log
-                .get(&self.v)
+                .get(&self.val_engine.view())
                 .unwrap()
                 .preprepare
                 .as_ref()
@@ -102,7 +106,7 @@ impl Engine {
                     "preprepare",
                     v,
                     self.message_log
-                        .get(&self.v)
+                        .get(&self.val_engine.view())
                         .unwrap()
                         .preprepare
                         .as_ref()
@@ -126,7 +130,7 @@ impl Engine {
                     "preprepare",
                     n,
                     self.message_log
-                        .get(&self.v)
+                        .get(&self.val_engine.view())
                         .unwrap()
                         .preprepare
                         .as_ref()
@@ -172,7 +176,6 @@ impl Engine {
 
     // committed is the finally check before we finalize consensus on a request `m`.
     // Returns true if there is a consensus agreement on `m`.
-    // It takes ownership of self but uses a reference to self through prepared.
     fn committed(self, m: Request, v: View, n: SequenceNumber) -> bool {
         // (Section 4.2) Normal-Case Operation.
         // The predicate _committed(m,v,n)_ is true iff:
@@ -222,7 +225,7 @@ impl Engine {
             false;
 
         //   it is in view `v`;
-        } else if message.v != self.v {
+        } else if message.v != self.val_engine.view() {
             false;
         //   it has not accepted a pre-prepare message for view `v`
         //   and sequence number `n` containing a different digest;
@@ -247,15 +250,15 @@ impl Engine {
     // Assumes that the message set is for a particular view and that we do not
     // accept duplicates to the message set.
     fn is_quorum(self, message_set: Vec<M>) -> Result<String, &'static str> {
-        if self.val_set.len() < 4 {
+        if self.val_engine.big_n() < 4 {
             panic!("invalid validator set size, this should not happen");
         }
 
         // Make sure we have messages from:
         // the same phase
-        let ft = filter_phase(self.current_phase, self.working_buffer);
+        let ft = filter_phase(self.val_engine.phase(), self.working_buffer);
         // and the same view.
-        let ft = filter_view(self.v, ft);
+        let ft = filter_view(self.val_engine.view(), ft);
 
         // total unique votes (N)
         let n = ft.len();
@@ -285,11 +288,9 @@ impl Engine {
         (rx, tx)
     }
 
-    pub fn new(validators: ValidatorSet) -> Self {
+    pub fn new(id: String, validators: ValidatorSet) -> Self {
         Self {
-            v: 0,
-            current_phase: State::init(),
-            val_set: validators,
+            val_engine: ValidatorProcess::new(id, validators),
             stable_checkpoint: 0,
             latest_checkpoint: 0,
             working_buffer: std::vec::Vec::new(),
@@ -302,20 +303,12 @@ impl Engine {
         }
     }
 
-    pub fn v(self) -> View {
-        self.v
-    }
-
     pub fn stable_cp(self) -> u64 {
         self.stable_checkpoint
     }
 
     pub fn latest_cp(self) -> u64 {
         self.latest_checkpoint
-    }
-
-    pub fn inc_v(mut self) {
-        self.v = self.v + 1;
     }
 
     pub fn inc_stable_cp(mut self) {
