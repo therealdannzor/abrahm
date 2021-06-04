@@ -33,16 +33,16 @@ impl State {
     }
 
     // Start the view change process
-    pub fn enter_vc(mut self) {
+    pub fn enter_vc(&mut self) {
         self.0 = 4;
     }
 
-    pub fn enter_cp(mut self) {
+    pub fn enter_cp(&mut self) {
         self.0 = 6;
     }
 
     // Advance to the next stage of a state
-    pub fn next(mut self) {
+    pub fn next(&mut self) {
         match self.0 {
             // Normal case operations is:
             // ACCEPT REQ -> PREPREPARE -> PREPARE -> COMMIT -> ACCEPT REQ ..
