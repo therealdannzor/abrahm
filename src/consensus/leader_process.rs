@@ -6,7 +6,7 @@ use std::vec::Vec;
 
 /// Leader Election Process
 
-// ValidatorEngine assigns and and manages the primary (leader) in the replication process.
+// ValidatorProcess assigns and and manages the primary (leader) in the replication process.
 // Sometimes this replica will be the primary but it is not a guarantee. The engine
 // participates in making sure that all replicas agree on the same primary at the same time.
 //
@@ -14,8 +14,8 @@ use std::vec::Vec;
 // the system is not progressing and comes to a decision to execute a certain request within time.
 // This approach can be called to have a "sticky leader" as opposed to changing the elected leader
 // periodically in a consistent manner.
-pub struct ValidatorEngine {
-    // Replica id
+pub struct ValidatorProcess {
+    // Replica ID
     id: Committer,
 
     // The latest view as far as this replica is concerned.
@@ -46,7 +46,7 @@ pub struct ValidatorEngine {
     normal_mode: bool,
 }
 
-impl ValidatorEngine {
+impl ValidatorProcess {
     // Check whether this replica was a primary at a view
     pub fn is_primary_at_view(&self, v: View) -> bool {
         self.id == self.get_primary_at_view(v)
@@ -74,8 +74,17 @@ impl ValidatorEngine {
         self.normal_mode
     }
 
-    pub fn phase(self) -> State {
-        self.phase
+    // Corresponds to N=3F+1
+    pub fn big_n(&self) -> usize {
+        self.set.len()
+    }
+
+    pub fn set(&self) -> ValidatorSet {
+        self.set.clone()
+    }
+
+    pub fn phase(&self) -> State {
+        self.phase.clone()
     }
 
     pub fn primary(self) -> Committer {
@@ -86,8 +95,13 @@ impl ValidatorEngine {
         self.id
     }
 
-    pub fn view(self) -> View {
-        self.view
+    pub fn inc_v(mut self) {
+        self.view += 1;
+    }
+
+    pub fn view(&self) -> View {
+        let v = self.view.clone();
+        v
     }
 
     pub fn new(id: String, set: Vec<Committer>) -> Self {
