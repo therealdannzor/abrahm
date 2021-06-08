@@ -2,6 +2,7 @@ mod account_info;
 mod block;
 mod consensus;
 mod core;
+mod network;
 mod p2p;
 mod pool_manager;
 mod state_db;
