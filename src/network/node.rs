@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::io::prelude::*;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::from_utf8;
@@ -19,51 +20,15 @@ use mio::{Events, Interest, Poll, Registry, Token};
 pub struct Node {
     // The operator and owner of any funds related to this node
     author: String,
-    // The active and inactive connections this node is connnected to
-    connections: Arc<RwLock<HashMap<String, TcpStream>>>,
-    // Messages received
-    message_buf: Arc<RwLock<Vec<String>>>,
-    // Channel to send messages
-    tx: Sender<String>,
-    // Channel to receive messages
-    rx: Receiver<String>,
+    // Handler for TCP connections
+    handler: TcpHandler,
 }
 impl Node {
-    pub fn new(author: String) -> Self {
-        let (tx, rx): (Sender<String>, Receiver<String>) = mpsc::channel();
+    pub fn new(author: String, stream_cap: usize) -> Self {
         Self {
             author,
-            connections: Arc::new(RwLock::new(HashMap::new())),
-            message_buf: Arc::new(RwLock::new(Vec::new())),
-            tx,
-            rx,
+            handler: TcpHandler::new(stream_cap),
         }
-    }
-
-    pub fn poll_message(self) {
-        let arcw = self.message_buf.clone();
-        spawn(move || {
-            let msg = self.rx.recv();
-            let msg = match msg {
-                Ok(_) => msg.unwrap(),
-                Err(_) => panic!("error polling for new messages"),
-            };
-            {
-                let mut arcw = arcw.write().unwrap();
-                arcw.push(msg);
-            }
-        });
-    }
-
-    pub fn send_message(&mut self, data: String) {
-        let transmit = self.tx.clone();
-        spawn(move || {
-            transmit.send(data);
-        });
-    }
-
-    pub fn num_peers(self) -> usize {
-        self.connections.read().unwrap().len()
     }
 }
 
@@ -82,18 +47,26 @@ struct TcpHandler {
 
     // Port number, only when it is listening
     port: Option<u16>,
+
+    // Transmit messages internally to the handler
+    send_tx: Sender<Vec<u8>>,
+    // Pull messages for the handler to dispatch
+    send_rx: Receiver<Vec<u8>>,
 }
 
 const PEER_CONN_TKN: Token = Token(0);
 
 impl TcpHandler {
     fn new(event_capacity: usize) -> Self {
+        let (send_tx, send_rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
         Self {
             p: Poll::new().unwrap(),
             event_store: Events::with_capacity(event_capacity),
             map: HashMap::new(),
             listening: false,
             port: None,
+            send_tx,
+            send_rx,
         }
     }
 
@@ -156,7 +129,11 @@ impl TcpHandler {
                     },
                     token => {
                         let done = if let Some(conn) = self.map.get_mut(&token) {
-                            handle_conn_event(self.p.registry(), conn, event, data)?
+                            let msg = match self.send_rx.try_recv() {
+                                Ok(msg) => Some(msg),
+                                Err(_) => None,
+                            };
+                            handle_conn_event(self.p.registry(), conn, event, msg)?
                         } else {
                             false
                         };
@@ -168,21 +145,31 @@ impl TcpHandler {
             }
         }
     }
+
+    pub fn num_peers(self) -> usize {
+        self.map.len()
+    }
 }
 
 fn handle_conn_event(
     registry: &Registry,
     connection: &mut TcpStream,
     event: &Event,
-    data: &[u8],
+    data: Option<Vec<u8>>,
 ) -> std::io::Result<bool> {
+    if data.is_none() {
+        return Ok(false);
+    }
+
     if event.is_writable() {
+        let cpy = data.clone();
+        let data: &[u8] = &data.unwrap()[..];
         match connection.write(data) {
             Ok(n) if n < data.len() => return Err(std::io::ErrorKind::WriteZero.into()),
             Ok(_) => registry.reregister(connection, event.token(), Interest::READABLE)?,
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
             Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                return handle_conn_event(registry, connection, event, data)
+                return handle_conn_event(registry, connection, event, cpy)
             }
             Err(e) => return Err(e),
         }
@@ -190,7 +177,7 @@ fn handle_conn_event(
 
     if event.is_readable() {
         let mut conn_closed = false;
-        let mut rcv_dat = vec![0, 4096];
+        let mut rcv_dat = vec![0, 255];
         let mut bytes_read = 0;
         loop {
             match connection.read(&mut rcv_dat[bytes_read..]) {
