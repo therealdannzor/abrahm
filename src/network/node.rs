@@ -7,6 +7,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::from_utf8;
 use std::sync::mpsc;
 use std::sync::{
+    atomic::AtomicBool,
     mpsc::{Receiver, Sender},
     Arc, RwLock,
 };
@@ -50,13 +51,25 @@ struct TcpHandler {
 
     // Transmit messages internally to the handler
     send_tx: Sender<Vec<u8>>,
+
     // Pull messages for the handler to dispatch
     send_rx: Receiver<Vec<u8>>,
+
+    // Exit loop signal
+    atomic: AtomicBool,
 }
 
 const PEER_CONN_TKN: Token = Token(0);
 
 impl TcpHandler {
+    fn queue_data_to_send(self, data: &'static [u8]) -> std::io::Result<bool> {
+        let tx = self.send_tx.clone();
+        spawn(move || {
+            tx.send(data.to_vec());
+        });
+        Ok(true)
+    }
+
     fn new(event_capacity: usize) -> Self {
         let (send_tx, send_rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
         Self {
@@ -67,6 +80,7 @@ impl TcpHandler {
             port: None,
             send_tx,
             send_rx,
+            atomic: AtomicBool::new(false),
         }
     }
 
@@ -96,12 +110,16 @@ impl TcpHandler {
 
     // event_listener reacts to the two events:
     //
-    // 1. new peer connecting: register its token -> address in the hashmap
-    // 2. handle connection: pass the data to a handler
+    // 1. encounter new connection: register its token -> address in the hashmap
+    // 2. handle known connection: pass the data to a handler
     fn event_listener(mut self, srv: TcpListener) -> std::io::Result<()> {
         let mut uniq_tkn = Token(PEER_CONN_TKN.0 + 1);
 
         loop {
+            if *self.atomic.get_mut() {
+                log::info!("event listener stopped: exit signal received");
+                return Ok(());
+            }
             match self.p.poll(&mut self.event_store, None) {
                 Ok(ok) => (),
                 Err(e) => panic!("could not poll events, {:?}", e),
@@ -157,10 +175,6 @@ fn handle_conn_event(
     event: &Event,
     data: Option<Vec<u8>>,
 ) -> std::io::Result<bool> {
-    if data.is_none() {
-        return Ok(false);
-    }
-
     if event.is_writable() {
         let cpy = data.clone();
         let data: &[u8] = &data.unwrap()[..];
