@@ -14,6 +14,7 @@ use std::sync::{
 use std::thread::spawn;
 use std::vec::Vec;
 
+use log::info;
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Registry, Token};
@@ -23,7 +24,7 @@ pub struct Node {
     // The operator and owner of any funds related to this node
     author: String,
     // Handler for TCP connections
-    handler: TcpHandler,
+    pub handler: TcpHandler,
 }
 impl Node {
     pub fn new(author: String, stream_cap: usize) -> Self {
@@ -55,7 +56,7 @@ impl TargetSocket {
 }
 
 // TcpHandler handles the TCP communication between nodes
-struct TcpHandler {
+pub struct TcpHandler {
     // Poller of new events
     p: Poll,
 
@@ -72,10 +73,10 @@ struct TcpHandler {
     port: Option<u16>,
 
     // Transmit messages internally to the handler
-    send_tx: Sender<Vec<u8>>,
+    sender: Sender<Vec<u8>>,
 
     // Pull messages for the handler to dispatch
-    send_rx: Receiver<Vec<u8>>,
+    receiver: Receiver<Vec<u8>>,
 
     // Exit loop signal
     atomic: AtomicBool,
@@ -84,24 +85,28 @@ struct TcpHandler {
 const PEER_CONN_TKN: Token = Token(0);
 
 impl TcpHandler {
-    fn queue_data_to_send(self, data: &'static [u8]) -> std::io::Result<bool> {
-        let tx = self.send_tx.clone();
-        spawn(move || {
-            tx.send(data.to_vec());
+    pub fn queue_data_to_send(&self, data: Vec<u8>) -> std::io::Result<bool> {
+        let tx = self.sender.clone();
+        let handle = spawn(move || {
+            tx.send(data).unwrap();
+            drop(tx);
         });
+
+        handle.join().unwrap();
+
         Ok(true)
     }
 
     fn new(event_capacity: usize) -> Self {
-        let (send_tx, send_rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
+        let (sender, receiver): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
         Self {
             p: Poll::new().unwrap(),
             event_store: Events::with_capacity(event_capacity),
             map: HashMap::new(),
             listening: false,
             port: None,
-            send_tx,
-            send_rx,
+            sender,
+            receiver,
             atomic: AtomicBool::new(false),
         }
     }
@@ -112,7 +117,7 @@ impl TcpHandler {
     //    `listening` and its `port` to a Some value.
     // 2. registers event sources with the poll instance through an array of `Token`s to identify
     //    the different types of events to listen for.
-    fn open_socket(&mut self) -> TcpListener {
+    pub fn open_socket(&mut self) -> TcpListener {
         let loopback = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let socket = SocketAddr::new(loopback, /* dynamically allocate */ 0);
 
@@ -122,6 +127,7 @@ impl TcpHandler {
         };
         self.listening = true;
         self.port = Some(srv.local_addr().unwrap().port());
+        info!("Listening to port: {:?}", self.port.unwrap());
 
         self.p
             .registry()
@@ -130,11 +136,12 @@ impl TcpHandler {
         srv
     }
 
-    // event_listener reacts to the two events:
+    // event_listener reacts to two types of events:
     //
-    // 1. encounter new connection: register its token -> address in the hashmap
-    // 2. handle known connection: pass the data to a handler
-    fn event_listener(mut self, srv: TcpListener) -> std::io::Result<()> {
+    // 1. new connection event: register the stream and token in the polling mechanism
+    //    and add this tuple to the hashmap registry
+    // 2. known connection event: pass the data to a handler
+    pub fn event_listener(&mut self, srv: TcpListener) -> std::io::Result<()> {
         let mut uniq_tkn = Token(PEER_CONN_TKN.0 + 1);
 
         loop {
@@ -143,13 +150,14 @@ impl TcpHandler {
                 return Ok(());
             }
             match self.p.poll(&mut self.event_store, None) {
-                Ok(ok) => (),
+                Ok(ok) => info!("waits for polling events now"),
                 Err(e) => panic!("could not poll events, {:?}", e),
             };
 
             for event in self.event_store.iter().clone() {
                 match event.token() {
                     PEER_CONN_TKN => loop {
+                        info!("peer connect token matched");
                         let (mut conn, addr) = match srv.accept() {
                             Ok((conn, addr)) => (conn, addr),
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -158,7 +166,7 @@ impl TcpHandler {
                             Err(e) => panic!("unexpected event error: {:?}", e),
                         };
 
-                        log::info!("socket accepted connection from: {}", addr);
+                        info!("socket accepted connection from: {}", addr);
                         let token = next_token(&mut uniq_tkn);
                         self.p.registry().register(
                             &mut conn,
@@ -170,11 +178,12 @@ impl TcpHandler {
                         self.map.insert(token, ts);
                     },
                     token => {
+                        info!("client token matched");
                         let done = if let Some(ts) = self.map.get_mut(&token) {
-                            let msg = match self.send_rx.try_recv() {
-                                Ok(msg) => Some(msg),
-                                Err(_) => None,
-                            };
+                            info!("about to fetch message from channel");
+                            let msg = self.receiver.recv().unwrap();
+                            let msg: &[u8] = msg.as_ref();
+                            info!("received message: {:?}", msg);
                             handle_conn_event(self.p.registry(), &mut ts.stream, event, msg)?
                         } else {
                             false
@@ -197,7 +206,7 @@ fn handle_conn_event(
     registry: &Registry,
     connection: &mut TcpStream,
     event: &Event,
-    data: Option<Vec<u8>>,
+    data: &[u8],
 ) -> std::io::Result<bool> {
     if event.is_writable() {
         write_stream_data(registry, connection, event, data)?;
@@ -229,7 +238,7 @@ fn handle_conn_event(
         check_bytes_read(bytes_read, &mut rcv_dat);
 
         if conn_closed {
-            log::info!("connection closed");
+            info!("connection closed");
             return Ok(true);
         }
     }
@@ -251,9 +260,9 @@ fn check_bytes_read(mut amount: usize, recv: &mut Vec<u8>) {
     if amount != 0 {
         let recv = &recv[..amount];
         if let Ok(buf) = from_utf8(recv) {
-            log::info!("received data: {}", buf.trim_end());
+            info!("received data: {}", buf.trim_end());
         } else {
-            log::info!("received (non utf-8) data: {:?}", recv);
+            info!("received (non utf-8) data: {:?}", recv);
         }
     }
 }
@@ -262,9 +271,8 @@ fn write_stream_data(
     registry: &Registry,
     connection: &mut TcpStream,
     event: &Event,
-    data: Option<Vec<u8>>,
+    data: &[u8],
 ) -> std::io::Result<bool> {
-    let data: &[u8] = &data.unwrap()[..];
     match connection.write(data) {
         Ok(n) if n < data.len() => return Err(std::io::ErrorKind::WriteZero.into()),
         Ok(_) => {
@@ -277,7 +285,7 @@ fn write_stream_data(
         }
         // We can work around this by trying again
         Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
-            return write_stream_data(registry, connection, event, Some(data.to_vec()))
+            return write_stream_data(registry, connection, event, data)
         }
         // Unexpected errors that are undesired
         Err(e) => return Err(e),
