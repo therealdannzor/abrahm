@@ -18,6 +18,7 @@ use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Registry, Token};
 
+// Node is the highest abstraction for node-to-node communication on the network
 pub struct Node {
     // The operator and owner of any funds related to this node
     author: String,
@@ -33,6 +34,27 @@ impl Node {
     }
 }
 
+// TargetSocket encapsulates information on other hosts this client communicates with
+struct TargetSocket {
+    socket_addr: SocketAddr,
+    stream: TcpStream,
+}
+impl TargetSocket {
+    fn new(socket_addr: SocketAddr, stream: TcpStream) -> Self {
+        Self {
+            socket_addr,
+            stream,
+        }
+    }
+    fn port(self) -> u16 {
+        self.socket_addr.port()
+    }
+    fn ip(self) -> IpAddr {
+        self.socket_addr.ip()
+    }
+}
+
+// TcpHandler handles the TCP communication between nodes
 struct TcpHandler {
     // Poller of new events
     p: Poll,
@@ -41,7 +63,7 @@ struct TcpHandler {
     event_store: Events,
 
     // Map of `Token` (unique identifiers) -> `TcpStream`
-    map: HashMap<Token, TcpStream>,
+    map: HashMap<Token, TargetSocket>,
 
     // If the handler is currently listening to a socket
     listening: bool,
@@ -143,15 +165,17 @@ impl TcpHandler {
                             token,
                             Interest::READABLE.add(Interest::WRITABLE),
                         );
-                        self.map.insert(token, conn);
+
+                        let ts = TargetSocket::new(addr, conn);
+                        self.map.insert(token, ts);
                     },
                     token => {
-                        let done = if let Some(conn) = self.map.get_mut(&token) {
+                        let done = if let Some(ts) = self.map.get_mut(&token) {
                             let msg = match self.send_rx.try_recv() {
                                 Ok(msg) => Some(msg),
                                 Err(_) => None,
                             };
-                            handle_conn_event(self.p.registry(), conn, event, msg)?
+                            handle_conn_event(self.p.registry(), &mut ts.stream, event, msg)?
                         } else {
                             false
                         };
@@ -176,23 +200,14 @@ fn handle_conn_event(
     data: Option<Vec<u8>>,
 ) -> std::io::Result<bool> {
     if event.is_writable() {
-        let cpy = data.clone();
-        let data: &[u8] = &data.unwrap()[..];
-        match connection.write(data) {
-            Ok(n) if n < data.len() => return Err(std::io::ErrorKind::WriteZero.into()),
-            Ok(_) => registry.reregister(connection, event.token(), Interest::READABLE)?,
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                return handle_conn_event(registry, connection, event, cpy)
-            }
-            Err(e) => return Err(e),
-        }
+        write_stream_data(registry, connection, event, data)?;
     }
 
     if event.is_readable() {
         let mut conn_closed = false;
         let mut rcv_dat = vec![0, 255];
         let mut bytes_read = 0;
+
         loop {
             match connection.read(&mut rcv_dat[bytes_read..]) {
                 Ok(0) => {
@@ -211,14 +226,7 @@ fn handle_conn_event(
             }
         }
 
-        if bytes_read != 0 {
-            let rcv_dat = &rcv_dat[..bytes_read];
-            if let Ok(buf) = from_utf8(rcv_dat) {
-                log::info!("received data: {}", buf.trim_end());
-            } else {
-                log::info!("received (non UTF-8) data: {:?}", rcv_dat);
-            }
-        }
+        check_bytes_read(bytes_read, &mut rcv_dat);
 
         if conn_closed {
             log::info!("connection closed");
@@ -229,8 +237,49 @@ fn handle_conn_event(
     Ok(false)
 }
 
+// Updates the token to make sure we have unique ones for each stream.
 fn next_token(current: &mut Token) -> Token {
     let next = current.0;
     current.0 += 1;
     Token(next)
+}
+
+// Checks our receive buffer whether there is something to read.
+// If this is true, we remove it from the buffer and log it to the user.
+// If this is false, we do nothing.
+fn check_bytes_read(mut amount: usize, recv: &mut Vec<u8>) {
+    if amount != 0 {
+        let recv = &recv[..amount];
+        if let Ok(buf) = from_utf8(recv) {
+            log::info!("received data: {}", buf.trim_end());
+        } else {
+            log::info!("received (non utf-8) data: {:?}", recv);
+        }
+    }
+}
+
+fn write_stream_data(
+    registry: &Registry,
+    connection: &mut TcpStream,
+    event: &Event,
+    data: Option<Vec<u8>>,
+) -> std::io::Result<bool> {
+    let data: &[u8] = &data.unwrap()[..];
+    match connection.write(data) {
+        Ok(n) if n < data.len() => return Err(std::io::ErrorKind::WriteZero.into()),
+        Ok(_) => {
+            registry.reregister(connection, event.token(), Interest::READABLE)?;
+            return Ok(true);
+        }
+        // We are not ready yet
+        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            return Ok(false);
+        }
+        // We can work around this by trying again
+        Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
+            return write_stream_data(registry, connection, event, Some(data.to_vec()))
+        }
+        // Unexpected errors that are undesired
+        Err(e) => return Err(e),
+    }
 }
