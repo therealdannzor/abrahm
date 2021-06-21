@@ -132,7 +132,7 @@ impl TcpHandler {
         };
         self.listening = true;
         self.port = Some(srv.local_addr().unwrap().port());
-        info!("Listening to port: {:?}", self.port.unwrap());
+        info!("Listening on port: {:?}", self.port.unwrap());
 
         self.p
             .registry()
@@ -162,7 +162,7 @@ impl TcpHandler {
             for event in self.event_store.iter().clone() {
                 match event.token() {
                     PEER_CONN_TKN => loop {
-                        info!("peer connect token matched");
+                        info!("new peer encountered");
                         let (mut conn, addr) = match srv.accept() {
                             Ok((conn, addr)) => (conn, addr),
                             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -183,28 +183,21 @@ impl TcpHandler {
                         self.map.insert(token, ts);
                     },
                     token => {
-                        info!("client token matched");
                         let done = if let Some(ts) = self.map.get_mut(&token) {
-                            info!("about to fetch message from channel");
                             let msg = self.receiver.try_recv();
 
                             match msg {
+                                // we have a message to send
                                 Ok(m) => {
                                     let msg = m.as_ref();
-                                    info!("message to dispatch: {:?}", msg);
                                     write_stream_data(&mut ts.stream, msg)?
                                 }
-                                Err(e) => {
-                                    info!("no messages to send");
-                                    read_stream_data(&mut ts.stream, &mut self.mailbox)?
-                                }
+                                // we do not have a message, so we process received messages
+                                Err(_) => read_stream_data(&mut ts.stream, &mut self.mailbox)?,
                             }
                         } else {
                             false
                         };
-                        if done {
-                            self.map.remove(&token);
-                        }
                     }
                 }
             }
@@ -213,6 +206,14 @@ impl TcpHandler {
 
     pub fn num_peers(self) -> usize {
         self.map.len()
+    }
+
+    pub fn exit(&mut self) {
+        *self.atomic.get_mut() = true;
+    }
+
+    pub fn remove_peer(mut self, token: Token) {
+        self.map.remove(&token);
     }
 }
 
@@ -292,7 +293,6 @@ fn read_stream_data(
         return Ok(false);
     } else {
         mailbox.push(octs.unwrap().clone().to_string());
-        info!("new mailbox: {:?}", mailbox);
     }
 
     if conn_closed {
