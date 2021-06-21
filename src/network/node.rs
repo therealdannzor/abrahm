@@ -79,6 +79,9 @@ pub struct TcpHandler {
     // Pull messages for the handler to dispatch
     receiver: Receiver<Vec<u8>>,
 
+    // Received messages from external peers
+    mailbox: Vec<String>,
+
     // Exit loop signal
     atomic: AtomicBool,
 }
@@ -108,6 +111,7 @@ impl TcpHandler {
             port: None,
             sender,
             receiver,
+            mailbox: Vec::new(),
             atomic: AtomicBool::new(false),
         }
     }
@@ -183,25 +187,16 @@ impl TcpHandler {
                         let done = if let Some(ts) = self.map.get_mut(&token) {
                             info!("about to fetch message from channel");
                             let msg = self.receiver.try_recv();
+
                             match msg {
                                 Ok(m) => {
                                     let msg = m.as_ref();
                                     info!("message to dispatch: {:?}", msg);
-                                    handle_conn_event(
-                                        self.p.registry(),
-                                        &mut ts.stream,
-                                        event,
-                                        msg,
-                                    )?
+                                    write_stream_data(&mut ts.stream, msg)?
                                 }
                                 Err(e) => {
                                     info!("no messages to send");
-                                    handle_conn_event(
-                                        self.p.registry(),
-                                        &mut ts.stream,
-                                        event,
-                                        Vec::from("").as_ref(),
-                                    )?
+                                    read_stream_data(&mut ts.stream, &mut self.mailbox)?
                                 }
                             }
                         } else {
@@ -219,55 +214,6 @@ impl TcpHandler {
     pub fn num_peers(self) -> usize {
         self.map.len()
     }
-}
-
-fn handle_conn_event(
-    registry: &Registry,
-    connection: &mut TcpStream,
-    event: &Event,
-    data: &[u8],
-) -> std::io::Result<bool> {
-    let one_second = time::Duration::from_secs(1);
-    thread::sleep(one_second);
-
-    if event.is_writable() {
-        info!("write event received");
-        write_stream_data(connection, data)?;
-    }
-
-    if event.is_readable() {
-        info!("read event received");
-        let mut conn_closed = false;
-        let mut rcv_dat = vec![0, 255];
-        let mut bytes_read = 0;
-
-        loop {
-            match connection.read(&mut rcv_dat[bytes_read..]) {
-                Ok(0) => {
-                    conn_closed = true;
-                    break;
-                }
-                Ok(n) => {
-                    bytes_read += n;
-                    if bytes_read == rcv_dat.len() {
-                        rcv_dat.resize(rcv_dat.len() + 1024, 0);
-                    }
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            }
-        }
-
-        check_bytes_read(bytes_read, &mut rcv_dat);
-
-        if conn_closed {
-            info!("connection closed");
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
 }
 
 // Updates the token to make sure we have unique ones for each stream.
@@ -313,4 +259,44 @@ fn write_stream_data(connection: &mut TcpStream, data: &[u8]) -> std::io::Result
         // Unexpected errors that are undesired
         Err(e) => return Err(e),
     }
+}
+
+fn read_stream_data(
+    connection: &mut TcpStream,
+    mailbox: &mut Vec<String>,
+) -> std::io::Result<bool> {
+    let mut conn_closed = false;
+    let mut rcv_dat = vec![0, 255];
+    let mut bytes_read = 0;
+
+    loop {
+        match connection.read(&mut rcv_dat[bytes_read..]) {
+            Ok(0) => {
+                conn_closed = true;
+                break;
+            }
+            Ok(n) => {
+                bytes_read += n;
+                if bytes_read == rcv_dat.len() {
+                    rcv_dat.resize(rcv_dat.len() + 1024, 0);
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    let octs = check_bytes_read(bytes_read, &mut rcv_dat);
+    if octs.is_none() {
+        return Ok(false);
+    } else {
+        mailbox.push(octs.unwrap().clone().to_string());
+        info!("new mailbox: {:?}", mailbox);
+    }
+
+    if conn_closed {
+        info!("connection closed");
+    }
+    Ok(true)
 }
