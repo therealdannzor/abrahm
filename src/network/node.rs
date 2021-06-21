@@ -11,7 +11,8 @@ use std::sync::{
     mpsc::{Receiver, Sender},
     Arc, RwLock,
 };
-use std::thread::spawn;
+use std::thread::{self, spawn};
+use std::time;
 use std::vec::Vec;
 
 use log::info;
@@ -72,9 +73,9 @@ pub struct TcpHandler {
     // Port number, only when it is listening
     port: Option<u16>,
 
+    /* Messages created in the backend to be sent to other peers */
     // Transmit messages internally to the handler
     sender: Sender<Vec<u8>>,
-
     // Pull messages for the handler to dispatch
     receiver: Receiver<Vec<u8>>,
 
@@ -146,7 +147,7 @@ impl TcpHandler {
 
         loop {
             if *self.atomic.get_mut() {
-                log::info!("event listener stopped: exit signal received");
+                info!("event listener stopped: exit signal received");
                 return Ok(());
             }
             match self.p.poll(&mut self.event_store, None) {
@@ -181,10 +182,28 @@ impl TcpHandler {
                         info!("client token matched");
                         let done = if let Some(ts) = self.map.get_mut(&token) {
                             info!("about to fetch message from channel");
-                            let msg = self.receiver.recv().unwrap();
-                            let msg: &[u8] = msg.as_ref();
-                            info!("received message: {:?}", msg);
-                            handle_conn_event(self.p.registry(), &mut ts.stream, event, msg)?
+                            let msg = self.receiver.try_recv();
+                            match msg {
+                                Ok(m) => {
+                                    let msg = m.as_ref();
+                                    info!("message to dispatch: {:?}", msg);
+                                    handle_conn_event(
+                                        self.p.registry(),
+                                        &mut ts.stream,
+                                        event,
+                                        msg,
+                                    )?
+                                }
+                                Err(e) => {
+                                    info!("no messages to send");
+                                    handle_conn_event(
+                                        self.p.registry(),
+                                        &mut ts.stream,
+                                        event,
+                                        Vec::from("").as_ref(),
+                                    )?
+                                }
+                            }
                         } else {
                             false
                         };
@@ -208,11 +227,16 @@ fn handle_conn_event(
     event: &Event,
     data: &[u8],
 ) -> std::io::Result<bool> {
+    let one_second = time::Duration::from_secs(1);
+    thread::sleep(one_second);
+
     if event.is_writable() {
-        write_stream_data(registry, connection, event, data)?;
+        info!("write event received");
+        write_stream_data(connection, data)?;
     }
 
     if event.is_readable() {
+        info!("read event received");
         let mut conn_closed = false;
         let mut rcv_dat = vec![0, 255];
         let mut bytes_read = 0;
@@ -256,27 +280,26 @@ fn next_token(current: &mut Token) -> Token {
 // Checks our receive buffer whether there is something to read.
 // If this is true, we remove it from the buffer and log it to the user.
 // If this is false, we do nothing.
-fn check_bytes_read(mut amount: usize, recv: &mut Vec<u8>) {
+fn check_bytes_read(mut amount: usize, recv: &mut Vec<u8>) -> Option<&str> {
     if amount != 0 {
         let recv = &recv[..amount];
         if let Ok(buf) = from_utf8(recv) {
+            let trimmed = buf.trim_end();
             info!("received data: {}", buf.trim_end());
+            Some(trimmed)
         } else {
             info!("received (non utf-8) data: {:?}", recv);
+            None
         }
+    } else {
+        None
     }
 }
 
-fn write_stream_data(
-    registry: &Registry,
-    connection: &mut TcpStream,
-    event: &Event,
-    data: &[u8],
-) -> std::io::Result<bool> {
+fn write_stream_data(connection: &mut TcpStream, data: &[u8]) -> std::io::Result<bool> {
     match connection.write(data) {
         Ok(n) if n < data.len() => return Err(std::io::ErrorKind::WriteZero.into()),
         Ok(_) => {
-            registry.reregister(connection, event.token(), Interest::READABLE)?;
             return Ok(true);
         }
         // We are not ready yet
@@ -285,7 +308,7 @@ fn write_stream_data(
         }
         // We can work around this by trying again
         Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
-            return write_stream_data(registry, connection, event, data)
+            return write_stream_data(connection, data)
         }
         // Unexpected errors that are undesired
         Err(e) => return Err(e),
