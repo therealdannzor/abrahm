@@ -24,7 +24,7 @@ pub struct Node {
     // The operator and owner of any funds related to this node
     author: String,
     // Handler for TCP connections
-    pub handler: TcpHandler,
+    handler: TcpHandler,
 }
 impl Node {
     pub fn new(author: String, stream_cap: usize) -> Self {
@@ -32,6 +32,23 @@ impl Node {
             author,
             handler: TcpHandler::new(stream_cap),
         }
+    }
+
+    // send dispatches a message to be sent to other peers
+    pub fn send(self, message: Vec<u8>) -> std::io::Result<bool> {
+        return self.handler.enqueue_data_to_send(message);
+    }
+
+    // check_mailbox returns received messages from other peers
+    pub fn check_mailbox(self) -> Vec<String> {
+        self.handler.mailbox()
+    }
+
+    // port returns an Option with the port number that the client listens to.
+    // If is listens to a port, then the Option is a `Some` value and can be consumed.
+    // If is does not, it is `None`.
+    pub fn port(self) -> Option<u16> {
+        self.handler.active_listen_port()
     }
 }
 
@@ -85,7 +102,7 @@ pub struct TcpHandler {
 const PEER_CONN_TKN: Token = Token(0);
 
 impl TcpHandler {
-    pub fn queue_data_to_send(&self, data: Vec<u8>) -> std::io::Result<bool> {
+    fn enqueue_data_to_send(&self, data: Vec<u8>) -> std::io::Result<bool> {
         let tx = self.sender.clone();
         let handle = spawn(move || {
             tx.send(data).unwrap();
@@ -111,13 +128,26 @@ impl TcpHandler {
         }
     }
 
+    fn start(&mut self) -> std::io::Result<()> {
+        let listener = self.open_socket();
+        return self.event_listener(listener);
+    }
+
+    fn active_listen_port(self) -> Option<u16> {
+        if self.port.is_some() {
+            self.port
+        } else {
+            None
+        }
+    }
+
     // open_socket does two things:
     //
     // 1. listens to an available port on localhost and changes the state of TcpHandler to
     //    `listening` and its `port` to a Some value.
     // 2. registers event sources with the poll instance through an array of `Token`s to identify
     //    the different types of events to listen for.
-    pub fn open_socket(&mut self) -> TcpListener {
+    fn open_socket(&mut self) -> TcpListener {
         let loopback = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         let socket = SocketAddr::new(loopback, /* dynamically allocate */ 0);
 
@@ -141,7 +171,7 @@ impl TcpHandler {
     // 1. new connection event: register the stream and token in the polling mechanism
     //    and add this tuple to the hashmap registry
     // 2. known connection event: pass the data to a handler
-    pub fn event_listener(&mut self, srv: TcpListener) -> std::io::Result<()> {
+    fn event_listener(&mut self, srv: TcpListener) -> std::io::Result<()> {
         let mut uniq_tkn = Token(PEER_CONN_TKN.0 + 1);
 
         loop {
@@ -195,11 +225,15 @@ impl TcpHandler {
         }
     }
 
-    pub fn num_peers(self) -> usize {
+    fn mailbox(self) -> Vec<String> {
+        self.mailbox
+    }
+
+    fn num_peers(self) -> usize {
         self.map.len()
     }
 
-    pub fn remove_peer(mut self, token: Token) {
+    fn remove_peer(mut self, token: Token) {
         self.map.remove(&token);
     }
 }
