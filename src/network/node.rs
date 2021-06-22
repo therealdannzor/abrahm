@@ -7,7 +7,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::from_utf8;
 use std::sync::mpsc;
 use std::sync::{
-    atomic::AtomicBool,
     mpsc::{Receiver, Sender},
     Arc, RwLock,
 };
@@ -81,9 +80,6 @@ pub struct TcpHandler {
 
     // Received messages from external peers
     mailbox: Vec<String>,
-
-    // Exit loop signal
-    atomic: AtomicBool,
 }
 
 const PEER_CONN_TKN: Token = Token(0);
@@ -112,7 +108,6 @@ impl TcpHandler {
             sender,
             receiver,
             mailbox: Vec::new(),
-            atomic: AtomicBool::new(false),
         }
     }
 
@@ -150,10 +145,6 @@ impl TcpHandler {
         let mut uniq_tkn = Token(PEER_CONN_TKN.0 + 1);
 
         loop {
-            if *self.atomic.get_mut() {
-                info!("event listener stopped: exit signal received");
-                return Ok(());
-            }
             match self.p.poll(&mut self.event_store, None) {
                 Ok(ok) => info!("waits for polling events now"),
                 Err(e) => panic!("could not poll events, {:?}", e),
@@ -206,10 +197,6 @@ impl TcpHandler {
 
     pub fn num_peers(self) -> usize {
         self.map.len()
-    }
-
-    pub fn exit(&mut self) {
-        *self.atomic.get_mut() = true;
     }
 
     pub fn remove_peer(mut self, token: Token) {
