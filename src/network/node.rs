@@ -12,7 +12,6 @@ use std::sync::{
 };
 use std::thread::{self, spawn};
 use std::time;
-use std::vec::Vec;
 
 use log::info;
 use mio::event::Event;
@@ -40,8 +39,13 @@ impl Node {
     }
 
     // check_mailbox returns received messages from other peers
-    pub fn check_mailbox(self) -> Vec<String> {
+    pub fn check_mailbox(self) -> VecDeque<String> {
         self.handler.mailbox()
+    }
+
+    // get_next_message pops the next message according to FIFO
+    pub fn get_next_message(self) -> Option<String> {
+        self.check_mailbox().pop_back()
     }
 
     // port returns an Option with the port number that the client listens to.
@@ -96,7 +100,7 @@ pub struct TcpHandler {
     receiver: Receiver<Vec<u8>>,
 
     // Received messages from external peers
-    mailbox: Vec<String>,
+    mailbox: VecDeque<String>,
 }
 
 const PEER_CONN_TKN: Token = Token(0);
@@ -124,7 +128,7 @@ impl TcpHandler {
             port: None,
             sender,
             receiver,
-            mailbox: Vec::new(),
+            mailbox: VecDeque::new(),
         }
     }
 
@@ -225,7 +229,7 @@ impl TcpHandler {
         }
     }
 
-    fn mailbox(self) -> Vec<String> {
+    fn mailbox(self) -> VecDeque<String> {
         self.mailbox
     }
 
@@ -285,7 +289,7 @@ fn write_stream_data(connection: &mut TcpStream, data: &[u8]) -> std::io::Result
 
 fn read_stream_data(
     connection: &mut TcpStream,
-    mailbox: &mut Vec<String>,
+    mailbox: &mut VecDeque<String>,
 ) -> std::io::Result<bool> {
     let mut conn_closed = false;
     let mut rcv_dat = vec![0, 255];
@@ -313,7 +317,7 @@ fn read_stream_data(
     if octs.is_none() {
         return Ok(false);
     } else {
-        mailbox.push(octs.unwrap().clone().to_string());
+        mailbox.push_back(octs.unwrap().clone().to_string());
     }
 
     if conn_closed {
