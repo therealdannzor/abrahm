@@ -39,12 +39,12 @@ impl Node {
     }
 
     // check_mailbox returns received messages from other peers
-    pub fn check_mailbox(self) -> VecDeque<String> {
+    pub fn check_mailbox(self) -> VecDeque<Vec<u8>> {
         self.handler.mailbox()
     }
 
     // get_next_message pops the next message according to FIFO
-    pub fn get_next_message(self) -> Option<String> {
+    pub fn get_next_message(self) -> Option<Vec<u8>> {
         self.check_mailbox().pop_back()
     }
 
@@ -100,7 +100,7 @@ pub struct TcpHandler {
     receiver: Receiver<Vec<u8>>,
 
     // Received messages from external peers
-    mailbox: VecDeque<String>,
+    mailbox: VecDeque<Vec<u8>>,
 }
 
 const PEER_CONN_TKN: Token = Token(0);
@@ -229,7 +229,7 @@ impl TcpHandler {
         }
     }
 
-    fn mailbox(self) -> VecDeque<String> {
+    fn mailbox(self) -> VecDeque<Vec<u8>> {
         self.mailbox
     }
 
@@ -252,13 +252,13 @@ fn next_token(current: &mut Token) -> Token {
 // Checks our receive buffer whether there is something to read.
 // If this is true, we remove it from the buffer and log it to the user.
 // If this is false, we do nothing.
-fn check_bytes_read(mut amount: usize, recv: &mut Vec<u8>) -> Option<&str> {
+fn check_bytes_read(mut amount: usize, recv: &mut Vec<u8>) -> Option<&[u8]> {
     if amount != 0 {
         let recv = &recv[..amount];
         if let Ok(buf) = from_utf8(recv) {
             let trimmed = buf.trim_end();
             info!("received data: {}", buf.trim_end());
-            Some(trimmed)
+            Some(recv)
         } else {
             info!("received (non utf-8) data: {:?}", recv);
             None
@@ -289,7 +289,7 @@ fn write_stream_data(connection: &mut TcpStream, data: &[u8]) -> std::io::Result
 
 fn read_stream_data(
     connection: &mut TcpStream,
-    mailbox: &mut VecDeque<String>,
+    mailbox: &mut VecDeque<Vec<u8>>,
 ) -> std::io::Result<bool> {
     let mut conn_closed = false;
     let mut rcv_dat = vec![0, 255];
@@ -317,7 +317,7 @@ fn read_stream_data(
     if octs.is_none() {
         return Ok(false);
     } else {
-        mailbox.push_back(octs.unwrap().clone().to_string());
+        mailbox.push_back(octs.unwrap().to_vec());
     }
 
     if conn_closed {
