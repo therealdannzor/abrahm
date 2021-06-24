@@ -1,9 +1,10 @@
 #![allow(unused)]
-use crypto::{digest::Digest, sha2::Sha256};
-
 use super::transition::Transition;
 use crate::swiss_knife::helper;
+use crypto::{digest::Digest, sha2::Sha256};
+use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize)]
 // Request corresponds to a proposal of a state machine operation, sent by the primary.
 //
 // Since there is no central client in our (theoretical) decentralized network, this execution
