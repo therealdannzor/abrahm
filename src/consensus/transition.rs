@@ -3,6 +3,9 @@
 extern crate crypto;
 use self::crypto::digest::Digest;
 use self::crypto::sha2::Sha256;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
 // Transition represents the state transition from a current and established state S0, to a future
 // not-yet-confirmed state S1. Confirmed in this sense is represented by a consensus vote in favor
 // of it.
@@ -47,14 +50,14 @@ fn next_state(txs: std::vec::Vec<Transact>, curr_root_hash: &str) -> String {
 }
 
 impl Transition {
-    pub fn new(&self, hash: &str, txs: std::vec::Vec<Transact>) -> Self {
+    pub fn new(hash: &str, txs: std::vec::Vec<Transact>) -> Self {
         if hash == "" {
             panic!("cannot have an empty existing root hash");
         }
 
         let next_state = next_state(txs.clone(), hash);
 
-        Transition {
+        Self {
             from_root_hash: hash.to_string(),
             txs,
             to_root_hash: next_state,
@@ -76,7 +79,7 @@ impl Transition {
 //
 // In contrast, an external transaction is handled in conjunction with including it to a mempool.
 // Hence, we only require checks that relates to the state db in this transaction.
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Transact {
     // sender
     from: String,
@@ -87,7 +90,7 @@ pub struct Transact {
 }
 
 impl Transact {
-    fn new(from: &str, to: &str, amount: i32) -> Self {
+    pub fn new(from: &str, to: &str, amount: i32) -> Self {
         if amount < 1 {
             panic!("non-valid amount in a transaction");
         }
