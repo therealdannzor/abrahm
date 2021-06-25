@@ -1,10 +1,17 @@
 #![allow(unused)]
 
+use serde::ser::Error;
+use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use themis::keygen;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey, PublicKey};
-use themis::secure_message::SecureSign;
+use themis::secure_message::{SecureSign, SecureVerify};
+
+use crate::consensus::request::Request;
+use crate::hashed;
+use crate::swiss_knife::helper::generate_hash_from_input;
 
 pub struct MessageAssembler {
     public_key: EcdsaPublicKey,
@@ -25,23 +32,26 @@ impl MessageAssembler {
 
 pub struct MessageSanitizer {
     remote_public_key: PublicKey,
+    peer_shortnames: HashMap<u8, EcdsaPublicKey>,
 }
 impl MessageSanitizer {
-    pub fn new(remote_public_key: PublicKey) -> Self {
-        Self { remote_public_key }
+    pub fn new(remote_public_key: PublicKey, peer_shortnames: HashMap<u8, EcdsaPublicKey>) -> Self {
+        Self {
+            remote_public_key,
+            peer_shortnames,
+        }
     }
 }
 
-// TODO: formalize a message structure protocol:
-// * public key information / identity (last 40 characters of the public key hash);
-// * consensus message flag (most likely able to store in 1 byte);
-// * message digest (with Sha256 -> 64 characters);
-// * and the seralized message (payload)
-pub fn validate_message_length(mut slice: &[u8], len: usize) -> bool {
-    if slice.len() != len {
-        return false;
-    }
-
+// The message structure is as follows:
+//
+// * identity (1 character, a single digit identifier mapped to a public key)
+// * message flag (1 character, covers both transaction and consensus);
+// * message length flag (3 characters)
+// * serialized message (varying length, indicated by previous length flag)
+// * length of the signed message digest (because it differs with ± 2 chars, TODO: investigate!)
+// * signed message digest
+pub fn validate_assembled_message() -> bool {
     true
 }
 
@@ -50,6 +60,16 @@ pub fn validate_public_key(key: &[u8]) -> Option<PublicKey> {
         Ok(s) => Some(s),
         Err(_) => None,
     }
+}
+
+pub fn sign_message_digest(secret_key: EcdsaPrivateKey, message: &str) -> Vec<u8> {
+    let m_d = hashed!(message);
+    let sec_message = SecureSign::new(secret_key);
+    let sign_m_d = match sec_message.sign(&m_d) {
+        Ok(m) => m,
+        Err(e) => panic!("failed to sign message: {:?}", e),
+    };
+    sign_m_d
 }
 
 mod tests {
@@ -63,18 +83,53 @@ mod tests {
     use themis::keys::PublicKey;
     use themis::secure_message::{SecureSign, SecureVerify};
 
+    fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
+        let next_transition = Transition::new("0x", vec![Transact::new(from, to, amount)]);
+        Request::new(next_transition, "id")
+    }
+
     #[test]
     fn abc() {
         let (other_peer_sk, other_peer_pk) = keygen::gen_ec_key_pair().split();
-        let next_transition = Transition::new("0x", vec![Transact::new("Alice", "Bob", 1)]);
-        let request = Request::new(next_transition, "id");
+
+        // assumed to be stored by each client at initialization
+        let mut mock_public_key_id_map = HashMap::<u8, EcdsaPublicKey>::new();
+        mock_public_key_id_map.insert(1, other_peer_pk);
+
+        let request = create_request_type("0x", "Alice", "Bob", 1);
+
+        // first part of the message (public key)
+        let target_id = u8::from(1);
+
+        // second part of the message (single byte representing message type)
+        let type_flag = u8::from(0);
+
+        // third and fourth part of the message (request length )
         let serialized = serde_json::to_string(&request);
         if serialized.is_err() {
-            panic!("error serializing: {}", serialized.unwrap());
+            panic!("error serializing: {:?}", serialized.unwrap());
         }
-        println!("serialized: {:?}", serialized.as_ref().clone().unwrap());
-        let d_m = hashed!(&serialized.unwrap());
-        println!("hashed ser: {}", d_m);
+        let message_length = u8::try_from(serialized.as_ref().unwrap().len());
+        if message_length.is_err() {
+            panic!(
+                "error message length overflow, maximum is 255, got: {}",
+                message_length.unwrap()
+            );
+        }
+        let message_length = message_length.unwrap();
+
+        // prepare to sign the request
+        let signed_request =
+            sign_message_digest(other_peer_sk, &hashed!(&serialized.as_ref().unwrap()));
+
+        // add all components to a complete message
+        let mut full_message = Vec::new();
+        full_message.push(target_id);
+        full_message.push(type_flag);
+        full_message.push(message_length);
+        full_message.extend(serialized.unwrap().as_bytes().to_vec());
+        full_message.extend(signed_request);
+        println!("length: {}", full_message.len());
     }
 
     #[test]
