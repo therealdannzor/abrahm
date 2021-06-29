@@ -13,46 +13,73 @@ use crate::consensus::request::Request;
 use crate::hashed;
 use crate::swiss_knife::helper::generate_hash_from_input;
 
-pub struct MessageAssembler {
+pub struct MessageWorker {
     public_key: EcdsaPublicKey,
     secret_key: EcdsaPrivateKey,
+    peer_shortnames: HashMap<u8, EcdsaPublicKey>,
 }
-impl MessageAssembler {
+impl MessageWorker {
     pub fn new(secret_key: EcdsaPrivateKey, public_key: EcdsaPublicKey) -> Self {
         Self {
             public_key,
             secret_key,
+            peer_shortnames: HashMap::new(),
         }
+    }
+
+    pub fn sign_message_digest(&self, message: &str) -> (u8, Vec<u8>) {
+        let m_d = hashed!(message);
+        let sec_message = SecureSign::new(self.secret_key.clone());
+        let sign_m_d = match sec_message.sign(&m_d) {
+            Ok(m) => m,
+            Err(e) => panic!("failed to sign message: {:?}", e),
+        };
+        (sign_m_d.len() as u8, sign_m_d)
+    }
+
+    pub fn insert_peer(&mut self, key: u8, value: EcdsaPublicKey) {
+        self.peer_shortnames.insert(key, value);
     }
 
     pub fn public_key(&self) -> &[u8] {
         self.public_key.as_ref().clone()
     }
-}
 
-pub struct MessageSanitizer {
-    remote_public_key: PublicKey,
-    peer_shortnames: HashMap<u8, EcdsaPublicKey>,
-}
-impl MessageSanitizer {
-    pub fn new(remote_public_key: PublicKey, peer_shortnames: HashMap<u8, EcdsaPublicKey>) -> Self {
-        Self {
-            remote_public_key,
-            peer_shortnames,
+    // The message structure is as follows:
+    //
+    // * identity (1 character, a single digit identifier mapped to a public key)
+    // * message type flag (1 character, covers both transaction and consensus);
+    // * message payload length flag (3 characters)
+    // * serialized message (varying length, indicated by previous length flag)
+    // * length of the signed message digest (because it differs with ¬± 2 chars, TODO: investigate!)
+    // * signed message digest
+    pub fn validate_received(&self, message: Vec<u8>) -> bool {
+        // TODO: find the lowest bound of message length
+        if message.len() < 10 {
+            // guesstimation
+            return false;
         }
-    }
-}
+        let targ_short_id = message[0];
+        let targ_pub_key = self.peer_shortnames.get(&targ_short_id);
+        if targ_pub_key.is_none() {
+            return false;
+        }
+        let targ_pub_key = targ_pub_key.unwrap();
+        let consensus_round_type = message[1];
+        if consensus_round_type > 5 {
+            return false;
+        }
 
-// The message structure is as follows:
-//
-// * identity (1 character, a single digit identifier mapped to a public key)
-// * message flag (1 character, covers both transaction and consensus);
-// * message length flag (3 characters)
-// * serialized message (varying length, indicated by previous length flag)
-// * length of the signed message digest (because it differs with ± 2 chars, TODO: investigate!)
-// * signed message digest
-pub fn validate_assembled_message() -> bool {
-    true
+        let consensus_round = parse_u8_to_enum(consensus_round_type);
+
+        let payload_len = 0;
+        for i in 0..3 {
+            //message[2+i] as
+        }
+        let payload_length = payload_len_dst.clone_from_slice(&message[2..5]);
+        println!("payload len: {:?}", payload_length);
+        true
+    }
 }
 
 pub fn validate_public_key(key: &[u8]) -> Option<PublicKey> {
@@ -62,14 +89,35 @@ pub fn validate_public_key(key: &[u8]) -> Option<PublicKey> {
     }
 }
 
-pub fn sign_message_digest(secret_key: EcdsaPrivateKey, message: &str) -> Vec<u8> {
+pub enum Messages {
+    Request,
+    Preprepare,
+    Prepare,
+    Commit,
+    Viewchange,
+    NewView,
+    Invalid,
+}
+pub fn parse_u8_to_enum(flag: u8) -> Messages {
+    match flag {
+        0 => Messages::Request,
+        1 => Messages::Preprepare,
+        2 => Messages::Prepare,
+        3 => Messages::Commit,
+        4 => Messages::Viewchange,
+        5 => Messages::NewView,
+        _ => Messages::Invalid,
+    }
+}
+
+pub fn cmp_message_with_signed_digest(public_key: EcdsaPublicKey, message: &str) -> bool {
+    let secure_b = SecureVerify::new(public_key);
     let m_d = hashed!(message);
-    let sec_message = SecureSign::new(secret_key);
-    let sign_m_d = match sec_message.sign(&m_d) {
-        Ok(m) => m,
-        Err(e) => panic!("failed to sign message: {:?}", e),
-    };
-    sign_m_d
+    let recv = secure_b.verify(m_d);
+    if recv.is_err() {
+        return false;
+    }
+    true
 }
 
 mod tests {
@@ -83,6 +131,16 @@ mod tests {
     use themis::keys::PublicKey;
     use themis::secure_message::{SecureSign, SecureVerify};
 
+    #[test]
+    pub fn ijk() {
+        let (sk, pk) = keygen::gen_ec_key_pair().split();
+        let mut mw = MessageWorker::new(sk, pk.clone());
+        mw.insert_peer(1, pk.clone());
+        let msg = vec![1, 0, 1, 0, 0, 5, 5, 5, 5, 5, 5];
+        let res = mw.validate_received(msg);
+        assert_eq!(res, true);
+    }
+
     fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
         let next_transition = Transition::new("0x", vec![Transact::new(from, to, amount)]);
         Request::new(next_transition, "id")
@@ -91,6 +149,8 @@ mod tests {
     #[test]
     fn abc() {
         let (other_peer_sk, other_peer_pk) = keygen::gen_ec_key_pair().split();
+
+        let mw = MessageWorker::new(other_peer_sk, other_peer_pk.clone());
 
         // assumed to be stored by each client at initialization
         let mut mock_public_key_id_map = HashMap::<u8, EcdsaPublicKey>::new();
@@ -119,8 +179,8 @@ mod tests {
         let message_length = message_length.unwrap();
 
         // prepare to sign the request
-        let signed_request =
-            sign_message_digest(other_peer_sk, &hashed!(&serialized.as_ref().unwrap()));
+        let (signed_len, signed_request) =
+            mw.sign_message_digest(&hashed!(&serialized.as_ref().unwrap()));
 
         // add all components to a complete message
         let mut full_message = Vec::new();
@@ -128,14 +188,14 @@ mod tests {
         full_message.push(type_flag);
         full_message.push(message_length);
         full_message.extend(serialized.unwrap().as_bytes().to_vec());
+        full_message.push(signed_len);
         full_message.extend(signed_request);
-        println!("length: {}", full_message.len());
     }
 
     #[test]
     fn xyz() {
         let (sk, mut pk) = keygen::gen_ec_key_pair().split();
-        let mut ma = MessageAssembler::new(sk, pk);
+        let mut ma = MessageWorker::new(sk, pk);
 
         // client creating a secret message and goes through the rituals
         let message = b"secretsecret";
