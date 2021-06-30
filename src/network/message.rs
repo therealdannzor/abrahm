@@ -74,12 +74,12 @@ impl MessageWorker {
 
         let consensus_round = parse_u8_to_enum(consensus_round_type);
 
-        let mut payload_len: usize = 0;
+        let mut payload_len: Vec<u8> = Vec::new();
         for i in 0..3 {
             let ch = message[2 + i] as char;
             let dig = ch.to_digit(10);
             if dig.is_some() {
-                payload_len += dig.unwrap() as usize;
+                payload_len.push(dig.unwrap() as u8);
             } else {
                 return Err(validation_error(
                     "invalid digit representing message length",
@@ -87,10 +87,11 @@ impl MessageWorker {
             }
         }
 
-        if payload_len == 0 {
+        if payload_len.len() == 0 {
             return Err(validation_error("payload is nil"));
         }
 
+        let payload_len = vec_u8_ascii_decimal_to_u8(payload_len) as usize;
         let payload = &message[5..payload_len + 5];
         let try_utf8 = std::str::from_utf8(payload);
         if try_utf8.is_err() {
@@ -174,13 +175,22 @@ pub fn cmp_message_with_signed_digest(
     m_hashed == recv.unwrap()
 }
 
-pub fn u8_to_ascii_decimal(input: u8) -> Vec<u8> {
+fn u8_to_ascii_decimal(input: u8) -> Vec<u8> {
     let num: Vec<u8> = input
         .to_string()
         .chars()
-        .map(|d| d.to_digit(10).unwrap() as u8)
+        .map(|d| d.to_ascii_lowercase() as u8)
         .collect();
     num
+}
+fn vec_u8_ascii_decimal_to_u8(input: Vec<u8>) -> u8 {
+    let input: &[u8] = &input;
+    let mut acc = 0;
+    for n in input {
+        acc *= 10;
+        acc += n;
+    }
+    acc
 }
 
 mod tests {
@@ -211,7 +221,8 @@ mod tests {
         // Index 2 to 4:   Length (L) of payload
         // Index 5 to 5+L: Payload
         //
-        // 49 = integer 1 in ASCII decimal
+        // 48 = digit 0 in ASCII decimal
+        // 49 = digit 1 in ASCII decimal
         let mut msg = vec![1, 0, 48, 48, 49, 49];
         // After appending the signed message:
         // From index 5+L+1 to the end : The signed message
@@ -272,7 +283,10 @@ mod tests {
         full_message.extend(serialized.unwrap().as_bytes().to_vec());
         full_message.extend(signed_request);
         let result = mw.validate_received(full_message);
-        assert!(true)
+        if result.is_err() {
+            panic!("{:?}", result.err());
+        }
+        assert!(result.unwrap())
     }
 
     #[test]
