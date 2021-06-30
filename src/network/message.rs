@@ -55,9 +55,11 @@ impl MessageWorker {
     //   differs with ¬± 2 chars, althought it could be interesting to understand as an
     //   exercise TODO: investigate!)
     pub fn validate_received(&self, message: Vec<u8>) -> bool {
-        // TODO: find the lowest bound of message length
-        if message.len() < 10 {
-            log::debug!("validate message: length less than expected");
+        if message.len() < 152 {
+            log::debug!(
+                "validate message: length less than expected, got {}, expected 152",
+                message.len()
+            );
             // guesstimation
             return false;
         }
@@ -176,15 +178,30 @@ mod tests {
     use themis::secure_message::{SecureSign, SecureVerify};
 
     #[test]
-    pub fn ijk() {
+    pub fn sign_and_decrypt_ultra_short_message() {
+        // Setup the client signation and known information about a supposed foreign peer
+        // (in this case we use the client's public key as the foreign peer's identity for brevity)
         let (sk, pk) = keygen::gen_ec_key_pair().split();
         let mut mw = MessageWorker::new(sk, pk.clone());
         mw.insert_peer(1, pk.clone());
-        let signed = mw.sign_message_digest(&String::from("555555"));
-        let mut msg = vec![1, 0, 0, 0, 54, 53, 53, 53, 53, 53, 53];
+
+        // Sign a secret message with shortest possible length
+        let signed = mw.sign_message_digest(&String::from("1"));
+        // Construct the complete message as passed over TCP:
+        // Index 0:        Peer ID
+        // Index 1:        Consensus message type
+        // Index 2 to 4:   Length (L) of payload
+        // Index 5 to 5+L: Payload
+        //
+        // 49 = integer 1 in ASCII decimal
+        let mut msg = vec![1, 0, 0, 0, 49, 49];
+        // After appending the signed message:
+        // From index 5+L+1 to the end : The signed message
         msg.extend(signed);
-        let res = mw.validate_received(msg);
-        assert_eq!(res, true);
+
+        // Returns true if the message we have constructed is authentic and non-tampered with
+        let result = mw.validate_received(msg);
+        assert!(result);
     }
 
     fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
