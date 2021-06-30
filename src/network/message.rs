@@ -137,6 +137,9 @@ pub fn parse_u8_to_enum(flag: u8) -> Messages {
     }
 }
 
+// Compares the hash of the plain text message with the decryption of the
+// signed message received from the external connection. It uses the (known)
+// public key of the foreign connection to decrypt its message.
 pub fn cmp_message_with_signed_digest(
     public_key: EcdsaPublicKey,
     plain_message: Vec<u8>,
@@ -147,9 +150,17 @@ pub fn cmp_message_with_signed_digest(
     if recv.is_err() {
         return false;
     }
-    println!("plain message: {:?}", plain_message);
-    println!("recv message: {:?}", recv);
-    plain_message == recv.unwrap()
+    let recv = recv.unwrap();
+
+    let plain_message = std::str::from_utf8(&plain_message);
+    if plain_message.is_err() {
+        log::debug!("cmp message: could not parse plain message to utf-8");
+        return false;
+    }
+
+    let m_hashed = hashed!(plain_message.unwrap());
+    let recv = std::str::from_utf8(&recv);
+    m_hashed == recv.unwrap()
 }
 
 mod tests {
@@ -247,7 +258,5 @@ mod tests {
             Ok(verified) => verified,
             Err(e) => panic!("verification error: {}", e),
         };
-
-        println!("Secure message: {:?}", secure_message);
     }
 }
