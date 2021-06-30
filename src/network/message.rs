@@ -27,14 +27,14 @@ impl MessageWorker {
         }
     }
 
-    pub fn sign_message_digest(&self, message: &str) -> (u8, Vec<u8>) {
+    pub fn sign_message_digest(&self, message: &str) -> Vec<u8> {
         let m_d = hashed!(message);
         let sec_message = SecureSign::new(self.secret_key.clone());
         let sign_m_d = match sec_message.sign(&m_d) {
             Ok(m) => m,
             Err(e) => panic!("failed to sign message: {:?}", e),
         };
-        (sign_m_d.len() as u8, sign_m_d)
+        sign_m_d
     }
 
     pub fn insert_peer(&mut self, key: u8, value: EcdsaPublicKey) {
@@ -51,33 +51,60 @@ impl MessageWorker {
     // * message type flag (1 character, covers both transaction and consensus);
     // * message payload length flag (3 characters)
     // * serialized message (varying length, indicated by previous length flag)
-    // * length of the signed message digest (because it differs with ¬± 2 chars, TODO: investigate!)
-    // * signed message digest
+    // * signed message digest (the rest of the message, does not matter that its length
+    //   differs with ¬± 2 chars, althought it could be interesting to understand as an
+    //   exercise TODO: investigate!)
     pub fn validate_received(&self, message: Vec<u8>) -> bool {
         // TODO: find the lowest bound of message length
         if message.len() < 10 {
+            log::debug!("validate message: length less than expected");
             // guesstimation
             return false;
         }
         let targ_short_id = message[0];
         let targ_pub_key = self.peer_shortnames.get(&targ_short_id);
         if targ_pub_key.is_none() {
+            log::debug!("validate message: missing public key from other peer");
             return false;
         }
+
         let targ_pub_key = targ_pub_key.unwrap();
         let consensus_round_type = message[1];
         if consensus_round_type > 5 {
+            log::debug!("validate message: invalid consensus message flag");
             return false;
         }
 
         let consensus_round = parse_u8_to_enum(consensus_round_type);
 
-        let payload_len = 0;
+        let mut payload_len: usize = 0;
         for i in 0..3 {
-            //message[2+i] as
+            let ch = message[2 + i] as char;
+            let dig = ch.to_digit(10);
+            if dig.is_some() {
+                payload_len += dig.unwrap() as usize;
+            }
         }
-        let payload_length = payload_len_dst.clone_from_slice(&message[2..5]);
-        println!("payload len: {:?}", payload_length);
+
+        if payload_len == 0 {
+            log::debug!("validate message: undefined message payload");
+            return false;
+        }
+
+        let payload = &message[5..payload_len + 5];
+        let try_utf8 = std::str::from_utf8(payload);
+        if try_utf8.is_err() {
+            log::debug!("validate message: could not convert payload to utf8");
+            return false;
+        }
+        let payload: Vec<u8> = payload.to_vec();
+
+        let claimed_signed = message[payload_len + 5..].to_vec();
+        if !cmp_message_with_signed_digest(targ_pub_key.clone(), payload, claimed_signed) {
+            log::debug!("validate message: message authenticity mismatch");
+            return false;
+        }
+
         true
     }
 }
@@ -110,17 +137,23 @@ pub fn parse_u8_to_enum(flag: u8) -> Messages {
     }
 }
 
-pub fn cmp_message_with_signed_digest(public_key: EcdsaPublicKey, message: &str) -> bool {
+pub fn cmp_message_with_signed_digest(
+    public_key: EcdsaPublicKey,
+    plain_message: Vec<u8>,
+    signed_message: Vec<u8>,
+) -> bool {
     let secure_b = SecureVerify::new(public_key);
-    let m_d = hashed!(message);
-    let recv = secure_b.verify(m_d);
+    let recv = secure_b.verify(signed_message);
     if recv.is_err() {
         return false;
     }
-    true
+    println!("plain message: {:?}", plain_message);
+    println!("recv message: {:?}", recv);
+    plain_message == recv.unwrap()
 }
 
 mod tests {
+
     use super::*;
     use crate::consensus::request::Request;
     use crate::consensus::transition::{Transact, Transition};
@@ -136,7 +169,9 @@ mod tests {
         let (sk, pk) = keygen::gen_ec_key_pair().split();
         let mut mw = MessageWorker::new(sk, pk.clone());
         mw.insert_peer(1, pk.clone());
-        let msg = vec![1, 0, 1, 0, 0, 5, 5, 5, 5, 5, 5];
+        let signed = mw.sign_message_digest(&String::from("555555"));
+        let mut msg = vec![1, 0, 0, 0, 54, 53, 53, 53, 53, 53, 53];
+        msg.extend(signed);
         let res = mw.validate_received(msg);
         assert_eq!(res, true);
     }
@@ -179,8 +214,7 @@ mod tests {
         let message_length = message_length.unwrap();
 
         // prepare to sign the request
-        let (signed_len, signed_request) =
-            mw.sign_message_digest(&hashed!(&serialized.as_ref().unwrap()));
+        let signed_request = mw.sign_message_digest(&hashed!(&serialized.as_ref().unwrap()));
 
         // add all components to a complete message
         let mut full_message = Vec::new();
@@ -188,7 +222,6 @@ mod tests {
         full_message.push(type_flag);
         full_message.push(message_length);
         full_message.extend(serialized.unwrap().as_bytes().to_vec());
-        full_message.push(signed_len);
         full_message.extend(signed_request);
     }
 
