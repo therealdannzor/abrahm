@@ -1,8 +1,10 @@
 #![allow(unused)]
 
 use serde::ser::Error;
+use std::boxed::Box;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use themis::keygen;
@@ -54,27 +56,20 @@ impl MessageWorker {
     // * signed message digest (the rest of the message, does not matter that its length
     //   differs with ¬± 2 chars, althought it could be interesting to understand as an
     //   exercise TODO: investigate!)
-    pub fn validate_received(&self, message: Vec<u8>) -> bool {
+    pub fn validate_received(&self, message: Vec<u8>) -> Result<bool, Box<dyn std::error::Error>> {
         if message.len() < 152 {
-            log::debug!(
-                "validate message: length less than expected, got {}, expected 152",
-                message.len()
-            );
-            // guesstimation
-            return false;
+            return Err(validation_error("length less than expected"));
         }
         let targ_short_id = message[0];
         let targ_pub_key = self.peer_shortnames.get(&targ_short_id);
         if targ_pub_key.is_none() {
-            log::debug!("validate message: missing public key from other peer");
-            return false;
+            return Err(validation_error("missing public key from other peer"));
         }
 
         let targ_pub_key = targ_pub_key.unwrap();
         let consensus_round_type = message[1];
         if consensus_round_type > 5 {
-            log::debug!("validate message: invalid consensus message flag");
-            return false;
+            return Err(validation_error("invalid consensus message flag"));
         }
 
         let consensus_round = parse_u8_to_enum(consensus_round_type);
@@ -85,30 +80,44 @@ impl MessageWorker {
             let dig = ch.to_digit(10);
             if dig.is_some() {
                 payload_len += dig.unwrap() as usize;
+            } else {
+                return Err(validation_error(
+                    "invalid digit representing message length",
+                ));
             }
         }
 
         if payload_len == 0 {
-            log::debug!("validate message: undefined message payload");
-            return false;
+            return Err(validation_error("payload is nil"));
         }
 
         let payload = &message[5..payload_len + 5];
         let try_utf8 = std::str::from_utf8(payload);
         if try_utf8.is_err() {
-            log::debug!("validate message: could not convert payload to utf8");
-            return false;
+            return Err(validation_error("could not convert payload to utf-8"));
         }
         let payload: Vec<u8> = payload.to_vec();
 
         let claimed_signed = message[payload_len + 5..].to_vec();
         if !cmp_message_with_signed_digest(targ_pub_key.clone(), payload, claimed_signed) {
-            log::debug!("validate message: message authenticity mismatch");
-            return false;
+            return Err(validation_error("message authenticity mismatch"));
         }
 
-        true
+        Ok(true)
     }
+}
+
+#[derive(Debug)]
+struct MessageValidationError(String);
+impl fmt::Display for MessageValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "message validation error: {}", self.0)
+    }
+}
+impl std::error::Error for MessageValidationError {}
+
+fn validation_error(text: &str) -> Box<dyn std::error::Error + 'static> {
+    Box::new(MessageValidationError(text.into()))
 }
 
 pub fn validate_public_key(key: &[u8]) -> Option<PublicKey> {
@@ -165,6 +174,15 @@ pub fn cmp_message_with_signed_digest(
     m_hashed == recv.unwrap()
 }
 
+pub fn u8_to_ascii_decimal(input: u8) -> Vec<u8> {
+    let num: Vec<u8> = input
+        .to_string()
+        .chars()
+        .map(|d| d.to_digit(10).unwrap() as u8)
+        .collect();
+    num
+}
+
 mod tests {
 
     use super::*;
@@ -194,14 +212,17 @@ mod tests {
         // Index 5 to 5+L: Payload
         //
         // 49 = integer 1 in ASCII decimal
-        let mut msg = vec![1, 0, 0, 0, 49, 49];
+        let mut msg = vec![1, 0, 48, 48, 49, 49];
         // After appending the signed message:
         // From index 5+L+1 to the end : The signed message
         msg.extend(signed);
 
         // Returns true if the message we have constructed is authentic and non-tampered with
         let result = mw.validate_received(msg);
-        assert!(result);
+        if result.is_err() {
+            panic!("{:?}", result.err());
+        }
+        assert!(true);
     }
 
     fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
@@ -210,15 +231,10 @@ mod tests {
     }
 
     #[test]
-    fn abc() {
-        let (other_peer_sk, other_peer_pk) = keygen::gen_ec_key_pair().split();
-
-        let mw = MessageWorker::new(other_peer_sk, other_peer_pk.clone());
-
-        // assumed to be stored by each client at initialization
-        let mut mock_public_key_id_map = HashMap::<u8, EcdsaPublicKey>::new();
-        mock_public_key_id_map.insert(1, other_peer_pk);
-
+    fn outgoing_message_serialize_request_struct_and_verify_authenticity() {
+        let (sk, pk) = keygen::gen_ec_key_pair().split();
+        let mut mw = MessageWorker::new(sk, pk.clone());
+        mw.insert_peer(1, pk.clone());
         let request = create_request_type("0x", "Alice", "Bob", 1);
 
         // first part of the message (public key)
@@ -239,18 +255,24 @@ mod tests {
                 message_length.unwrap()
             );
         }
+
+        // this is the u8 size of the length, we need to split this up into individual units ascii
+        // coded, three digits in total
         let message_length = message_length.unwrap();
+        let message_length = u8_to_ascii_decimal(message_length);
 
         // prepare to sign the request
-        let signed_request = mw.sign_message_digest(&hashed!(&serialized.as_ref().unwrap()));
+        let signed_request = mw.sign_message_digest(&serialized.as_ref().unwrap());
 
         // add all components to a complete message
         let mut full_message = Vec::new();
         full_message.push(target_id);
         full_message.push(type_flag);
-        full_message.push(message_length);
+        full_message.extend(message_length);
         full_message.extend(serialized.unwrap().as_bytes().to_vec());
         full_message.extend(signed_request);
+        let result = mw.validate_received(full_message);
+        assert!(true)
     }
 
     #[test]
