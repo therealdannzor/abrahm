@@ -87,10 +87,6 @@ impl MessageWorker {
             }
         }
 
-        if payload_len.len() == 0 {
-            return Err(validation_error("payload is nil"));
-        }
-
         let payload_len = vec_u8_ascii_decimal_to_u8(payload_len) as usize;
         let payload = &message[5..payload_len + 5];
         let try_utf8 = std::str::from_utf8(payload);
@@ -204,6 +200,7 @@ mod tests {
     use crypto::sha2::Sha256;
     use themis::keys::PublicKey;
     use themis::secure_message::{SecureSign, SecureVerify};
+    use tokio_test::assert_err;
 
     #[test]
     pub fn sign_and_decrypt_ultra_short_message() {
@@ -290,26 +287,73 @@ mod tests {
     }
 
     #[test]
-    fn xyz() {
-        let (sk, mut pk) = keygen::gen_ec_key_pair().split();
-        let mut ma = MessageWorker::new(sk, pk);
+    fn go_through_all_error_paths_for_message_cmp_method() {
+        let (first_sk, first_pk) = keygen::gen_ec_key_pair().split();
+        let mut mw = MessageWorker::new(first_sk, first_pk.clone());
 
-        // client creating a secret message and goes through the rituals
-        let message = b"secretsecret";
-        let secure_message = SecureSign::new(ma.secret_key.clone());
-        let signed = secure_message.sign(&message).unwrap();
+        let too_short_message = vec![60, 60, 60];
+        let actual = mw.validate_received(too_short_message);
+        // check that we receive error for incorrect message length
+        assert_err!(actual);
 
-        let mut recv_pk = ma.public_key();
-        let recv_pk = validate_public_key(recv_pk);
-        if recv_pk.is_none() {
-            panic!("could not validate the received public key");
-        }
-        let recv_pk = recv_pk.unwrap();
+        let (other_sk, other_pk) = keygen::gen_ec_key_pair().split();
+        let good_enough_len = vec![1; 152];
+        mw.insert_peer(2, other_pk);
+        let actual = mw.validate_received(good_enough_len);
+        // check that we receive error for missing entry of peer public key (inserted id=2 but we
+        // have id=1)
+        assert_err!(actual);
 
-        let secure_message = SecureVerify::new(recv_pk);
-        match secure_message.verify(&signed) {
-            Ok(verified) => verified,
-            Err(e) => panic!("verification error: {}", e),
-        };
+        mw.insert_peer(8, first_pk.clone());
+        let mut message = vec![
+            8,  /* peer id */
+            9,  /* incorrect consensus val */
+            49, /* 1*/
+            54, /* 6 */
+            48, /* 0 */
+        ];
+        let payload = vec![2; 160];
+        message.extend(payload.clone());
+        let actual = mw.validate_received(message);
+        assert_err!(actual);
+
+        let mut message = vec![8, 1, 65 /* 'A' (invalid) */, 54, 48];
+        message.extend(payload.clone());
+        let actual = mw.validate_received(message);
+        assert_err!(actual);
+
+        let mut message = vec![8, 1, 49, 54, 48];
+        let err_payload = vec![255; 200]; // choose non utf-8 payload
+        message.extend(err_payload);
+        let actual = mw.validate_received(message);
+        assert_err!(actual);
+
+        let mut message = vec![8, 1, 49, 54, 48];
+        message.extend(payload.clone()); // choose any other payload than a signed message by peer 8's secret key
+        let actual = mw.validate_received(message);
+        assert_err!(actual);
+
+        let mut message = vec![8, 1, 49, 54, 48];
+        message.extend(payload.clone());
+        let actual = mw.validate_received(message);
+        println!("ERR {:?}", actual.as_ref().err());
+    }
+
+    #[test]
+    fn edge_cases() {
+        let (sk, pk) = keygen::gen_ec_key_pair().split();
+        let mut mw = MessageWorker::new(sk, pk.clone());
+        mw.insert_peer(1, pk.clone());
+
+        let mut message = vec![1, 1];
+        let payload = vec![3; 500]; // too long payload
+        message.extend(payload.clone());
+        let actual = mw.validate_received(message);
+        assert_err!(actual);
+
+        let mut message = vec![1, 1, 49, 54, 48]; // lie about message length
+        message.extend(payload.clone());
+        let actual = mw.validate_received(message);
+        assert_err!(actual);
     }
 }
