@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
+use themis::keys::EcdsaPublicKey;
 
 use crate::transaction::Transaction;
 
@@ -108,9 +109,9 @@ impl OrderedTransaction {
 #[allow(dead_code)]
 pub struct TxPool {
     // pending transactions that are to be processed
-    pending: HashMap<String, OrderedTransaction>,
+    pending: HashMap<EcdsaPublicKey, OrderedTransaction>,
     // unconfirmed transactions that cannot be executed until finalized consensus
-    unconfirmed: HashMap<String, OrderedTransaction>,
+    unconfirmed: HashMap<EcdsaPublicKey, OrderedTransaction>,
 }
 
 #[allow(dead_code)]
@@ -123,33 +124,33 @@ impl TxPool {
     }
 
     // insert a complete ordered transaction store to keep track of pending txs
-    fn new_pending_store(&mut self, key: &str, val: OrderedTransaction) {
-        self.pending.insert(key.to_string(), val);
+    fn new_pending_store(&mut self, key: EcdsaPublicKey, val: OrderedTransaction) {
+        self.pending.insert(key, val);
     }
     // insert a complete ordered transaction store to keep track of unconfirmed txs
-    fn new_unconfirmed_store(&mut self, key: &str, val: OrderedTransaction) {
-        self.unconfirmed.insert(key.to_string(), val);
+    fn new_unconfirmed_store(&mut self, key: EcdsaPublicKey, val: OrderedTransaction) {
+        self.unconfirmed.insert(key, val);
     }
     // insert a pending transaction for a target account
-    fn add_pending_tx(&mut self, target: &str, tx: Transaction) {
-        if self.pending.contains_key(target) {
+    fn add_pending_tx(&mut self, target: EcdsaPublicKey, tx: Transaction) {
+        if self.pending.contains_key(&target) {
             // circumvent the need to impl trait `IndexMut`
-            self.pending.get_mut(target).unwrap().insert(tx);
+            self.pending.get_mut(&target).unwrap().insert(tx);
         }
         //TODO: error handling
     }
     // insert an unconfirmed transaction for a target account
-    fn add_unconfirmed_tx(&mut self, target: &str, tx: Transaction) {
-        if self.unconfirmed.contains_key(target) {
-            self.unconfirmed.get_mut(target).unwrap().insert(tx);
+    fn add_unconfirmed_tx(&mut self, target: EcdsaPublicKey, tx: Transaction) {
+        if self.unconfirmed.contains_key(&target) {
+            self.unconfirmed.get_mut(&target).unwrap().insert(tx);
         }
         //TODO: error handling
     }
     // removes the pending transaction with the highest priority for a target account
     // (same as picking the one with the lowest nonce)
-    fn pop_pending_tx(&mut self, target: &str) -> IndexedTransaction {
-        if self.pending.contains_key(target) {
-            self.pending.get_mut(target).unwrap().pop()
+    fn pop_pending_tx(&mut self, target: EcdsaPublicKey) -> IndexedTransaction {
+        if self.pending.contains_key(&target) {
+            self.pending.get_mut(&target).unwrap().pop()
         } else {
             //TODO: exit with more grace
             panic!("target account missing");
@@ -173,12 +174,12 @@ impl TxPool {
         return self.unconfirmed.len();
     }
     // amount of transactions a target account has in store (pending txs)
-    fn len_target_pending(&mut self, target: &str) -> usize {
-        return self.pending[target].len();
+    fn len_target_pending(&mut self, target: EcdsaPublicKey) -> usize {
+        return self.pending[&target].len();
     }
     // amount of transactions a target account has in store (unconfirmed txs)
-    fn len_target_unconfirmed(&mut self, target: &str) -> usize {
-        return self.unconfirmed[target].len();
+    fn len_target_unconfirmed(&mut self, target: EcdsaPublicKey) -> usize {
+        return self.unconfirmed[&target].len();
     }
 }
 
@@ -186,15 +187,23 @@ impl TxPool {
 mod tests {
     use super::*;
     use crate::transaction::*;
+    use themis::keygen;
+    use themis::keys::EcdsaPublicKey;
 
-    const ALICE: &str = "0x1";
-    const BOB: &str = "0x2";
+    fn pub_key() -> EcdsaPublicKey {
+        let (_, pk) = keygen::gen_ec_key_pair().split();
+        pk
+    }
 
     fn new_tx(amount: i32) -> Transaction {
+        let alice = pub_key();
+        let bob = pub_key();
         Transaction::new(
-            ALICE, // from
-            BOB,   // to
-            amount, "xyz", 1,
+            alice.clone(), // from
+            bob,           // to
+            amount,
+            "xyz",
+            1,
         )
     }
 
@@ -211,15 +220,16 @@ mod tests {
         let mut p = TxPool::new();
         assert!(p.empty_unconfirmed());
         assert!(p.empty_pending());
+        let alice = pub_key();
 
         // there is now one account being tracked in the pool, both the pools
         // and Alice's individual tx counts are 1
-        p.new_unconfirmed_store(ALICE, ord_tx_setup());
-        p.new_pending_store(ALICE, ord_tx_setup());
+        p.new_unconfirmed_store(alice.clone(), ord_tx_setup());
+        p.new_pending_store(alice.clone(), ord_tx_setup());
         assert_eq!(p.len_unconfirmed(), 1);
         assert_eq!(p.len_pending(), 1);
-        assert_eq!(p.len_target_unconfirmed(ALICE), 1);
-        assert_eq!(p.len_target_pending(ALICE), 1);
+        assert_eq!(p.len_target_unconfirmed(alice.clone()), 1);
+        assert_eq!(p.len_target_pending(alice.clone()), 1);
         p
     }
 
@@ -229,18 +239,19 @@ mod tests {
         // then three consecutive ones. The account nonce should be
         // at 4, as should the amount of (pending) transactions.
         let mut p = pool_setup();
-        p.add_pending_tx(ALICE, new_tx(5));
-        p.add_pending_tx(ALICE, new_tx(5));
-        p.add_pending_tx(ALICE, new_tx(5));
+        let alice = pub_key();
+        p.add_pending_tx(alice.clone(), new_tx(5));
+        p.add_pending_tx(alice.clone(), new_tx(5));
+        p.add_pending_tx(alice.clone(), new_tx(5));
 
         // We have now four pending transactions for Alice. By pop'ing
         // four transactions, the pending pool should be empty..
-        assert_eq!(p.len_target_pending(ALICE), 4);
-        let tx1 = p.pop_pending_tx(ALICE);
-        let tx2 = p.pop_pending_tx(ALICE);
-        let tx3 = p.pop_pending_tx(ALICE);
-        let tx4 = p.pop_pending_tx(ALICE);
-        assert_eq!(p.len_target_pending(ALICE), 0);
+        assert_eq!(p.len_target_pending(alice.clone()), 4);
+        let tx1 = p.pop_pending_tx(alice.clone());
+        let tx2 = p.pop_pending_tx(alice.clone());
+        let tx3 = p.pop_pending_tx(alice.clone());
+        let tx4 = p.pop_pending_tx(alice.clone());
+        assert_eq!(p.len_target_pending(alice.clone()), 0);
 
         // We verify we have pulled transactions in the correct order:
         // from 1 to 4. They are stored in the indexed transactions vars idtx_i,
@@ -255,6 +266,7 @@ mod tests {
     fn unordered_tx_nonces() {
         let mut p = pool_setup();
         let mut ord_tx = ord_tx_setup();
+        let alice = pub_key();
         // Assume account nonce 4 and 6 are rejected for some reason and 1, 2, 3, 5, and 7
         // arrive out of order. It is expected that despite this, they are to be successfully
         // prioritized, starting with nonce 1 and ending with 7.
@@ -262,15 +274,15 @@ mod tests {
         ord_tx.min_heap.push(IndexedTransaction::new(new_tx(1), 5));
         ord_tx.min_heap.push(IndexedTransaction::new(new_tx(1), 3));
         ord_tx.min_heap.push(IndexedTransaction::new(new_tx(1), 7));
-        p.new_pending_store(ALICE, ord_tx);
+        p.new_pending_store(alice.clone(), ord_tx);
 
         // 5 pending txs in total
-        assert_eq!(p.len_target_pending(ALICE), 5);
-        let tx1 = p.pop_pending_tx(ALICE);
-        let tx2 = p.pop_pending_tx(ALICE);
-        let tx3 = p.pop_pending_tx(ALICE);
-        let tx4 = p.pop_pending_tx(ALICE);
-        let tx5 = p.pop_pending_tx(ALICE);
+        assert_eq!(p.len_target_pending(alice.clone()), 5);
+        let tx1 = p.pop_pending_tx(alice.clone());
+        let tx2 = p.pop_pending_tx(alice.clone());
+        let tx3 = p.pop_pending_tx(alice.clone());
+        let tx4 = p.pop_pending_tx(alice.clone());
+        let tx5 = p.pop_pending_tx(alice.clone());
 
         // Make sure they get popped in right priority (ascending order)
         assert_eq!(tx1.account_nonce, 1);
