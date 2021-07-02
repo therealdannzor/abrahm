@@ -45,13 +45,12 @@ impl Transaction {
         }
     }
 
-    pub fn sender(&self) -> &str {
-        // public keys will always be in utf-8 so we can unwrap without concerns
-        std::str::from_utf8(self.base.from.as_ref()).unwrap()
+    pub fn sender(&self) -> EcdsaPublicKey {
+        self.base.from.clone()
     }
 
-    pub fn receiver(&self) -> &str {
-        std::str::from_utf8(self.base.to.as_ref()).unwrap()
+    pub fn receiver(&self) -> EcdsaPublicKey {
+        self.base.to.clone()
     }
 
     pub fn hash(&self) -> &'static str {
@@ -63,8 +62,8 @@ impl Display for Transaction {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(
             f,
-            "<Transaction> hash: {}, amount: {}, from: {}, to: {}, expiration_time: {}, first_seen: {}",
-            self.hash, self.base.amount, self.sender(), self.receiver(), self.expiration_time, self.first_seen,
+            "<Transaction> hash: {}, amount: {}, from: {:?}, to: {:?}, expiration_time: {}, first_seen: {}",
+            self.hash, self.base.amount, self.sender().as_ref(), self.receiver().as_ref(), self.expiration_time, self.first_seen,
         )
     }
 }
