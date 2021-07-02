@@ -11,7 +11,7 @@ use crate::transaction::Transaction;
 #[derive(Clone)]
 struct IndexedTransaction {
     // the address is extracted from the Transaction struct
-    address: String,
+    address: EcdsaPublicKey,
 
     // the full Transaction struct
     txn: Transaction,
@@ -52,7 +52,7 @@ impl PartialEq for IndexedTransaction {
 impl IndexedTransaction {
     fn new(txn: Transaction, account_nonce: u32) -> Self {
         Self {
-            address: txn.sender().to_string(),
+            address: txn.sender(),
             txn,
             account_nonce,
         }
@@ -132,12 +132,15 @@ impl TxPool {
         self.unconfirmed.insert(key, val);
     }
     // insert a pending transaction for a target account
-    fn add_pending_tx(&mut self, target: EcdsaPublicKey, tx: Transaction) {
+    fn add_pending_tx(&mut self, target: &EcdsaPublicKey, tx: Transaction) {
         if self.pending.contains_key(&target) {
             // circumvent the need to impl trait `IndexMut`
             self.pending.get_mut(&target).unwrap().insert(tx);
+        } else {
+            self.pending
+                .insert(target.clone(), OrderedTransaction::new());
+            self.pending.get_mut(&target).unwrap().insert(tx);
         }
-        //TODO: error handling
     }
     // insert an unconfirmed transaction for a target account
     fn add_unconfirmed_tx(&mut self, target: EcdsaPublicKey, tx: Transaction) {
@@ -174,8 +177,8 @@ impl TxPool {
         return self.unconfirmed.len();
     }
     // amount of transactions a target account has in store (pending txs)
-    fn len_target_pending(&mut self, target: EcdsaPublicKey) -> usize {
-        return self.pending[&target].len();
+    fn len_target_pending(&self, target: EcdsaPublicKey) -> usize {
+        return self.pending.get(&target).unwrap().len();
     }
     // amount of transactions a target account has in store (unconfirmed txs)
     fn len_target_unconfirmed(&mut self, target: EcdsaPublicKey) -> usize {
@@ -215,7 +218,7 @@ mod tests {
         ord_tx
     }
 
-    fn pool_setup() -> TxPool {
+    fn pool_setup() -> (TxPool, EcdsaPublicKey) {
         // empty pool so there are neither uncofirmed nor pending txs
         let mut p = TxPool::new();
         assert!(p.empty_unconfirmed());
@@ -230,7 +233,7 @@ mod tests {
         assert_eq!(p.len_pending(), 1);
         assert_eq!(p.len_target_unconfirmed(alice.clone()), 1);
         assert_eq!(p.len_target_pending(alice.clone()), 1);
-        p
+        (p, alice)
     }
 
     #[test]
@@ -238,11 +241,10 @@ mod tests {
         // Create four pending transactions: first during setup and
         // then three consecutive ones. The account nonce should be
         // at 4, as should the amount of (pending) transactions.
-        let mut p = pool_setup();
-        let alice = pub_key();
-        p.add_pending_tx(alice.clone(), new_tx(5));
-        p.add_pending_tx(alice.clone(), new_tx(5));
-        p.add_pending_tx(alice.clone(), new_tx(5));
+        let (mut p, alice) = pool_setup();
+        p.add_pending_tx(&alice, new_tx(5));
+        p.add_pending_tx(&alice, new_tx(5));
+        p.add_pending_tx(&alice, new_tx(5));
 
         // We have now four pending transactions for Alice. By pop'ing
         // four transactions, the pending pool should be empty..
@@ -251,7 +253,7 @@ mod tests {
         let tx2 = p.pop_pending_tx(alice.clone());
         let tx3 = p.pop_pending_tx(alice.clone());
         let tx4 = p.pop_pending_tx(alice.clone());
-        assert_eq!(p.len_target_pending(alice.clone()), 0);
+        assert_eq!(p.len_target_pending(alice), 0);
 
         // We verify we have pulled transactions in the correct order:
         // from 1 to 4. They are stored in the indexed transactions vars idtx_i,
@@ -264,9 +266,8 @@ mod tests {
 
     #[test]
     fn unordered_tx_nonces() {
-        let mut p = pool_setup();
+        let (mut p, alice) = pool_setup();
         let mut ord_tx = ord_tx_setup();
-        let alice = pub_key();
         // Assume account nonce 4 and 6 are rejected for some reason and 1, 2, 3, 5, and 7
         // arrive out of order. It is expected that despite this, they are to be successfully
         // prioritized, starting with nonce 1 and ending with 7.
