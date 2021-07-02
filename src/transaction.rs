@@ -1,21 +1,22 @@
 use crate::swiss_knife::helper;
 use std::fmt::{Display, Formatter};
+use themis::keys::EcdsaPublicKey;
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 struct Label {
-    from: &'static str,
-    to: &'static str,
+    from: EcdsaPublicKey,
+    to: EcdsaPublicKey,
     amount: i32,
 }
 
 impl Label {
-    fn new(from: &'static str, to: &'static str, amount: i32) -> Self {
+    fn new(from: EcdsaPublicKey, to: EcdsaPublicKey, amount: i32) -> Self {
         Self { from, to, amount }
     }
 }
 
 // Transaction is the main P2P transaction between two accounts
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct Transaction {
     // main payload of a transaction
     base: Label,
@@ -30,8 +31,8 @@ pub struct Transaction {
 impl Transaction {
     #[allow(dead_code)]
     pub fn new(
-        from: &'static str,
-        to: &'static str,
+        from: EcdsaPublicKey,
+        to: EcdsaPublicKey,
         amount: i32,
         hash: &'static str,
         expiration_time: u64,
@@ -45,7 +46,12 @@ impl Transaction {
     }
 
     pub fn sender(&self) -> &str {
-        return self.base.from;
+        // public keys will always be in utf-8 so we can unwrap without concerns
+        std::str::from_utf8(self.base.from.as_ref()).unwrap()
+    }
+
+    pub fn receiver(&self) -> &str {
+        std::str::from_utf8(self.base.to.as_ref()).unwrap()
     }
 
     pub fn hash(&self) -> &'static str {
@@ -58,7 +64,7 @@ impl Display for Transaction {
         write!(
             f,
             "<Transaction> hash: {}, amount: {}, from: {}, to: {}, expiration_time: {}, first_seen: {}",
-            self.hash, self.base.amount, self.base.from, self.base.to, self.expiration_time, self.first_seen,
+            self.hash, self.base.amount, self.sender(), self.receiver(), self.expiration_time, self.first_seen,
         )
     }
 }
