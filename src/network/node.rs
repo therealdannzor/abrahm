@@ -77,7 +77,7 @@ impl TargetSocket {
 }
 
 // TcpHandler handles the TCP communication between nodes
-pub struct TcpHandler {
+struct TcpHandler {
     // Poller of new events
     p: Poll,
 
