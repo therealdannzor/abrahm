@@ -1,21 +1,16 @@
 #![allow(unused)]
-
-use serde::ser::Error;
 use std::boxed::Box;
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::fmt;
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
-use themis::keygen;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey, PublicKey};
-use themis::secure_message::{SecureSign, SecureVerify};
+use themis::secure_message::SecureSign;
 
 use super::common::{
     cmp_message_with_signed_digest, parse_u8_to_enum, u8_to_ascii_decimal,
     vec_u8_ascii_decimal_to_u8,
 };
 use crate::consensus::request::Request;
+use crate::consensus::transition::{Transact, Transition};
 use crate::hashed;
 use crate::swiss_knife::helper::generate_hash_from_input;
 
@@ -128,15 +123,19 @@ pub fn validate_public_key(key: &[u8]) -> Option<PublicKey> {
     }
 }
 
-mod tests {
+fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
+    let next_transition = Transition::new("0x", vec![Transact::new(from, to, amount)]);
+    Request::new(next_transition, "id")
+}
 
+mod tests {
     use super::*;
-    use crate::consensus::request::Request;
-    use crate::consensus::transition::{Transact, Transition};
     use crate::hashed;
     use crate::swiss_knife::helper::generate_hash_from_input;
     use crypto::digest::Digest;
     use crypto::sha2::Sha256;
+    use std::convert::TryFrom;
+    use themis::keygen;
     use themis::keys::PublicKey;
     use themis::secure_message::{SecureSign, SecureVerify};
     use tokio_test::assert_err;
@@ -170,11 +169,6 @@ mod tests {
             panic!("{:?}", result.err());
         }
         assert!(true);
-    }
-
-    fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
-        let next_transition = Transition::new("0x", vec![Transact::new(from, to, amount)]);
-        Request::new(next_transition, "id")
     }
 
     #[test]
