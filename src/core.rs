@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::block::Block;
 use crate::state_db::KeyValueIO;
 use crate::state_db::StateDB;
@@ -5,7 +7,6 @@ use crate::txn_pool::TxPool;
 
 use std::vec::Vec;
 
-#[allow(dead_code)]
 pub struct Blockchain {
     // contiguous link of blocks
     chain: Vec<Block>,
@@ -26,7 +27,6 @@ impl Blockchain {
     // Parameters
     // `genesis_block`: the first block in the chain
     // `db_path`: the folder where the state db is stored (relative to working tree)
-    #[allow(dead_code)]
     pub fn new(genesis_block: Block, db_path: &str) -> Self {
         let mut chain = Vec::<Block>::new();
         chain.push(genesis_block.clone());
@@ -50,7 +50,6 @@ impl Blockchain {
     // (3) additional block data.
     // The function then proceeds to link the current latest block's hash
     // to `b` through its field `previous_hash`
-    #[allow(dead_code)]
     pub fn append_block(&mut self, mut b: Block) {
         let prev = self.chain.last().unwrap();
         let prev_hash = prev.hash();
@@ -59,7 +58,6 @@ impl Blockchain {
     }
 
     // latest_block peeks at the latest inserted block (the tip) in the chain.
-    #[allow(dead_code)]
     pub fn latest_block(&self) -> Block {
         // we can consume the `Some` value received without any need to match/check
         // because the chain will always contains >= 1 block due to the genesis.

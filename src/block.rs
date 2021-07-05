@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::swiss_knife::helper;
 use std::fmt::{Display, Formatter};
 
@@ -19,7 +20,6 @@ pub struct Block {
 }
 
 impl Block {
-    #[allow(dead_code)]
     pub fn new(
         this_hash: String,
         previous_hash: String,
@@ -36,7 +36,6 @@ impl Block {
         }
     }
 
-    #[allow(dead_code)]
     // genesis creates the first block in the chain which is the only block with
     // no link to a previous block (due to an empty `previous_hash`). It uses the
     // param `init_verifier` to create the first identity anchor of a block as the
@@ -57,7 +56,6 @@ impl Block {
         &self.this_hash
     }
 
-    #[allow(dead_code)]
     pub fn set_hash(&mut self, plain_text: &'static str) {
         let s = helper::generate_hash_from_input(plain_text);
         // we enable a shared ownership of hash_out ..

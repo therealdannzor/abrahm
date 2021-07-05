@@ -1,10 +1,10 @@
+#![allow(unused)]
 use crate::swiss_knife::helper;
 use std::env;
 use themis::keygen::gen_ec_key_pair;
 
 extern crate hex;
 
-#[allow(dead_code)]
 pub struct AccountID {
     // The account identifier (in hexadecimal)
     pub address: String,
@@ -15,7 +15,6 @@ pub struct AccountID {
 }
 
 impl AccountID {
-    #[allow(dead_code)]
     pub fn new() -> Self {
         // get path to the root of the project (location of cargo manifest)
         let cargo_path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();

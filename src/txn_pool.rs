@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
@@ -7,7 +8,6 @@ use crate::transaction::Transaction;
 
 // IndexedTransaction contains a Transaction with some extra meta data such as the
 // sender and the sender's account nonce
-#[allow(dead_code)]
 #[derive(Clone)]
 struct IndexedTransaction {
     // the address is extracted from the Transaction struct
@@ -61,7 +61,6 @@ impl IndexedTransaction {
 
 // OrderedTransaction is a wrapper of all the transactions that belongs to a unique account,
 // sorted by its account nonce in a FIFO manner
-#[allow(dead_code)]
 struct OrderedTransaction {
     // min_heap contains a min heap of transactions in-flight; in practice a priority queue
     min_heap: BinaryHeap<IndexedTransaction>,
@@ -71,7 +70,6 @@ struct OrderedTransaction {
     priority: u32,
 }
 
-#[allow(dead_code)]
 impl OrderedTransaction {
     fn new() -> Self {
         Self {
@@ -106,7 +104,6 @@ impl OrderedTransaction {
 // Transactions which are confirmed are in a pending hashmap within each account while those
 // under the consensus process are treated as unconfirmed. The handler of this struct is the
 // pool manager.
-#[allow(dead_code)]
 pub struct TxPool {
     // pending transactions that are to be processed
     pending: HashMap<EcdsaPublicKey, OrderedTransaction>,
@@ -114,7 +111,6 @@ pub struct TxPool {
     unconfirmed: HashMap<EcdsaPublicKey, OrderedTransaction>,
 }
 
-#[allow(dead_code)]
 impl TxPool {
     pub fn new() -> Self {
         Self {
