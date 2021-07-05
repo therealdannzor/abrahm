@@ -1,10 +1,16 @@
 #![allow(unused)]
 
 use crate::block::Block;
+use crate::consensus::common::ValidatorSet;
+use crate::consensus::core::ConsensusChain;
+use crate::consensus::engine::Engine;
+use crate::network::core::Net;
 use crate::state_db::KeyValueIO;
 use crate::state_db::StateDB;
 use crate::txn_pool::TxPool;
+use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 
+use std::sync::mpsc;
 use std::vec::Vec;
 
 pub struct Blockchain {
@@ -16,6 +22,12 @@ pub struct Blockchain {
 
     // account states
     account_db: StateDB,
+
+    // network and message management
+    net: Net,
+
+    // consensus backend
+    consensus: ConsensusChain,
 }
 
 impl Blockchain {
@@ -23,24 +35,36 @@ impl Blockchain {
     // (1) link of blocks [vector],
     // (2) transaction pool,
     // (3) backend with user balances
+    // (4) network manager
+    // (5) consensus backend
     //
     // Parameters
     // `genesis_block`: the first block in the chain
     // `db_path`: the folder where the state db is stored (relative to working tree)
-    pub fn new(genesis_block: Block, db_path: &str) -> Self {
-        let mut chain = Vec::<Block>::new();
-        chain.push(genesis_block.clone());
-        let pool = TxPool::new();
-
-        let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
-        path.push_str(db_path);
-        let _crd = std::fs::create_dir(&path);
-        let account_db = StateDB::new(&path);
-
+    pub fn new(
+        genesis_block: Block,
+        db_path: &str,
+        author: String,
+        stream_cap: usize,
+        public_key: EcdsaPublicKey,
+        secret_key: EcdsaPrivateKey,
+        replica_id: String,
+        first_proposer: String,
+        validators: ValidatorSet,
+        blockchain_channel: mpsc::Sender<Block>,
+    ) -> Self {
         Self {
-            chain,
-            pool,
-            account_db,
+            chain: vec![genesis_block.clone()],
+            pool: TxPool::new(),
+            account_db: account_db_setup(db_path),
+            net: Net::new(author, stream_cap, public_key, secret_key),
+            consensus: ConsensusChain::new(
+                Engine::new(replica_id.clone(), validators),
+                genesis_block,
+                replica_id.clone(),
+                first_proposer,
+                blockchain_channel,
+            ),
         }
     }
 
@@ -63,6 +87,13 @@ impl Blockchain {
         // because the chain will always contains >= 1 block due to the genesis.
         return self.chain.last().unwrap().clone();
     }
+}
+
+fn account_db_setup(db_path: &str) -> StateDB {
+    let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
+    path.push_str(db_path);
+    let _crd = std::fs::create_dir(&path);
+    StateDB::new(&path)
 }
 
 #[cfg(test)]
