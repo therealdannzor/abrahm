@@ -101,6 +101,7 @@ mod tests {
     use super::*;
     use crate::swiss_knife::helper;
     use serial_test::serial;
+    use std::convert::TryFrom;
 
     macro_rules! hashed {
         ($x:expr) => {
@@ -112,7 +113,23 @@ mod tests {
     #[serial]
     fn block_init_and_insertion() {
         let genesis = Block::genesis("0x");
-        let mut bc = Blockchain::new(genesis, "/test");
+        let (sk, pk) = themis::keygen::gen_ec_key_pair().split();
+        let (send, recv): (mpsc::Sender<Block>, mpsc::Receiver<Block>) = mpsc::channel();
+        let mut bc = Blockchain::new(
+            genesis,
+            "/test",
+            String::from("A"),
+            10,
+            pk,
+            sk,
+            String::from("A"),
+            String::from("A"),
+            vec!["A", "B", "C", "D"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+            send,
+        );
 
         let exp_len = 1;
         let exp_hash = hashed!("0x");
