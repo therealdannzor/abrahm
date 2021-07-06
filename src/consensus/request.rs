@@ -4,7 +4,7 @@ use crate::swiss_knife::helper;
 use crypto::{digest::Digest, sha2::Sha256};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 // Request corresponds to a proposal of a state machine operation, sent by the primary.
 //
 // Since there is no central client in our (theoretical) decentralized network, this execution

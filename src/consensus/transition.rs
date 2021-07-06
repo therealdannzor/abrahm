@@ -5,7 +5,7 @@ use self::crypto::digest::Digest;
 use self::crypto::sha2::Sha256;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 // Transition represents the state transition from a current and established state S0, to a future
 // not-yet-confirmed state S1. Confirmed in this sense is represented by a consensus vote in favor
 // of it.
