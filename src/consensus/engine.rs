@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use crate::consensus::request::Request;
-use std::{collections::HashMap, sync::mpsc, vec::Vec};
+use std::{collections::HashMap, io::ErrorKind, vec::Vec};
 
 use super::common::{
     correct_message_set, count_votes, digest_m, filter_phase, filter_view, gt_two_thirds,
@@ -52,6 +52,7 @@ pub struct Engine {
     high_watermark: u64,
 }
 
+#[derive(Clone)]
 // Accepted messages (Request, Preprepare, Prepare, Commit) for a view
 struct AckMessagesView {
     // The operation being negotiated to perform. This is either created locally
@@ -210,7 +211,7 @@ impl Engine {
 
     // committed is the finally check before we finalize consensus on a request `m`.
     // Returns true if there is a consensus agreement on `m`.
-    fn committed(self, m: Request, v: View, n: SequenceNumber) -> bool {
+    fn committed(&self, m: Request, v: View, n: SequenceNumber) -> bool {
         // (Section 4.2) Normal-Case Operation.
         // The predicate _committed(m,v,n)_ is true iff:
 
@@ -321,9 +322,149 @@ impl Engine {
 
     // TODO: integrate with the rest of the blockchain system only after internal consensus mechanism has
     // been completed and tested with a minimal working version
-    pub fn start() -> (mpsc::Sender<M>, mpsc::Receiver<M>) {
-        let (rx, tx): (mpsc::Sender<M>, mpsc::Receiver<M>) = mpsc::channel();
-        (rx, tx)
+    //
+    // process_consensus polls the leader process engine for the current status and changes state if the consensus
+    // criteria are satisfied. If not, nothing changes. Instead of implementing this as an event-driven loop, this
+    // method can combined with other higher level constructs as needed.
+    pub fn process_consensus(&self) -> Result<(), std::io::Error> {
+        let curr_view = self.val_engine.view();
+        let curr_state = self.val_engine.phase();
+
+        if self.working_buffer.len() < self.val_engine.quorum_threshold()
+            || self.message_log.get(&curr_view).is_none()
+        {
+            return Err(std::io::Error::new(ErrorKind::Other, "not enough messages"));
+        }
+        match curr_state.into_inner() {
+            // accept messages
+            0 => {
+                if self.message_log.get(&curr_view).unwrap().request.is_some() {
+                    unimplemented!("process request, and if valid, proceed to preprepare on it");
+                } else {
+                    return Err(std::io::Error::new(
+                        ErrorKind::NotConnected,
+                        "request not received/created yet",
+                    ));
+                }
+            }
+            // preprepare
+            1 => {
+                if self
+                    .message_log
+                    .get(&curr_view)
+                    .unwrap()
+                    .preprepare
+                    .is_some()
+                {
+                    let sequence_number = self
+                        .message_log
+                        .clone()
+                        .get(&curr_view)
+                        .unwrap()
+                        .preprepare
+                        .as_ref()
+                        .unwrap()
+                        .n;
+                    if self.prepared(
+                        self.message_log
+                            .get(&curr_view)
+                            .unwrap()
+                            .request
+                            .clone()
+                            .unwrap(),
+                        curr_view,
+                        sequence_number,
+                    ) {
+                        unimplemented!(
+                            "verify that we have quorum of preprepares and move to prepare"
+                        );
+                    } else {
+                        return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
+                    }
+                } else if self
+                    .message_log
+                    .get(&curr_view)
+                    .unwrap()
+                    .preprepare_sigs
+                    .len()
+                    > 0
+                {
+                    let sequence_number =
+                        self.message_log.get(&curr_view).unwrap().preprepare_sigs[0].n;
+                    if self.prepared(
+                        self.message_log
+                            .clone()
+                            .get(&curr_view)
+                            .unwrap()
+                            .request
+                            .clone()
+                            .unwrap(),
+                        curr_view,
+                        sequence_number,
+                    ) {
+                        unimplemented!(
+                            "verify that we have quorum of preprepares and move to prepare"
+                        );
+                    } else {
+                        return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
+                    }
+                }
+            }
+            // prepare
+            2 => {
+                if self.message_log.get(&curr_view).unwrap().prepare.is_some() {
+                    let sequence_number = self
+                        .message_log
+                        .clone()
+                        .get(&curr_view)
+                        .unwrap()
+                        .prepare
+                        .as_ref()
+                        .unwrap()
+                        .n;
+                    if self.committed(
+                        self.message_log
+                            .get(&curr_view)
+                            .unwrap()
+                            .request
+                            .clone()
+                            .unwrap(),
+                        curr_view,
+                        sequence_number,
+                    ) {
+                        unimplemented!("verify that we have a quorum of prepares move to commit");
+                    } else {
+                        return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
+                    }
+                } else if self.message_log.get(&curr_view).unwrap().commit_sigs.len() > 0 {
+                    let sequence_number =
+                        self.message_log.get(&curr_view).unwrap().prepare_sigs[0].n;
+                    if self.committed(
+                        self.message_log
+                            .get(&curr_view)
+                            .unwrap()
+                            .request
+                            .clone()
+                            .unwrap(),
+                        curr_view,
+                        sequence_number,
+                    ) {
+                        unimplemented!("verify that we have a quorum of commits and commit the request as a block");
+                    } else {
+                        return Err(std::io::Error::new(ErrorKind::Other, "not committed yet"));
+                    }
+                } else {
+                    return Err(std::io::Error::new(
+                        ErrorKind::Interrupted,
+                        "waiting for any message, created or received",
+                    ));
+                }
+            }
+
+            _ => panic!("this should never happen (process consensus)"),
+        }
+
+        Ok(())
     }
 
     pub fn new(id: String, validators: ValidatorSet) -> Self {

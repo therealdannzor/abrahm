@@ -84,6 +84,10 @@ impl ValidatorProcess {
         self.set.len()
     }
 
+    pub fn quorum_threshold(&self) -> usize {
+        (((2f64) / (3f64)) * self.big_n() as f64).ceil() as usize
+    }
+
     pub fn set(&self) -> ValidatorSet {
         self.set.clone()
     }
