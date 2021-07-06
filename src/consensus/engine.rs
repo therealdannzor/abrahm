@@ -11,7 +11,7 @@ use super::leader_process::ValidatorProcess;
 pub use super::state::{State, M};
 use super::view::{CheckPoint, ViewChangeMessage};
 
-// Engine is the second highest abstraction of the consensus engine (after Consensus) which contains
+// Engine is the second highest abstraction of the consensus engine (after ConsensusChain) which contains
 // all the neccessary information for a validator to participate in a the replication process.
 //
 // The scope of this struct is exclusively the PBFT protocol.
@@ -71,6 +71,40 @@ struct AckMessagesView {
     // Commit phase
     commit: Option<M>,
     commit_sigs: Vec<M>,
+}
+impl AckMessagesView {
+    fn new() -> Self {
+        Self {
+            request: None,
+            preprepare: None,
+            preprepare_sigs: Vec::new(),
+            prepare: None,
+            prepare_sigs: Vec::new(),
+            commit: None,
+            commit_sigs: Vec::new(),
+        }
+    }
+    fn set_request(mut self, request: Request) {
+        self.request = Some(request);
+    }
+    fn set_preprepare(mut self, message: M) {
+        self.preprepare = Some(message);
+    }
+    fn set_prepare(mut self, message: M) {
+        self.prepare = Some(message);
+    }
+    fn set_commit(mut self, message: M) {
+        self.commit = Some(message);
+    }
+    fn add_preprepare_sig(mut self, message: M) {
+        self.preprepare_sigs.push(message);
+    }
+    fn add_prepare_sig(mut self, message: M) {
+        self.prepare_sigs.push(message);
+    }
+    fn add_commit_sig(mut self, message: M) {
+        self.commit_sigs.push(message);
+    }
 }
 
 impl Engine {
@@ -277,8 +311,12 @@ impl Engine {
         }
     }
 
-    pub fn add_message(mut self, msg: M) {
+    fn insert_buffer_message(mut self, msg: M) {
         self.working_buffer.push(msg);
+    }
+
+    fn insert_message_log(mut self, view: View) {
+        self.message_log.insert(view, AckMessagesView::new());
     }
 
     // TODO: integrate with the rest of the blockchain system only after internal consensus mechanism has
