@@ -6,6 +6,7 @@ use std::vec::Vec;
 
 /// Section 4.4 View Changes
 
+#[derive(Clone)]
 // Message format: ⟨VIEW-CHANGE, v+1, n, C, P, i⟩_{σ_i} (signed by replicas)
 pub struct ViewChangeMessage {
     // Replica identity
@@ -44,8 +45,21 @@ impl ViewChangeMessage {
             big_p,
         }
     }
+
+    pub fn next_view(&self) -> View {
+        self.next_view.clone()
+    }
+
+    pub fn n(&self) -> SequenceNumber {
+        self.n
+    }
+
+    pub fn big_p(&self) -> Vec<P> {
+        self.big_p.clone()
+    }
 }
 
+#[derive(Clone)]
 pub struct CheckPoint {
     // Replica identity
     i: String,
@@ -57,6 +71,10 @@ pub struct CheckPoint {
 impl CheckPoint {
     pub fn new(i: String, n: SequenceNumber, d: String) -> Self {
         Self { i, n, d }
+    }
+
+    pub fn data(self) -> String {
+        self.d.clone()
     }
 }
 
@@ -88,6 +106,13 @@ impl P {
             panic!("must insert prepares as state");
         }
         self.matching_prepares.push(m);
+    }
+
+    pub fn message(self) -> M {
+        if self.matching_prepares.len() < 1 {
+            panic!("this should not happen (matching prepares nil)");
+        }
+        self.matching_prepares[0].clone()
     }
 }
 
