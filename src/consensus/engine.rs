@@ -4,8 +4,8 @@ use crate::consensus::request::Request;
 use std::{collections::HashMap, io::ErrorKind, vec::Vec};
 
 use super::common::{
-    correct_message_set, count_votes, digest_m, filter_phase, filter_view, gt_two_thirds,
-    Committer, SequenceNumber, ValidatorSet, View,
+    correct_message_set, count_viewchange_votes, count_votes, digest_m, filter_phase, filter_view,
+    filter_viewchange, gt_two_thirds, Committer, SequenceNumber, ValidatorSet, View,
 };
 use super::leader_process::ValidatorProcess;
 pub use super::state::{State, M};
@@ -40,7 +40,7 @@ pub struct Engine {
 
     // Collection of view change messages retrieved by the sequence number of
     // the latest stable checkpoint.
-    viewchange_log: HashMap<SequenceNumber, ViewChangeMessage>,
+    viewchange_log: HashMap<SequenceNumber, Vec<ViewChangeMessage>>,
 
     // Amount of time before resending a message
     timeout: std::time::Duration,
@@ -312,6 +312,25 @@ impl Engine {
         }
     }
 
+    fn is_viewchange_quorum(&self) -> Result<String, &'static str> {
+        let vc = match self.viewchange_log.get(&self.val_engine.view()) {
+            Some(vc) => Ok(vc),
+            None => Err("view change log is empty"),
+        };
+        let vc = vc.unwrap();
+        let curr_view = self.val_engine.view();
+        let ft = filter_viewchange(curr_view, vc.to_vec());
+        let n = ft.len();
+        let quorum = gt_two_thirds(n);
+        let (vote, amount) = count_viewchange_votes(vc.to_vec());
+
+        if amount >= quorum {
+            Ok(vote)
+        } else {
+            Err("no quorum achieved")
+        }
+    }
+
     fn insert_buffer_message(mut self, msg: M) {
         self.working_buffer.push(msg);
     }
@@ -326,7 +345,7 @@ impl Engine {
     // process_consensus polls the leader process engine for the current status and changes state if the consensus
     // criteria are satisfied. If not, nothing changes. Instead of implementing this as an event-driven loop, this
     // method can combined with other higher level constructs as needed.
-    pub fn process_consensus(&self) -> Result<(), std::io::Error> {
+    pub fn process_consensus(&mut self) -> Result<(), std::io::Error> {
         let curr_view = self.val_engine.view();
         let curr_state = self.val_engine.phase();
 
@@ -460,7 +479,99 @@ impl Engine {
                     ));
                 }
             }
-
+            // commit
+            3 => {
+                if self.message_log.get(&curr_view).unwrap().commit.is_some() {
+                    let sequence_number = self
+                        .message_log
+                        .clone()
+                        .get(&curr_view)
+                        .unwrap()
+                        .commit
+                        .as_ref()
+                        .unwrap()
+                        .n;
+                    if self.committed(
+                        self.message_log
+                            .get(&curr_view)
+                            .unwrap()
+                            .request
+                            .clone()
+                            .unwrap(),
+                        curr_view,
+                        sequence_number,
+                    ) {
+                        unimplemented!("broadcast that block has been committed and start consensus process from scratch");
+                    } else {
+                        return Err(std::io::Error::new(
+                            ErrorKind::Interrupted,
+                            "waiting for more messages or a quorum",
+                        ));
+                    }
+                } else if self.message_log.get(&curr_view).unwrap().commit_sigs.len() > 0 {
+                    let sequence_number =
+                        self.message_log.get(&curr_view).unwrap().commit_sigs[0].n;
+                    if self.committed(
+                        self.message_log
+                            .get(&curr_view)
+                            .unwrap()
+                            .request
+                            .clone()
+                            .unwrap(),
+                        curr_view,
+                        sequence_number,
+                    ) {
+                        unimplemented!("broadcast that block has been committed and start consensus process from scratch");
+                    } else {
+                        return Err(std::io::Error::new(
+                            ErrorKind::Interrupted,
+                            "waiting for more messages or a quorum",
+                        ));
+                    }
+                }
+            }
+            // view change
+            4 => {
+                let vc = self.viewchange_log.get(&curr_view);
+                if vc.is_none() {
+                    return Err(std::io::Error::new(
+                        ErrorKind::Interrupted,
+                        "waiting for additional view messages",
+                    ));
+                }
+                let result = self.is_viewchange_quorum();
+                if result.is_ok() {
+                    unimplemented!("multicast new view message and move to the new view");
+                } else {
+                    return Err(std::io::Error::new(
+                        ErrorKind::Other,
+                        "no viewchange quorum yet",
+                    ));
+                }
+            }
+            // new view
+            5 => {
+                unimplemented!(
+                    "redo the protocol for messages in min/max-s and obtain any missing CPs"
+                );
+            }
+            // checkpoint
+            6 => {
+                if self.checkpoint_log.get(&curr_view).is_none() {
+                    self.checkpoint_log.insert(curr_view, Vec::new());
+                }
+                let message_commit = self.message_log.get(&curr_view).unwrap().commit.clone();
+                self.checkpoint_log
+                    .get(&curr_view)
+                    .unwrap()
+                    .clone()
+                    .push(CheckPoint::new(
+                        self.val_engine.id(),
+                        message_commit.clone().unwrap().n.clone(),
+                        message_commit.clone().unwrap().d.clone(),
+                    ));
+                unimplemented!("multicast checkpoint");
+            }
             _ => panic!("this should never happen (process consensus)"),
         }
 
