@@ -354,6 +354,12 @@ impl Engine {
         {
             return Err(std::io::Error::new(ErrorKind::Other, "not enough messages"));
         }
+
+        let msg_log = self.message_log.get(&curr_view).unwrap();
+        let msg_log_prepare = msg_log.prepare.clone();
+        let msg_log_preprepare = msg_log.preprepare.clone();
+        let msg_log_request = msg_log.request.clone();
+        let msg_log_commit = msg_log.commit.clone();
         match curr_state.into_inner() {
             // accept messages
             0 => {
@@ -368,59 +374,18 @@ impl Engine {
             }
             // preprepare
             1 => {
-                if self
-                    .message_log
-                    .get(&curr_view)
-                    .unwrap()
-                    .preprepare
-                    .is_some()
-                {
-                    let sequence_number = self
-                        .message_log
-                        .clone()
-                        .get(&curr_view)
-                        .unwrap()
-                        .preprepare
-                        .as_ref()
-                        .unwrap()
-                        .n;
-                    if self.prepared(
-                        self.message_log
-                            .get(&curr_view)
-                            .unwrap()
-                            .request
-                            .clone()
-                            .unwrap(),
-                        curr_view,
-                        sequence_number,
-                    ) {
+                if msg_log_preprepare.clone().is_some() {
+                    let sequence_number = msg_log_preprepare.as_ref().unwrap().n;
+                    if self.prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number) {
                         unimplemented!(
                             "verify that we have quorum of preprepares and move to prepare"
                         );
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
                     }
-                } else if self
-                    .message_log
-                    .get(&curr_view)
-                    .unwrap()
-                    .preprepare_sigs
-                    .len()
-                    > 0
-                {
-                    let sequence_number =
-                        self.message_log.get(&curr_view).unwrap().preprepare_sigs[0].n;
-                    if self.prepared(
-                        self.message_log
-                            .clone()
-                            .get(&curr_view)
-                            .unwrap()
-                            .request
-                            .clone()
-                            .unwrap(),
-                        curr_view,
-                        sequence_number,
-                    ) {
+                } else if msg_log.preprepare_sigs.len() > 0 {
+                    let sequence_number = msg_log.preprepare_sigs[0].n;
+                    if self.prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number) {
                         unimplemented!(
                             "verify that we have quorum of preprepares and move to prepare"
                         );
@@ -432,42 +397,17 @@ impl Engine {
             // prepare
             2 => {
                 if self.message_log.get(&curr_view).unwrap().prepare.is_some() {
-                    let sequence_number = self
-                        .message_log
-                        .clone()
-                        .get(&curr_view)
-                        .unwrap()
-                        .prepare
-                        .as_ref()
-                        .unwrap()
-                        .n;
-                    if self.committed(
-                        self.message_log
-                            .get(&curr_view)
-                            .unwrap()
-                            .request
-                            .clone()
-                            .unwrap(),
-                        curr_view,
-                        sequence_number,
-                    ) {
+                    let sequence_number = msg_log_prepare.as_ref().unwrap().n;
+                    if self.committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                    {
                         unimplemented!("verify that we have a quorum of prepares move to commit");
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
                     }
                 } else if self.message_log.get(&curr_view).unwrap().commit_sigs.len() > 0 {
-                    let sequence_number =
-                        self.message_log.get(&curr_view).unwrap().prepare_sigs[0].n;
-                    if self.committed(
-                        self.message_log
-                            .get(&curr_view)
-                            .unwrap()
-                            .request
-                            .clone()
-                            .unwrap(),
-                        curr_view,
-                        sequence_number,
-                    ) {
+                    let sequence_number = msg_log.prepare_sigs[0].n;
+                    if self.committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                    {
                         unimplemented!("verify that we have a quorum of commits and commit the request as a block");
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not committed yet"));
@@ -482,25 +422,9 @@ impl Engine {
             // commit
             3 => {
                 if self.message_log.get(&curr_view).unwrap().commit.is_some() {
-                    let sequence_number = self
-                        .message_log
-                        .clone()
-                        .get(&curr_view)
-                        .unwrap()
-                        .commit
-                        .as_ref()
-                        .unwrap()
-                        .n;
-                    if self.committed(
-                        self.message_log
-                            .get(&curr_view)
-                            .unwrap()
-                            .request
-                            .clone()
-                            .unwrap(),
-                        curr_view,
-                        sequence_number,
-                    ) {
+                    let sequence_number = msg_log_commit.as_ref().unwrap().n;
+                    if self.committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                    {
                         unimplemented!("broadcast that block has been committed and start consensus process from scratch");
                     } else {
                         return Err(std::io::Error::new(
@@ -508,19 +432,10 @@ impl Engine {
                             "waiting for more messages or a quorum",
                         ));
                     }
-                } else if self.message_log.get(&curr_view).unwrap().commit_sigs.len() > 0 {
-                    let sequence_number =
-                        self.message_log.get(&curr_view).unwrap().commit_sigs[0].n;
-                    if self.committed(
-                        self.message_log
-                            .get(&curr_view)
-                            .unwrap()
-                            .request
-                            .clone()
-                            .unwrap(),
-                        curr_view,
-                        sequence_number,
-                    ) {
+                } else if msg_log.commit_sigs.len() > 0 {
+                    let sequence_number = msg_log.commit_sigs[0].n;
+                    if self.committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                    {
                         unimplemented!("broadcast that block has been committed and start consensus process from scratch");
                     } else {
                         return Err(std::io::Error::new(
@@ -560,15 +475,14 @@ impl Engine {
                 if self.checkpoint_log.get(&curr_view).is_none() {
                     self.checkpoint_log.insert(curr_view, Vec::new());
                 }
-                let message_commit = self.message_log.get(&curr_view).unwrap().commit.clone();
                 self.checkpoint_log
                     .get(&curr_view)
                     .unwrap()
                     .clone()
                     .push(CheckPoint::new(
                         self.val_engine.id(),
-                        message_commit.clone().unwrap().n.clone(),
-                        message_commit.clone().unwrap().d.clone(),
+                        msg_log_commit.clone().unwrap().n.clone(),
+                        msg_log_commit.clone().unwrap().d.clone(),
                     ));
                 unimplemented!("multicast checkpoint");
             }
