@@ -114,32 +114,30 @@ impl Engine {
         // (Section 4.2) Normal-Case Operation.
         // The predicate _prepared(m,v,n,i)_ is true iff:
 
-        let ack_m_v = self.message_log.get(&self.val_engine.view()).unwrap();
-        let request = ack_m_v.request.clone();
-        let preprepare = ack_m_v.preprepare.clone();
-        let pp_pare_sigs = ack_m_v.prepare_sigs.clone();
+        let ack_m_engine_v = self.message_log.get(&self.val_engine.view()).unwrap();
+        let ack_m_param_v = self.message_log.get(&v).unwrap();
         // The replica has inserted the request in its log
-        if request.is_none() {
+        if ack_m_engine_v.request.is_none() {
             log::debug!("phase: preprepare, predicate failed due to missing request in log");
             return false;
         // A pre-prepare for the request in the same `v` and `n`
-        } else if preprepare.is_some() {
+        } else if ack_m_param_v.preprepare.is_some() {
             // check if the view of the stored preprepare message is the same as what we expect
-            if v != preprepare.as_ref().unwrap().v {
+            if v != ack_m_engine_v.preprepare.as_ref().unwrap().v {
                 log::debug!(
                     "phase: {}, predicate failed due to `v`, expected: {}, got: {}",
                     "preprepare",
                     v,
-                    preprepare.as_ref().unwrap().v
+                    ack_m_engine_v.preprepare.as_ref().unwrap().v
                 );
                 return false;
             // and do the same with the sequence number `n`
-            } else if n != preprepare.as_ref().unwrap().n {
+            } else if n != ack_m_param_v.preprepare.as_ref().unwrap().n {
                 log::debug!(
                     "phase: {}, predicate failed due to `n`, expected: {}, got: {}",
                     "preprepare",
                     n,
-                    preprepare.as_ref().unwrap().v
+                    ack_m_param_v.preprepare.as_ref().unwrap().v
                 );
                 return false;
             }
@@ -149,9 +147,9 @@ impl Engine {
         }
 
         if !correct_message_set(
-            preprepare.clone(),
-            pp_pare_sigs.to_owned(),
-            gt_two_thirds(pp_pare_sigs.len()),
+            ack_m_param_v.preprepare.clone(),
+            ack_m_param_v.preprepare_sigs.to_owned(),
+            gt_two_thirds(ack_m_param_v.preprepare_sigs.len()),
         ) {
             log::debug!("phase: {}, predicate failed due to non-matching preprepare in prepare set or not sufficient amount of messages, expected: {:?}, got: {:?}",
                 "preprepare", self.message_log.get(&v).as_ref().unwrap().prepare.clone(), self.message_log.get(&v).as_ref().unwrap().preprepare_sigs.to_owned());
