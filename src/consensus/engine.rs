@@ -74,22 +74,27 @@ struct AckMessagesView {
     commit_sigs: Vec<M>,
 }
 impl AckMessagesView {
-    fn new() -> Self {
+    fn new(
+        request: Option<Request>,
+        preprepare: Option<M>,
+        prepare: Option<M>,
+        commit: Option<M>,
+    ) -> Self {
         Self {
-            request: None,
-            preprepare: None,
+            request,
+            preprepare,
             preprepare_sigs: Vec::new(),
-            prepare: None,
+            prepare,
             prepare_sigs: Vec::new(),
-            commit: None,
+            commit,
             commit_sigs: Vec::new(),
         }
     }
     fn set_request(mut self, request: Request) {
         self.request = Some(request);
     }
-    fn set_preprepare(mut self, message: M) {
-        self.preprepare = Some(message);
+    fn set_preprepare(&mut self, message: Option<M>) {
+        self.preprepare = message;
     }
     fn set_prepare(mut self, message: M) {
         self.prepare = Some(message);
@@ -97,7 +102,7 @@ impl AckMessagesView {
     fn set_commit(mut self, message: M) {
         self.commit = Some(message);
     }
-    fn add_preprepare_sig(mut self, message: M) {
+    fn add_preprepare_sig(&mut self, message: M) {
         self.preprepare_sigs.push(message);
     }
     fn add_prepare_sig(mut self, message: M) {
@@ -107,16 +112,27 @@ impl AckMessagesView {
         self.commit_sigs.push(message);
     }
 }
+impl AsRef<AckMessagesView> for AckMessagesView {
+    fn as_ref(&self) -> &AckMessagesView {
+        self
+    }
+}
 
 impl Engine {
     // prepared orders requests in a view. Returns true when the predicate is true.
-    fn prepared(&self, m: Request, v: View, n: SequenceNumber) -> bool {
-        // (Section 4.2) Normal-Case Operation.
-        // The predicate _prepared(m,v,n,i)_ is true iff:
+    pub fn prepared(&self, m: Request, v: View, n: SequenceNumber) -> bool {
+        if self.message_log.get(&self.val_engine.view()).is_none()
+            || self.message_log.get(&v).is_none()
+        {
+            log::debug!("phase: preprepare, missing message store for engine view or param view");
+            return false;
+        }
 
         let ack_m_engine_v = self.message_log.get(&self.val_engine.view()).unwrap();
         let ack_m_param_v = self.message_log.get(&v).unwrap();
-        // The replica has inserted the request in its log
+
+        // (Section 4.2) Normal-Case Operation.
+        // The predicate _prepared(m,v,n,i)_ is true iff the replica has inserted the request in its log
         if ack_m_engine_v.request.is_none() {
             log::debug!("phase: preprepare, predicate failed due to missing request in log");
             return false;
@@ -285,8 +301,9 @@ impl Engine {
         self.working_buffer.push(msg);
     }
 
-    fn insert_message_log(mut self, view: View) {
-        self.message_log.insert(view, AckMessagesView::new());
+    fn insert_message_log(&mut self, view: View) {
+        self.message_log
+            .insert(view, AckMessagesView::new(None, None, None, None));
     }
 
     // TODO: integrate with the rest of the blockchain system only after internal consensus mechanism has
@@ -443,12 +460,14 @@ impl Engine {
     }
 
     pub fn new(id: String, validators: ValidatorSet) -> Self {
+        let mut message_log: HashMap<u64, AckMessagesView> = HashMap::new();
+        message_log.insert(0, AckMessagesView::new(None, None, None, None));
         Self {
             val_engine: ValidatorProcess::new(id, validators),
             stable_checkpoint: 0,
             latest_checkpoint: 0,
             working_buffer: std::vec::Vec::new(),
-            message_log: HashMap::new(),
+            message_log,
             checkpoint_log: HashMap::new(),
             viewchange_log: HashMap::new(),
             timeout: std::time::Duration::from_secs(5), // initial guesstimate
@@ -471,5 +490,73 @@ impl Engine {
 
     pub fn inc_latest_cp(mut self) {
         self.latest_checkpoint = self.latest_checkpoint + 1;
+    }
+}
+
+mod tests {
+    use super::*;
+    use crate::consensus::transition::{Transact, Transition};
+
+    fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
+        let next_transition = Transition::new("0x", vec![Transact::new(from, to, amount)]);
+        Request::new(next_transition, "id")
+    }
+
+    fn create_message(state: u8, id: &str, view: u64, seq: u64, data: &str) -> M {
+        M::new(
+            State::new(state),
+            String::from(id),
+            view,
+            seq,
+            String::from(data),
+        )
+    }
+
+    fn create_signatures(amount: u8, state: u8, view: u64, seq: u64, data: &str) -> Vec<M> {
+        let mut result = Vec::new();
+        for i in 0..amount {
+            result.push(create_message(state, "id", view, seq, data));
+        }
+        result
+    }
+
+    fn setup() -> Engine {
+        Engine::new(
+            String::from("A"),
+            vec!["A", "B", "C", "D"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn full_consensus_round_happy_case() {
+        let mut engine = setup();
+        let mut r1 = create_request_type("0x", "A", "B", 1);
+
+        // failing due to missing request
+        assert!(!engine.prepared(r1.clone(), 0 /* view */, 0 /* seq no. */));
+
+        // add preprepare message
+        engine.insert_message_log(0);
+        let message = create_message(1 /* preprepare */, "0x", 0, 0, "data");
+        engine
+            .message_log
+            .get_mut(&0)
+            .unwrap()
+            .set_preprepare(Some(message));
+
+        // add preprepare signatures
+        let mut sigs = create_signatures(4, 1, 0, 0, "data");
+        for i in 0..4 {
+            engine
+                .message_log
+                .get_mut(&0)
+                .unwrap()
+                .add_preprepare_sig(sigs.pop().unwrap());
+        }
+
+        assert!(engine.prepared(r1.clone(), 0, 0));
     }
 }
