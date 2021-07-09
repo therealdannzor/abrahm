@@ -90,8 +90,8 @@ impl AckMessagesView {
             commit_sigs: Vec::new(),
         }
     }
-    fn set_request(mut self, request: Request) {
-        self.request = Some(request);
+    fn set_request(&mut self, request: Option<Request>) {
+        self.request = request;
     }
     fn set_preprepare(&mut self, message: Option<M>) {
         self.preprepare = message;
@@ -120,12 +120,14 @@ impl AsRef<AckMessagesView> for AckMessagesView {
 
 impl Engine {
     // prepared orders requests in a view. Returns true when the predicate is true.
-    pub fn prepared(&self, m: Request, v: View, n: SequenceNumber) -> bool {
+    pub fn prepared(&self, m: Request, v: View, n: SequenceNumber) -> Result<(), std::io::Error> {
         if self.message_log.get(&self.val_engine.view()).is_none()
             || self.message_log.get(&v).is_none()
         {
-            log::debug!("phase: preprepare, missing message store for engine view or param view");
-            return false;
+            return Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "missing message store for engine or param view",
+            ));
         }
 
         let ack_m_engine_v = self.message_log.get(&self.val_engine.view()).unwrap();
@@ -134,32 +136,30 @@ impl Engine {
         // (Section 4.2) Normal-Case Operation.
         // The predicate _prepared(m,v,n,i)_ is true iff the replica has inserted the request in its log
         if ack_m_engine_v.request.is_none() {
-            log::debug!("phase: preprepare, predicate failed due to missing request in log");
-            return false;
+            return Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "missing proposed request in message store",
+            ));
         // A pre-prepare for the request in the same `v` and `n`
         } else if ack_m_param_v.preprepare.is_some() {
             // check if the view of the stored preprepare message is the same as what we expect
             if v != ack_m_engine_v.preprepare.as_ref().unwrap().v {
-                log::debug!(
-                    "phase: {}, predicate failed due to `v`, expected: {}, got: {}",
-                    "preprepare",
-                    v,
-                    ack_m_engine_v.preprepare.as_ref().unwrap().v
-                );
-                return false;
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "preprepare view is different from expected param view",
+                ));
             // and do the same with the sequence number `n`
             } else if n != ack_m_param_v.preprepare.as_ref().unwrap().n {
-                log::debug!(
-                    "phase: {}, predicate failed due to `n`, expected: {}, got: {}",
-                    "preprepare",
-                    n,
-                    ack_m_param_v.preprepare.as_ref().unwrap().v
-                );
-                return false;
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "preprepare sequence number is different from expected param number",
+                ));
             }
         } else {
-            log::debug!("phase: preprepare, predicate failed due to missing preprepare in log");
-            return false;
+            return Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "missing preprepare in message store",
+            ));
         }
 
         if !correct_message_set(
@@ -167,15 +167,16 @@ impl Engine {
             ack_m_param_v.preprepare_sigs.to_owned(),
             gt_two_thirds(ack_m_param_v.preprepare_sigs.len()),
         ) {
-            log::debug!("phase: {}, predicate failed due to non-matching preprepare in prepare set or not sufficient amount of messages, expected: {:?}, got: {:?}",
-                "preprepare", self.message_log.get(&v).as_ref().unwrap().prepare.clone(), self.message_log.get(&v).as_ref().unwrap().preprepare_sigs.to_owned());
-            return false;
+            return Err(std::io::Error::new(
+                ErrorKind::Other,
+                "non-matching preprepares in set or not enough messages to form quorum",
+            ));
         }
 
-        true
+        Ok(())
     }
 
-    // committed is the finally check before we finalize consensus on a request `m`.
+    // committed is the final check before we finalize consensus on a request `m`.
     // Returns true if there is a consensus agreement on `m`.
     fn committed(&self, m: Request, v: View, n: SequenceNumber) -> bool {
         // (Section 4.2) Normal-Case Operation.
@@ -183,7 +184,7 @@ impl Engine {
 
         // If prepared is true for all i in a set of F+1 non-faulty replicas. By calling prepared,
         // we do not need to check preprepare and prepare messages.
-        if !self.prepared(m, v, n) {
+        if self.prepared(m, v, n).is_err() {
             log::debug!(
                 "phase: preprepare, predicate failed since it needs to be in prepare state before asserting committed"
             );
@@ -301,11 +302,6 @@ impl Engine {
         self.working_buffer.push(msg);
     }
 
-    fn insert_message_log(&mut self, view: View) {
-        self.message_log
-            .insert(view, AckMessagesView::new(None, None, None, None));
-    }
-
     // TODO: integrate with the rest of the blockchain system only after internal consensus mechanism has
     // been completed and tested with a minimal working version
     //
@@ -343,7 +339,10 @@ impl Engine {
             1 => {
                 if msg_log_preprepare.clone().is_some() {
                     let sequence_number = msg_log_preprepare.as_ref().unwrap().n;
-                    if self.prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number) {
+                    if self
+                        .prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                        .is_ok()
+                    {
                         unimplemented!(
                             "verify that we have quorum of preprepares and move to prepare"
                         );
@@ -352,7 +351,10 @@ impl Engine {
                     }
                 } else if msg_log.preprepare_sigs.len() > 0 {
                     let sequence_number = msg_log.preprepare_sigs[0].n;
-                    if self.prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number) {
+                    if self
+                        .prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                        .is_ok()
+                    {
                         unimplemented!(
                             "verify that we have quorum of preprepares and move to prepare"
                         );
@@ -536,10 +538,18 @@ mod tests {
         let mut r1 = create_request_type("0x", "A", "B", 1);
 
         // failing due to missing request
-        assert!(!engine.prepared(r1.clone(), 0 /* view */, 0 /* seq no. */));
+        assert!(engine
+            .prepared(r1.clone(), 0 /* view */, 0 /* seq no. */)
+            .is_err());
+
+        // add request
+        engine
+            .message_log
+            .get_mut(&0)
+            .unwrap()
+            .set_request(Some(r1.clone()));
 
         // add preprepare message
-        engine.insert_message_log(0);
         let message = create_message(1 /* preprepare */, "0x", 0, 0, "data");
         engine
             .message_log
@@ -557,6 +567,6 @@ mod tests {
                 .add_preprepare_sig(sigs.pop().unwrap());
         }
 
-        assert!(engine.prepared(r1.clone(), 0, 0));
+        assert!(engine.prepared(r1.clone(), 0, 0).is_ok());
     }
 }
