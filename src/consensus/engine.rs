@@ -119,7 +119,7 @@ impl AsRef<AckMessagesView> for AckMessagesView {
 }
 
 impl Engine {
-    // prepared orders requests in a view. Returns true when the predicate is true.
+    // prepared orders requests in a view. Returns Ok if the predicate is true.
     pub fn prepared(&self, m: Request, v: View, n: SequenceNumber) -> Result<(), std::io::Error> {
         if self.message_log.get(&self.val_engine.view()).is_none()
             || self.message_log.get(&v).is_none()
@@ -177,8 +177,25 @@ impl Engine {
     }
 
     // committed is the final check before we finalize consensus on a request `m`.
-    // Returns true if there is a consensus agreement on `m`.
+    // Returns Ok if the predicate is true and there is a consensus agreement on `m`.
+    // This method includes both the `committed` and `committed-local` predicate.
     fn committed(&self, m: Request, v: View, n: SequenceNumber) -> Result<(), std::io::Error> {
+        if self.message_log.get(&self.val_engine.view()).is_none()
+            || self.message_log.get(&v).is_none()
+        {
+            return Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "missing message store for engine or param view",
+            ));
+        } else if self.message_log.get(&v).unwrap().commit.is_none() {
+            return Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "missing local commit",
+            ));
+        }
+
+        let ack_m_param_v = self.message_log.get(&v).as_ref().unwrap().clone();
+
         // (Section 4.2) Normal-Case Operation.
         // The predicate _committed(m,v,n)_ is true iff:
 
@@ -190,32 +207,29 @@ impl Engine {
                 "cannot check for committed state without first being in prepared state",
             ));
         } else {
-            // A pre-preprepare for the request in the same `v` and `n`
-            if self.message_log.get(&v).unwrap().commit.is_some() {
+            // check that we are on the same view and sequence number
+            if ack_m_param_v.commit.clone().unwrap().n == n
+                && ack_m_param_v.commit.clone().unwrap().v == v
+            {
                 // check if the view of the stored preprepare is the same as what we expect
                 if !correct_message_set(
-                    self.message_log.get(&v).as_ref().unwrap().commit.clone(),
-                    self.message_log
-                        .get(&v)
-                        .as_ref()
-                        .unwrap()
-                        .commit_sigs
-                        .to_owned(),
-                    gt_two_thirds(self.message_log.get(&v).as_ref().unwrap().commit_sigs.len()),
+                    ack_m_param_v.commit.clone(),
+                    ack_m_param_v.commit_sigs.to_owned(),
+                    gt_two_thirds(ack_m_param_v.commit_sigs.len()),
                 ) {
                     return Err(std::io::Error::new(
                         ErrorKind::NotFound,
                         "not enough matching commits",
                     ));
                 }
+                return Ok(());
             } else {
                 return Err(std::io::Error::new(
-                    ErrorKind::NotFound,
-                    "missing local commit",
+                    ErrorKind::InvalidInput,
+                    "cannot check for committed state when the proposed commit state differs from param",
                 ));
             }
         }
-        Ok(())
     }
 
     // valid_preprepare checks if the message is a valid preprepare
