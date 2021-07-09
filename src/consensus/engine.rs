@@ -99,8 +99,8 @@ impl AckMessagesView {
     fn set_prepare(mut self, message: M) {
         self.prepare = Some(message);
     }
-    fn set_commit(mut self, message: M) {
-        self.commit = Some(message);
+    fn set_commit(&mut self, message: Option<M>) {
+        self.commit = message;
     }
     fn add_preprepare_sig(&mut self, message: M) {
         self.preprepare_sigs.push(message);
@@ -178,17 +178,17 @@ impl Engine {
 
     // committed is the final check before we finalize consensus on a request `m`.
     // Returns true if there is a consensus agreement on `m`.
-    fn committed(&self, m: Request, v: View, n: SequenceNumber) -> bool {
+    fn committed(&self, m: Request, v: View, n: SequenceNumber) -> Result<(), std::io::Error> {
         // (Section 4.2) Normal-Case Operation.
         // The predicate _committed(m,v,n)_ is true iff:
 
         // If prepared is true for all i in a set of F+1 non-faulty replicas. By calling prepared,
         // we do not need to check preprepare and prepare messages.
         if self.prepared(m, v, n).is_err() {
-            log::debug!(
-                "phase: preprepare, predicate failed since it needs to be in prepare state before asserting committed"
-            );
-            return false;
+            return Err(std::io::Error::new(
+                ErrorKind::NotConnected,
+                "cannot check for committed state without first being in prepared state",
+            ));
         } else {
             // A pre-preprepare for the request in the same `v` and `n`
             if self.message_log.get(&v).unwrap().commit.is_some() {
@@ -203,17 +203,19 @@ impl Engine {
                         .to_owned(),
                     gt_two_thirds(self.message_log.get(&v).as_ref().unwrap().commit_sigs.len()),
                 ) {
-                    log::debug!("phase: prepare, predicate failed due to not enough matching commits, expected: {:?}, got{:?}",
-                        self.message_log.get(&v).as_ref().unwrap().commit, self.message_log.get(&v).as_ref().unwrap().commit_sigs,
-                        );
-                    return false;
+                    return Err(std::io::Error::new(
+                        ErrorKind::NotFound,
+                        "not enough matching commits",
+                    ));
                 }
             } else {
-                log::debug!("phase: prepare, predicate failed due to missing local commit");
-                return false;
+                return Err(std::io::Error::new(
+                    ErrorKind::NotFound,
+                    "missing local commit",
+                ));
             }
         }
-        true
+        Ok(())
     }
 
     // valid_preprepare checks if the message is a valid preprepare
@@ -367,7 +369,9 @@ impl Engine {
             2 => {
                 if self.message_log.get(&curr_view).unwrap().prepare.is_some() {
                     let sequence_number = msg_log_prepare.as_ref().unwrap().n;
-                    if self.committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                    if self
+                        .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                        .is_ok()
                     {
                         unimplemented!("verify that we have a quorum of prepares move to commit");
                     } else {
@@ -375,7 +379,9 @@ impl Engine {
                     }
                 } else if self.message_log.get(&curr_view).unwrap().commit_sigs.len() > 0 {
                     let sequence_number = msg_log.prepare_sigs[0].n;
-                    if self.committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                    if self
+                        .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                        .is_ok()
                     {
                         unimplemented!("verify that we have a quorum of commits and commit the request as a block");
                     } else {
@@ -392,7 +398,9 @@ impl Engine {
             3 => {
                 if self.message_log.get(&curr_view).unwrap().commit.is_some() {
                     let sequence_number = msg_log_commit.as_ref().unwrap().n;
-                    if self.committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                    if self
+                        .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                        .is_ok()
                     {
                         unimplemented!("broadcast that block has been committed and start consensus process from scratch");
                     } else {
@@ -403,7 +411,9 @@ impl Engine {
                     }
                 } else if msg_log.commit_sigs.len() > 0 {
                     let sequence_number = msg_log.commit_sigs[0].n;
-                    if self.committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                    if self
+                        .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
+                        .is_ok()
                     {
                         unimplemented!("broadcast that block has been committed and start consensus process from scratch");
                     } else {
@@ -498,6 +508,7 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::consensus::transition::{Transact, Transition};
+    use tokio_test::{assert_err, assert_ok};
 
     fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
         let next_transition = Transition::new("0x", vec![Transact::new(from, to, amount)]);
@@ -533,14 +544,14 @@ mod tests {
     }
 
     #[test]
-    fn full_consensus_round_happy_case() {
+    fn prepared_and_committed_predicate_single_view_and_seq() {
         let mut engine = setup();
         let mut r1 = create_request_type("0x", "A", "B", 1);
+        let view = 0;
+        let seq_no = 0;
 
         // failing due to missing request
-        assert!(engine
-            .prepared(r1.clone(), 0 /* view */, 0 /* seq no. */)
-            .is_err());
+        assert_err!(engine.prepared(r1.clone(), view, seq_no));
 
         // add request
         engine
@@ -549,17 +560,25 @@ mod tests {
             .unwrap()
             .set_request(Some(r1.clone()));
 
+        // failing due to missing preprepare
+        assert_err!(engine.prepared(r1.clone(), view, seq_no));
+
         // add preprepare message
-        let message = create_message(1 /* preprepare */, "0x", 0, 0, "data");
+        let msg_type = 1; // preprepare
+        let message = create_message(msg_type, "0x", view, seq_no, "data");
         engine
             .message_log
             .get_mut(&0)
             .unwrap()
             .set_preprepare(Some(message));
 
+        // failing due to missing signatures
+        assert_err!(engine.prepared(r1.clone(), view, seq_no));
+
         // add preprepare signatures
-        let mut sigs = create_signatures(4, 1, 0, 0, "data");
-        for i in 0..4 {
+        let amount = 4;
+        let mut sigs = create_signatures(amount, msg_type, view, seq_no, "data");
+        for i in 0..amount {
             engine
                 .message_log
                 .get_mut(&0)
@@ -567,6 +586,10 @@ mod tests {
                 .add_preprepare_sig(sigs.pop().unwrap());
         }
 
-        assert!(engine.prepared(r1.clone(), 0, 0).is_ok());
+        // prepared ok
+        assert_ok!(engine.prepared(r1.clone(), view, seq_no));
+
+        // failing due to missing commit message
+        assert_err!(engine.committed(r1.clone(), view, seq_no));
     }
 }
