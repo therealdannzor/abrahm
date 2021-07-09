@@ -2,7 +2,7 @@
 use super::engine::Engine;
 use crate::block::Block;
 use crate::core::Blockchain;
-use crate::state_db::StateDB;
+use crate::ledger::state_db::StateDB;
 use std::sync::mpsc;
 
 // ConsensusChain represents the blockchain replication process to order and finalize state,
