@@ -108,7 +108,7 @@ impl AckMessagesView {
     fn add_prepare_sig(mut self, message: M) {
         self.prepare_sigs.push(message);
     }
-    fn add_commit_sig(mut self, message: M) {
+    fn add_commit_sig(&mut self, message: M) {
         self.commit_sigs.push(message);
     }
 }
@@ -570,7 +570,7 @@ mod tests {
         // add request
         engine
             .message_log
-            .get_mut(&0)
+            .get_mut(&view)
             .unwrap()
             .set_request(Some(r1.clone()));
 
@@ -582,7 +582,7 @@ mod tests {
         let message = create_message(msg_type, "0x", view, seq_no, "data");
         engine
             .message_log
-            .get_mut(&0)
+            .get_mut(&view)
             .unwrap()
             .set_preprepare(Some(message));
 
@@ -595,7 +595,7 @@ mod tests {
         for i in 0..amount {
             engine
                 .message_log
-                .get_mut(&0)
+                .get_mut(&view)
                 .unwrap()
                 .add_preprepare_sig(sigs.pop().unwrap());
         }
@@ -605,5 +605,29 @@ mod tests {
 
         // failing due to missing commit message
         assert_err!(engine.committed(r1.clone(), view, seq_no));
+
+        // add commit message
+        let msg_type = 3; // commit
+        let message = create_message(msg_type, "0", view, seq_no, "data");
+        engine
+            .message_log
+            .get_mut(&view)
+            .unwrap()
+            .set_commit(Some(message));
+
+        assert_err!(engine.committed(r1.clone(), view, seq_no));
+
+        // add commit signatures
+        let amount = 4;
+        let mut sigs = create_signatures(amount, msg_type, view, seq_no, "data");
+        for i in 0..amount {
+            engine
+                .message_log
+                .get_mut(&view)
+                .unwrap()
+                .add_commit_sig(sigs.pop().unwrap());
+        }
+
+        assert_ok!(engine.prepared(r1.clone(), view, seq_no));
     }
 }
