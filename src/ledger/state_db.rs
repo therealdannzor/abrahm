@@ -18,7 +18,7 @@ pub trait KeyValueIO {
 
     // get_value retrieves the value of the key if it exists. If it is does not
     // it returns a dummy ouput of 0.
-    fn get_value(&self, key: EcdsaPublicKey) -> Result<Vec<u8>, std::io::Error>;
+    fn get_value(&self, key: EcdsaPublicKey) -> Result<u8, std::io::Error>;
 
     // update_root_hash receives a key-value pair and creates a hash
     // based on the existing root hash and this pair to represent a
@@ -56,7 +56,7 @@ impl KeyValueIO for StateDB {
     }
 
     fn put(&mut self, key: EcdsaPublicKey, val: &str) {
-        if val == "" {
+        if val == "" || val == "0" {
             return;
         }
 
@@ -69,7 +69,7 @@ impl KeyValueIO for StateDB {
 
     fn delete(&mut self, key: EcdsaPublicKey) {
         let bal = self.get_value(key.clone());
-        if bal.is_err() || bal.unwrap()[0] == 0 {
+        if bal.is_err() || bal.unwrap() == 0 {
             return;
         }
 
@@ -82,11 +82,15 @@ impl KeyValueIO for StateDB {
         }
     }
 
-    fn get_value(&self, key: EcdsaPublicKey) -> Result<Vec<u8>, std::io::Error> {
+    fn get_value(&self, key: EcdsaPublicKey) -> Result<u8, std::io::Error> {
         let res = &self.db.get(key);
         match res {
-            Ok(Some(value)) => Ok(value.clone()),
-            Ok(None) => Ok(vec![0]), // dummy output (missing value)
+            Ok(Some(value)) => {
+                let ascii_u8 = value.clone()[0];
+                let num = ascii_u8 - 48; // from ASCII to number
+                Ok(num)
+            }
+            Ok(None) => Ok(0), // dummy output (missing value)
             Err(e) => panic!("read db error: {:?}", e),
         }
     }
@@ -129,7 +133,7 @@ mod tests {
         db.put(pk1.clone(), "2");
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()), "2");
+        assert_eq!(db.get_value(pk1.clone()).unwrap(), 2);
         let root = new_root;
 
         // fund account 2 with a balance
@@ -137,12 +141,12 @@ mod tests {
         db.put(pk2.clone(), "3");
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk2), "3");
+        assert_eq!(db.get_value(pk2.clone()).unwrap(), 3);
 
         db.delete(pk1.clone());
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()), "0");
+        assert_eq!(db.get_value(pk1.clone()).unwrap(), 0);
         let root = new_root;
 
         let pk_uknown = new_pub_key();
@@ -161,14 +165,14 @@ mod tests {
         db.put(pk1.clone(), "2");
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()), "2");
+        assert_eq!(db.get_value(pk1.clone()).unwrap(), 2);
         let root = new_root;
 
         // remove all non-nil balance from account 1
         db.delete(pk1.clone());
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()), "0");
+        assert_eq!(db.get_value(pk1.clone()).unwrap(), 0);
     }
 
     #[test]
