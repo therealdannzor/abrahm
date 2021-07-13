@@ -18,7 +18,7 @@ pub trait KeyValueIO {
 
     // get_value retrieves the value of the key if it exists. If it is does not
     // it returns a dummy ouput of 0.
-    fn get_value(&self, key: EcdsaPublicKey) -> String;
+    fn get_value(&self, key: EcdsaPublicKey) -> Result<Vec<u8>, std::io::Error>;
 
     // update_root_hash receives a key-value pair and creates a hash
     // based on the existing root hash and this pair to represent a
@@ -69,7 +69,7 @@ impl KeyValueIO for StateDB {
 
     fn delete(&mut self, key: EcdsaPublicKey) {
         let bal = self.get_value(key.clone());
-        if bal == "0" {
+        if bal.is_err() || bal.unwrap()[0] == 0 {
             return;
         }
 
@@ -82,11 +82,11 @@ impl KeyValueIO for StateDB {
         }
     }
 
-    fn get_value(&self, key: EcdsaPublicKey) -> String {
+    fn get_value(&self, key: EcdsaPublicKey) -> Result<Vec<u8>, std::io::Error> {
         let res = &self.db.get(key);
         match res {
-            Ok(Some(value)) => std::str::from_utf8(&value).unwrap().to_string(),
-            Ok(None) => "0".to_string(), // dummy output (missing value)
+            Ok(Some(value)) => Ok(value.clone()),
+            Ok(None) => Ok(vec![0]), // dummy output (missing value)
             Err(e) => panic!("read db error: {:?}", e),
         }
     }
