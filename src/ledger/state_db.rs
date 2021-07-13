@@ -1,5 +1,6 @@
 extern crate rocksdb;
 use rocksdb::{Options, DB};
+use themis::keys::EcdsaPublicKey;
 
 extern crate crypto;
 use self::crypto::digest::Digest;
@@ -10,19 +11,19 @@ pub trait KeyValueIO {
     fn new(path: &str) -> StateDB;
 
     // put inserts the key-value pair in the data storage
-    fn put(&mut self, key: &str, value: &str);
+    fn put(&mut self, key: EcdsaPublicKey, value: &str);
 
     // delete removes the key from the data storage
-    fn delete(&mut self, key: &str);
+    fn delete(&mut self, key: EcdsaPublicKey);
 
     // get_value retrieves the value of the key if it exists. If it is does not
     // it returns a dummy ouput of 0.
-    fn get_value(&self, key: &str) -> String;
+    fn get_value(&self, key: EcdsaPublicKey) -> String;
 
     // update_root_hash receives a key-value pair and creates a hash
     // based on the existing root hash and this pair to represent a
     // simple and traceable transition of state change
-    fn update_root_hash(&mut self, key: &str, val: &str);
+    fn update_root_hash(&mut self, key: EcdsaPublicKey, val: &str);
 
     // get_root_hash retrieves the root hash of the state db which represents
     // the freshest and latest change to the db
@@ -54,25 +55,25 @@ impl KeyValueIO for StateDB {
         }
     }
 
-    fn put(&mut self, key: &str, val: &str) {
-        if key == "" || val == "" {
+    fn put(&mut self, key: EcdsaPublicKey, val: &str) {
+        if val == "" {
             return;
         }
 
-        let res = &self.db.put(key, val);
+        let res = &self.db.put(key.clone(), val);
         match res {
-            Ok(_) => self.update_root_hash(key, val),
+            Ok(_) => self.update_root_hash(key.clone(), val),
             Err(e) => panic!("write db error: {:?}", e),
         }
     }
 
-    fn delete(&mut self, key: &str) {
-        let bal = self.get_value(key);
+    fn delete(&mut self, key: EcdsaPublicKey) {
+        let bal = self.get_value(key.clone());
         if bal == "0" {
             return;
         }
 
-        let ack = &self.db.delete(key);
+        let ack = &self.db.delete(key.clone());
         match ack {
             Ok(_) => {
                 self.update_root_hash(key, &"0".to_string());
@@ -81,7 +82,7 @@ impl KeyValueIO for StateDB {
         }
     }
 
-    fn get_value(&self, key: &str) -> String {
+    fn get_value(&self, key: EcdsaPublicKey) -> String {
         let res = &self.db.get(key);
         match res {
             Ok(Some(value)) => std::str::from_utf8(&value).unwrap().to_string(),
@@ -90,11 +91,11 @@ impl KeyValueIO for StateDB {
         }
     }
 
-    fn update_root_hash(&mut self, key: &str, val: &str) {
+    fn update_root_hash(&mut self, key: EcdsaPublicKey, val: &str) {
         let mut input = self.root_hash.clone();
-        input.push_str(&key);
         input.push_str(&val);
         let mut new_hash = Sha256::new();
+        new_hash.input(key.as_ref());
         new_hash.input_str(&input);
 
         self.root_hash = new_hash.result_str()
@@ -109,6 +110,13 @@ impl KeyValueIO for StateDB {
 mod tests {
     use super::*;
     use serial_test::serial;
+    use themis::keygen::gen_ec_key_pair;
+    use themis::keys::EcdsaPublicKey;
+
+    fn new_pub_key() -> EcdsaPublicKey {
+        let (_, pk) = gen_ec_key_pair().split();
+        pk
+    }
 
     #[test]
     #[serial]
@@ -116,25 +124,29 @@ mod tests {
         let mut db = setup();
         let root = db.get_root_hash();
 
-        // fund account `1` with a balance
-        db.put("1", "2");
+        // fund account 1 with a balance
+        let pk1 = new_pub_key();
+        db.put(pk1.clone(), "2");
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value("1"), "2");
+        assert_eq!(db.get_value(pk1.clone()), "2");
         let root = new_root;
 
-        db.put("2", "3");
+        // fund account 2 with a balance
+        let pk2 = new_pub_key();
+        db.put(pk2.clone(), "3");
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value("2"), "3");
+        assert_eq!(db.get_value(pk2), "3");
 
-        db.delete("1");
+        db.delete(pk1.clone());
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value("1"), "0");
+        assert_eq!(db.get_value(pk1.clone()), "0");
         let root = new_root;
 
-        db.delete("9"); // does not exist
+        let pk_uknown = new_pub_key();
+        db.delete(pk_uknown); // does not exist
         let new_root = db.get_root_hash();
         assert_eq!(root, new_root);
     }
@@ -145,17 +157,18 @@ mod tests {
         let mut db = setup();
         let root = db.get_root_hash();
 
-        db.put("1", "2");
+        let pk1 = new_pub_key();
+        db.put(pk1.clone(), "2");
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value("1"), "2");
+        assert_eq!(db.get_value(pk1.clone()), "2");
         let root = new_root;
 
-        // remove all non-nil balance from account `1`
-        db.delete("1");
+        // remove all non-nil balance from account 1
+        db.delete(pk1.clone());
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value("1"), "0");
+        assert_eq!(db.get_value(pk1.clone()), "0");
     }
 
     #[test]
@@ -163,10 +176,12 @@ mod tests {
     fn delete_missing_key_expect_no_state_change() {
         let mut db = setup();
 
-        db.put("1", "2");
+        let pk1 = new_pub_key();
+        db.put(pk1, "2");
         let root = db.get_root_hash();
         // send a delete cmd to a key which is missing
-        db.delete("5");
+        let pk5 = new_pub_key();
+        db.delete(pk5);
         let new_root = db.get_root_hash();
         assert_eq!(root, new_root);
     }
@@ -176,34 +191,25 @@ mod tests {
     fn delete_key_with_no_balance_expect_no_state_change() {
         let mut db = setup();
 
-        db.put("1", "0");
+        let pk = new_pub_key();
+        db.put(pk.clone(), "0");
         let root = db.get_root_hash();
         // send delete cmd to a key which has no balance
-        db.delete("1");
+        db.delete(pk.clone());
         let new_root = db.get_root_hash();
         assert_eq!(root, new_root);
     }
 
     #[test]
     #[serial]
-    fn add_large_key_expect_state_change() {
+    fn add_large_value_expect_state_change() {
         let mut db = setup();
 
         let genesis_root = db.get_root_hash();
-        db.put("99999999999999999999", "10000000000000000000");
+        let pk = new_pub_key();
+        db.put(pk, "10000000000000000000");
         let root = db.get_root_hash();
         assert_ne!(genesis_root, root);
-    }
-
-    #[test]
-    #[serial]
-    fn empty_key_expect_no_state_change() {
-        let mut db = setup();
-        let genesis_root = db.get_root_hash();
-
-        db.put("", "1");
-        let root = db.get_root_hash();
-        assert_eq!(genesis_root, root);
     }
 
     #[test]
@@ -212,7 +218,8 @@ mod tests {
         let mut db = setup();
         let genesis_root = db.get_root_hash();
 
-        db.put("1", "");
+        let pk = new_pub_key();
+        db.put(pk, "");
         let root = db.get_root_hash();
         assert_eq!(genesis_root, root);
     }
