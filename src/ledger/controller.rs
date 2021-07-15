@@ -20,7 +20,7 @@ impl LedgerStateController {
     }
 
     pub fn is_valid_amount(&self, account: EcdsaPublicKey, amount: i16) -> bool {
-        let bal = db_get(&self.db, account.clone(), amount.abs() as u32);
+        let bal = db_get(&self.db, account.clone());
         if bal.is_err() {
             return false;
         }
@@ -33,7 +33,7 @@ impl LedgerStateController {
     }
 
     // add adds a value to an account balance. For convenience this can be used with both positive
-    // and negative values to represent additions and subtractions to n account, respectively.
+    // and negative values to represent additions and subtractions to an account, respectively.
     pub fn add(mut self, account: EcdsaPublicKey, amount: i16) -> Result<(), std::io::Error> {
         if !self.is_valid_amount(account.clone(), amount) {
             return Err(std::io::Error::new(
@@ -41,7 +41,7 @@ impl LedgerStateController {
                 "invalid amount",
             ));
         }
-        let bal = db_get(&self.db, account.clone(), amount.abs() as u32);
+        let bal = db_get(&self.db, account.clone());
         if bal.is_err() {
             return Err(bal.err().unwrap());
         }
@@ -54,6 +54,15 @@ impl LedgerStateController {
         self.cache.insert(account, updated_bal);
 
         Ok(())
+    }
+
+    // balance returns the balance of target account (default: 0)
+    pub fn balance(&self, account: EcdsaPublicKey) -> u32 {
+        let bal = db_get(&self.db, account);
+        if bal.is_err() {
+            return 0;
+        }
+        vec_u8_ascii_code_to_int(bal.unwrap())
     }
 
     // TODO: refine later for a more progressive fee rate
@@ -70,11 +79,7 @@ impl LedgerStateController {
     }
 }
 
-fn db_get(
-    db: &StateDB,
-    account: EcdsaPublicKey,
-    amount: u32,
-) -> std::result::Result<Vec<u8>, std::io::Error> {
+fn db_get(db: &StateDB, account: EcdsaPublicKey) -> std::result::Result<Vec<u8>, std::io::Error> {
     let res = match db.get_value(account.clone()) {
         Ok(num) => return Ok(num),
         Err(e) => return Err(e),
