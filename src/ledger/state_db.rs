@@ -18,7 +18,7 @@ pub trait KeyValueIO {
 
     // get_value retrieves the value of the key if it exists. If it is does not
     // it returns a dummy ouput of 0.
-    fn get_value(&self, key: EcdsaPublicKey) -> Result<u8, std::io::Error>;
+    fn get_value(&self, key: EcdsaPublicKey) -> Result<Vec<u8>, std::io::Error>;
 
     // update_root_hash receives a key-value pair and creates a hash
     // based on the existing root hash and this pair to represent a
@@ -60,7 +60,7 @@ impl KeyValueIO for StateDB {
             return;
         }
 
-        let res = &self.db.put(key.clone(), val);
+        let res = &self.db.put(key.clone(), val.as_bytes());
         match res {
             Ok(_) => self.update_root_hash(key.clone(), val),
             Err(e) => panic!("write db error: {:?}", e),
@@ -69,7 +69,7 @@ impl KeyValueIO for StateDB {
 
     fn delete(&mut self, key: EcdsaPublicKey) {
         let bal = self.get_value(key.clone());
-        if bal.is_err() || bal.unwrap() == 0 {
+        if bal.is_err() || bal.as_ref().unwrap().len() == 1 && bal.unwrap()[0] == 0 {
             return;
         }
 
@@ -82,15 +82,11 @@ impl KeyValueIO for StateDB {
         }
     }
 
-    fn get_value(&self, key: EcdsaPublicKey) -> Result<u8, std::io::Error> {
+    fn get_value(&self, key: EcdsaPublicKey) -> Result<Vec<u8>, std::io::Error> {
         let res = &self.db.get(key);
         match res {
-            Ok(Some(value)) => {
-                let ascii_u8 = value.clone()[0];
-                let num = ascii_u8 - 48; // from ASCII to number
-                Ok(num)
-            }
-            Ok(None) => Ok(0), // dummy output (missing value)
+            Ok(Some(value)) => Ok(value.clone()),
+            Ok(None) => Ok(vec![0]), // dummy output (missing value)
             Err(e) => panic!("read db error: {:?}", e),
         }
     }
@@ -133,7 +129,7 @@ mod tests {
         db.put(pk1.clone(), "2");
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()).unwrap(), 2);
+        assert_eq!(db.get_value(pk1.clone()).unwrap(), vec![50]);
         let root = new_root;
 
         // fund account 2 with a balance
@@ -141,12 +137,12 @@ mod tests {
         db.put(pk2.clone(), "3");
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk2.clone()).unwrap(), 3);
+        assert_eq!(db.get_value(pk2.clone()).unwrap(), vec![51]);
 
         db.delete(pk1.clone());
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()).unwrap(), 0);
+        assert_eq!(db.get_value(pk1.clone()).unwrap(), vec![0]);
         let root = new_root;
 
         let pk_uknown = new_pub_key();
@@ -162,17 +158,20 @@ mod tests {
         let root = db.get_root_hash();
 
         let pk1 = new_pub_key();
-        db.put(pk1.clone(), "2");
+        db.put(pk1.clone(), "2000000000000");
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()).unwrap(), 2);
+        assert_eq!(
+            db.get_value(pk1.clone()).unwrap(),
+            vec![50, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48]
+        );
         let root = new_root;
 
         // remove all non-nil balance from account 1
         db.delete(pk1.clone());
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()).unwrap(), 0);
+        assert_eq!(db.get_value(pk1.clone()).unwrap(), vec![0]);
     }
 
     #[test]
@@ -194,11 +193,12 @@ mod tests {
     #[serial]
     fn delete_key_with_no_balance_expect_no_state_change() {
         let mut db = setup();
-
         let pk = new_pub_key();
-        db.put(pk.clone(), "0");
         let root = db.get_root_hash();
-        // send delete cmd to a key which has no balance
+        // nothing should change because the db request is empty
+        db.put(pk.clone(), "0");
+        // send delete cmd to a key which has no balance which does not
+        // change any state either
         db.delete(pk.clone());
         let new_root = db.get_root_hash();
         assert_eq!(root, new_root);
