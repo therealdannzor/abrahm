@@ -86,7 +86,7 @@ impl KeyValueIO for StateDB {
         let res = &self.db.get(key);
         match res {
             Ok(Some(value)) => Ok(value.clone()),
-            Ok(None) => Ok(vec![0]), // dummy output (missing value)
+            Ok(None) => Ok(vec![48]), // dummy output (missing value), corresponds to '0'
             Err(e) => panic!("read db error: {:?}", e),
         }
     }
