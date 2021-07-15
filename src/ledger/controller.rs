@@ -34,7 +34,7 @@ impl LedgerStateController {
 
     // add adds a value to an account balance. For convenience this can be used with both positive
     // and negative values to represent additions and subtractions to an account, respectively.
-    pub fn add(mut self, account: EcdsaPublicKey, amount: i16) -> Result<(), std::io::Error> {
+    pub fn add(&mut self, account: EcdsaPublicKey, amount: i16) -> Result<(), std::io::Error> {
         if !self.is_valid_amount(account.clone(), amount) {
             return Err(std::io::Error::new(
                 ErrorKind::InvalidData,
@@ -88,10 +88,43 @@ fn db_get(db: &StateDB, account: EcdsaPublicKey) -> std::result::Result<Vec<u8>,
 
 fn vec_u8_ascii_code_to_int(input: Vec<u8>) -> u32 {
     let s = String::from_utf8(input).expect("invalid utf-8");
-    s.parse::<u32>().unwrap()
+    let s = s.parse::<u32>();
+    if s.is_err() {
+        panic!("error when parsing: {:?}", s.err().unwrap());
+    }
+    s.unwrap()
 }
 
 // calculate_fee calculates 5% of the transfer amount, rounded up, as fee
 pub fn calculate_fee(amount: u16) -> f64 {
     (((amount as f64) / 100f64) * 5f64).ceil()
+}
+
+mod tests {
+    use super::*;
+    use themis::{keygen::gen_ec_key_pair, keys::EcdsaPublicKey};
+    use tokio_test::assert_ok;
+
+    fn setup() -> LedgerStateController {
+        let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
+        path.push_str("/test");
+        let c = LedgerStateController::new(StateDB::new(&path));
+        c
+    }
+
+    fn pub_key() -> EcdsaPublicKey {
+        let (_, pk) = gen_ec_key_pair().split();
+        pk
+    }
+
+    #[test]
+    fn fund_and_defund() {
+        let mut c = setup();
+        let pk = pub_key();
+
+        let result = c.add(pk.clone(), 100);
+        assert_ok!(result);
+        let bal = c.balance(pk.clone());
+        assert_eq!(bal, 100);
+    }
 }
