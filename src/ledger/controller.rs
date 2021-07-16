@@ -34,15 +34,21 @@ impl LedgerStateController {
         recipient: EcdsaPublicKey,
         amount: u16,
     ) -> Result<(), std::io::Error> {
+        println!("amount to transfer: {}", amount);
+        self.add(recipient, amount)?;
         let fee = calculate_fee(amount) as u16;
         self.sub(self.id.clone(), amount + fee)?;
-        self.add(recipient, amount)?;
         Ok(())
     }
 
     // add adds value to an account (used internally only)
     fn add(&mut self, account: EcdsaPublicKey, amount: u16) -> Result<(), std::io::Error> {
-        let val = validate_transaction(&self.db, self.id.clone(), account.clone(), amount as i16);
+        let val = validate_transaction(
+            &self.db,
+            self.id.clone(),
+            Some(account.clone()),
+            amount as i16,
+        );
         if val.is_err() {
             return Err(val.err().unwrap());
         }
@@ -64,7 +70,7 @@ impl LedgerStateController {
 
     // sub substracts amount from an account (used internally only)
     fn sub(&mut self, account: EcdsaPublicKey, amount: u16) -> Result<(), std::io::Error> {
-        let val = validate_transaction(&self.db, self.id.clone(), account.clone(), amount as i16);
+        let val = validate_transaction(&self.db, self.id.clone(), None, amount as i16);
         if val.is_err() {
             return Err(val.err().unwrap());
         }
@@ -81,6 +87,7 @@ impl LedgerStateController {
             ));
         }
         let updated_bal = bal - amount;
+        println!("updated bal: {}", updated_bal);
         self.db.put(account.clone(), &updated_bal.to_string());
         self.cache.insert(account, updated_bal);
 
@@ -113,14 +120,16 @@ impl LedgerStateController {
 fn validate_transaction(
     db: &StateDB,
     sender: EcdsaPublicKey,
-    recipient: EcdsaPublicKey,
+    recipient: Option<EcdsaPublicKey>,
     amount: i16,
 ) -> Result<(), std::io::Error> {
-    if sender == recipient {
-        return Err(std::io::Error::new(
-            ErrorKind::InvalidData,
-            "cannot send to oneself",
-        ));
+    if recipient.is_some() {
+        if sender == recipient.unwrap() {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "cannot send to oneself",
+            ));
+        }
     } else if !is_valid_amount(db, sender, amount) {
         return Err(std::io::Error::new(
             ErrorKind::InvalidData,
@@ -143,8 +152,7 @@ pub fn is_valid_amount(db: &StateDB, account: EcdsaPublicKey, amount: i16) -> bo
         return false;
     }
     let bal = vec_u8_ascii_code_to_int(bal.unwrap());
-    let fee = calculate_fee(bal as u16) as u32;
-    if amount as u32 + fee <= bal {
+    if amount as u32 <= bal {
         return true;
     }
     false
@@ -166,30 +174,45 @@ pub fn calculate_fee(amount: u16) -> f64 {
 
 mod tests {
     use super::*;
+    use serial_test::serial;
     use themis::{keygen::gen_ec_key_pair, keys::EcdsaPublicKey};
-    use tokio_test::assert_ok;
+    use tokio_test::{assert_err, assert_ok};
 
     fn setup() -> (LedgerStateController, EcdsaPublicKey) {
-        let pk = pub_key();
+        let alice = pub_key();
         let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
         path.push_str("/test");
-        let c = LedgerStateController::new(pk.clone(), StateDB::new(&path));
-        (c, pk.clone())
+        let c = LedgerStateController::new(alice.clone(), StateDB::new(&path));
+        (c, alice)
     }
 
     fn pub_key() -> EcdsaPublicKey {
-        let (_, pk) = gen_ec_key_pair().split();
-        pk
+        let (_, alice) = gen_ec_key_pair().split();
+        alice
     }
 
     #[test]
+    #[serial]
     fn fund_and_transfer() {
-        let (mut c, pk) = setup();
-        let target_pk = pub_key();
-        c.fund(pk, 100);
-        let result = c.add(target_pk.clone(), 50);
-        assert_ok!(result);
-        let bal = c.balance(target_pk.clone());
-        assert_eq!(bal, 50);
+        let (mut c, alice) = setup();
+        let bob = pub_key();
+        c.fund(alice.clone(), 100);
+        let balance = c.balance(alice.clone());
+        assert_eq!(balance, 100);
+
+        // send transaction to yourself
+        let actual = c.transfer(alice.clone(), 100);
+        assert_err!(actual);
+        // send more than what is in the account balance
+        let actual = c.transfer(bob.clone(), 150);
+        assert_err!(actual);
+        // send the full amount but not afford to pay the fees
+        let actual = c.transfer(bob.clone(), 100);
+        assert_err!(actual);
+        // send the exact right amount
+        let actual = c.transfer(bob.clone(), 95);
+        assert_ok!(actual);
+        assert_eq!(c.balance(alice.clone()), 0);
+        assert_eq!(c.balance(bob.clone()), 95);
     }
 }
