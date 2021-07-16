@@ -1,4 +1,5 @@
 .DEFAULT_GOAL := run
+.PHONY: test
 
 build:
 	@cargo build
@@ -10,7 +11,7 @@ run:
 	@cargo run
 
 clean:
-	@rm -rf target/
+	@rm -rf target/ && rm -rf test/
 
 format: clean
 	@echo "Are you sure you want to remove all created data? [Y/n] "; \
