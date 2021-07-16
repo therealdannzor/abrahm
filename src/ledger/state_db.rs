@@ -69,7 +69,7 @@ impl KeyValueIO for StateDB {
 
     fn delete(&mut self, key: EcdsaPublicKey) {
         let bal = self.get_value(key.clone());
-        if bal.is_err() || bal.as_ref().unwrap().len() == 1 && bal.unwrap()[0] == 0 {
+        if bal.is_err() || bal.as_ref().unwrap().len() == 1 && bal.unwrap()[0] == 48 {
             return;
         }
 
@@ -142,7 +142,7 @@ mod tests {
         db.delete(pk1.clone());
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()).unwrap(), vec![0]);
+        assert_eq!(db.get_value(pk1.clone()).unwrap(), vec![48]);
         let root = new_root;
 
         let pk_uknown = new_pub_key();
@@ -171,7 +171,7 @@ mod tests {
         db.delete(pk1.clone());
         let new_root = db.get_root_hash();
         assert_ne!(root, new_root);
-        assert_eq!(db.get_value(pk1.clone()).unwrap(), vec![0]);
+        assert_eq!(db.get_value(pk1.clone()).unwrap(), vec![48]);
     }
 
     #[test]
