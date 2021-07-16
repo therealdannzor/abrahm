@@ -27,37 +27,47 @@ impl LedgerStateController {
         self.cache.insert(account, amount);
     }
 
-    pub fn is_valid_amount(&self, account: EcdsaPublicKey, amount: i16) -> bool {
-        let bal = db_get(&self.db, account.clone());
-        if bal.is_err() {
-            return false;
-        }
-        let bal = vec_u8_ascii_code_to_int(bal.unwrap());
-        let fee = calculate_fee(bal as u16) as u32;
-        if amount as u32 + fee <= bal {
-            return true;
-        }
-        false
-    }
-
-    // add adds a value to an account balance. For convenience this can be used with both positive
-    // and negative values to represent additions and subtractions to an account, respectively.
+    // add adds a value to an account balance
     pub fn add(&mut self, account: EcdsaPublicKey, amount: i16) -> Result<(), std::io::Error> {
-        if !self.is_valid_amount(self.id.clone(), amount) {
-            return Err(std::io::Error::new(
-                ErrorKind::InvalidData,
-                "invalid amount",
-            ));
+        let val = validate_transaction(&self.db, self.id.clone(), account.clone(), amount);
+        if val.is_err() {
+            return Err(val.err().unwrap());
         }
+
         let bal = db_get(&self.db, account.clone());
         if bal.is_err() {
             return Err(bal.err().unwrap());
         }
         let bal = vec_u8_ascii_code_to_int(bal.unwrap());
-        if (bal + amount as u32) > u32::MAX {
+        if amount > 0 && (bal + amount as u32) > u32::MAX {
             return Err(std::io::Error::new(ErrorKind::Other, "overflow balance"));
         }
         let updated_bal = bal + amount as u32;
+        self.db.put(account.clone(), &updated_bal.to_string());
+        self.cache.insert(account, updated_bal);
+
+        Ok(())
+    }
+
+    // sub substracts a value to an account balance
+    pub fn sub(&mut self, account: EcdsaPublicKey, amount: u16) -> Result<(), std::io::Error> {
+        let val = validate_transaction(&self.db, self.id.clone(), account.clone(), amount as i16);
+        if val.is_err() {
+            return Err(val.err().unwrap());
+        }
+        let bal = db_get(&self.db, account.clone());
+        if bal.is_err() {
+            return Err(bal.err().unwrap());
+        }
+        let amount = amount as u32;
+        let bal = vec_u8_ascii_code_to_int(bal.unwrap());
+        if bal < amount {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "underflow balance",
+            ));
+        }
+        let updated_bal = bal - amount;
         self.db.put(account.clone(), &updated_bal.to_string());
         self.cache.insert(account, updated_bal);
 
@@ -87,11 +97,44 @@ impl LedgerStateController {
     }
 }
 
+fn validate_transaction(
+    db: &StateDB,
+    sender: EcdsaPublicKey,
+    recipient: EcdsaPublicKey,
+    amount: i16,
+) -> Result<(), std::io::Error> {
+    if sender == recipient {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "cannot send to oneself",
+        ));
+    } else if !is_valid_amount(db, sender, amount) {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            "invalid amount",
+        ));
+    }
+    Ok(())
+}
+
 fn db_get(db: &StateDB, account: EcdsaPublicKey) -> std::result::Result<Vec<u8>, std::io::Error> {
     let res = match db.get_value(account.clone()) {
         Ok(num) => return Ok(num),
         Err(e) => return Err(e),
     };
+}
+
+pub fn is_valid_amount(db: &StateDB, account: EcdsaPublicKey, amount: i16) -> bool {
+    let bal = db_get(&db, account.clone());
+    if bal.is_err() {
+        return false;
+    }
+    let bal = vec_u8_ascii_code_to_int(bal.unwrap());
+    let fee = calculate_fee(bal as u16) as u32;
+    if amount as u32 + fee <= bal {
+        return true;
+    }
+    false
 }
 
 fn vec_u8_ascii_code_to_int(input: Vec<u8>) -> u32 {
