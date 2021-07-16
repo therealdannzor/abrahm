@@ -8,15 +8,23 @@ use themis::keys::EcdsaPublicKey;
 // and that it is able to cover any additional costs. It is also able to calculate fees and carry
 // out the actual transaction on the state database.
 pub struct LedgerStateController {
+    id: EcdsaPublicKey,
     db: StateDB,
     cache: HashMap<EcdsaPublicKey, u32>,
 }
 impl LedgerStateController {
-    pub fn new(db: StateDB) -> Self {
+    pub fn new(id: EcdsaPublicKey, db: StateDB) -> Self {
         Self {
+            id,
             db,
             cache: HashMap::new(),
         }
+    }
+
+    // fund mints a balance for a target account
+    pub fn fund(&mut self, account: EcdsaPublicKey, amount: u32) {
+        self.db.put(account.clone(), &amount.to_string());
+        self.cache.insert(account, amount);
     }
 
     pub fn is_valid_amount(&self, account: EcdsaPublicKey, amount: i16) -> bool {
@@ -35,7 +43,7 @@ impl LedgerStateController {
     // add adds a value to an account balance. For convenience this can be used with both positive
     // and negative values to represent additions and subtractions to an account, respectively.
     pub fn add(&mut self, account: EcdsaPublicKey, amount: i16) -> Result<(), std::io::Error> {
-        if !self.is_valid_amount(account.clone(), amount) {
+        if !self.is_valid_amount(self.id.clone(), amount) {
             return Err(std::io::Error::new(
                 ErrorKind::InvalidData,
                 "invalid amount",
@@ -105,11 +113,12 @@ mod tests {
     use themis::{keygen::gen_ec_key_pair, keys::EcdsaPublicKey};
     use tokio_test::assert_ok;
 
-    fn setup() -> LedgerStateController {
+    fn setup() -> (LedgerStateController, EcdsaPublicKey) {
+        let pk = pub_key();
         let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
         path.push_str("/test");
-        let c = LedgerStateController::new(StateDB::new(&path));
-        c
+        let c = LedgerStateController::new(pk.clone(), StateDB::new(&path));
+        (c, pk.clone())
     }
 
     fn pub_key() -> EcdsaPublicKey {
@@ -119,8 +128,7 @@ mod tests {
 
     #[test]
     fn fund_and_defund() {
-        let mut c = setup();
-        let pk = pub_key();
+        let (mut c, pk) = setup();
 
         let result = c.add(pk.clone(), 100);
         assert_ok!(result);
