@@ -34,7 +34,6 @@ impl LedgerStateController {
         recipient: EcdsaPublicKey,
         amount: u16,
     ) -> Result<(), std::io::Error> {
-        println!("amount to transfer: {}", amount);
         self.add(recipient, amount)?;
         let fee = calculate_fee(amount) as u16;
         self.sub(self.id.clone(), amount + fee)?;
@@ -87,7 +86,6 @@ impl LedgerStateController {
             ));
         }
         let updated_bal = bal - amount;
-        println!("updated bal: {}", updated_bal);
         self.db.put(account.clone(), &updated_bal.to_string());
         self.cache.insert(account, updated_bal);
 
@@ -193,13 +191,12 @@ mod tests {
 
     #[test]
     #[serial]
-    fn fund_and_transfer() {
+    fn transfer_errors() {
         let (mut c, alice) = setup();
         let bob = pub_key();
         c.fund(alice.clone(), 100);
         let balance = c.balance(alice.clone());
         assert_eq!(balance, 100);
-
         // send transaction to yourself
         let actual = c.transfer(alice.clone(), 100);
         assert_err!(actual);
@@ -209,6 +206,15 @@ mod tests {
         // send the full amount but not afford to pay the fees
         let actual = c.transfer(bob.clone(), 100);
         assert_err!(actual);
+    }
+
+    #[test]
+    #[serial]
+    fn transfer_happy_case() {
+        let (mut c, alice) = setup();
+        let bob = pub_key();
+        c.fund(alice.clone(), 100);
+
         // send the exact right amount
         let actual = c.transfer(bob.clone(), 95);
         assert_ok!(actual);
