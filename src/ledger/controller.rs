@@ -27,8 +27,21 @@ impl LedgerStateController {
         self.cache.insert(account, amount);
     }
 
-    // add adds a value to an account balance
-    pub fn add(&mut self, account: EcdsaPublicKey, amount: u16) -> Result<(), std::io::Error> {
+    // transfer sends an amount from the client account to a recipient. The amount is deducted from
+    // the sender account, along with a transaction fee, and then credited to the recipient.
+    pub fn transfer(
+        &mut self,
+        recipient: EcdsaPublicKey,
+        amount: u16,
+    ) -> Result<(), std::io::Error> {
+        let fee = calculate_fee(amount) as u16;
+        self.sub(self.id.clone(), amount + fee)?;
+        self.add(recipient, amount)?;
+        Ok(())
+    }
+
+    // add adds value to an account (used internally only)
+    fn add(&mut self, account: EcdsaPublicKey, amount: u16) -> Result<(), std::io::Error> {
         let val = validate_transaction(&self.db, self.id.clone(), account.clone(), amount as i16);
         if val.is_err() {
             return Err(val.err().unwrap());
@@ -49,8 +62,8 @@ impl LedgerStateController {
         Ok(())
     }
 
-    // sub substracts a value to an account balance
-    pub fn sub(&mut self, account: EcdsaPublicKey, amount: u16) -> Result<(), std::io::Error> {
+    // sub substracts amount from an account (used internally only)
+    fn sub(&mut self, account: EcdsaPublicKey, amount: u16) -> Result<(), std::io::Error> {
         let val = validate_transaction(&self.db, self.id.clone(), account.clone(), amount as i16);
         if val.is_err() {
             return Err(val.err().unwrap());
@@ -170,12 +183,13 @@ mod tests {
     }
 
     #[test]
-    fn fund_and_defund() {
+    fn fund_and_transfer() {
         let (mut c, pk) = setup();
-
-        let result = c.add(pk.clone(), 100);
+        let target_pk = pub_key();
+        c.fund(pk, 100);
+        let result = c.add(target_pk.clone(), 50);
         assert_ok!(result);
-        let bal = c.balance(pk.clone());
-        assert_eq!(bal, 100);
+        let bal = c.balance(target_pk.clone());
+        assert_eq!(bal, 50);
     }
 }
