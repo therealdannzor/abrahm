@@ -28,8 +28,8 @@ impl LedgerStateController {
     }
 
     // add adds a value to an account balance
-    pub fn add(&mut self, account: EcdsaPublicKey, amount: i16) -> Result<(), std::io::Error> {
-        let val = validate_transaction(&self.db, self.id.clone(), account.clone(), amount);
+    pub fn add(&mut self, account: EcdsaPublicKey, amount: u16) -> Result<(), std::io::Error> {
+        let val = validate_transaction(&self.db, self.id.clone(), account.clone(), amount as i16);
         if val.is_err() {
             return Err(val.err().unwrap());
         }
@@ -90,7 +90,7 @@ impl LedgerStateController {
         amount: u16,
     ) -> Result<(), std::io::Error> {
         let fee = calculate_fee(amount);
-        match &self.add(account, (fee * (-1.0)) as i16) {
+        match &self.add(account, (fee * (-1.0)) as u16) {
             Ok(num) => Ok(()),
             Err(e) => return Err(std::io::Error::new(ErrorKind::Other, "extract fee error")),
         }
