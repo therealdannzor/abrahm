@@ -56,10 +56,17 @@ impl KeyValueIO for StateDB {
     }
 
     fn put(&mut self, key: EcdsaPublicKey, val: &str) {
-        if val == "" || val == "0" {
+        if val == "" {
             return;
         }
+        let curr_bal = self.get_value(key.clone());
+        if curr_bal.is_ok() {
+            if curr_bal.unwrap()[0] == 48 && val == "0" {
+                return;
+            }
+        }
 
+        println!("DOING SOME REAL PUTTING IN THE DB BACKEND, value: {}", val);
         let res = &self.db.put(key.clone(), val.as_bytes());
         match res {
             Ok(_) => self.update_root_hash(key.clone(), val),
