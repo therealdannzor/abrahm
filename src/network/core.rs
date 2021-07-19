@@ -18,15 +18,10 @@ pub struct Net {
 }
 
 impl Net {
-    pub fn new(
-        author: String,
-        stream_cap: usize,
-        public_key: EcdsaPublicKey,
-        secret_key: EcdsaPrivateKey,
-    ) -> Self {
+    pub fn new(stream_cap: usize, public_key: EcdsaPublicKey, secret_key: EcdsaPrivateKey) -> Self {
         Self {
-            message_worker: MessageWorker::new(secret_key, public_key),
-            node: Node::new(author, stream_cap),
+            message_worker: MessageWorker::new(secret_key, public_key.clone()),
+            node: Node::new(public_key, stream_cap),
         }
     }
 }

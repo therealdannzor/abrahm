@@ -17,18 +17,19 @@ use log::info;
 use mio::event::Event;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Registry, Token};
+use themis::keys::EcdsaPublicKey;
 
 // Node is the highest abstraction for node-to-node communication on the network
 pub struct Node {
     // The operator and owner of any funds related to this node
-    author: String,
+    id: EcdsaPublicKey,
     // Handler for TCP connections
     handler: TcpHandler,
 }
 impl Node {
-    pub fn new(author: String, stream_cap: usize) -> Self {
+    pub fn new(id: EcdsaPublicKey, stream_cap: usize) -> Self {
         Self {
-            author,
+            id,
             handler: TcpHandler::new(stream_cap),
         }
     }

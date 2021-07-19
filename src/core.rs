@@ -43,7 +43,6 @@ impl Blockchain {
     pub fn new(
         genesis_block: Block,
         db_path: &str,
-        author: String,
         stream_cap: usize,
         public_key: EcdsaPublicKey,
         secret_key: EcdsaPrivateKey,
@@ -56,7 +55,7 @@ impl Blockchain {
             chain: vec![genesis_block.clone()],
             pool: TxPool::new(),
             account_db: account_db_setup(db_path),
-            net: Net::new(author, stream_cap, public_key, secret_key),
+            net: Net::new(stream_cap, public_key, secret_key),
             consensus: ConsensusChain::new(
                 Engine::new(replica_id.clone(), validators),
                 genesis_block,
