@@ -86,8 +86,8 @@ fn update_mutex_timestamp(m: &Mutex<i64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::Block;
     use crate::p2p::ws_routes::serve_routes;
+    use crate::types::block::Block;
     use serde_json::Value;
     use std::borrow::Borrow;
     use tokio_test::assert_ok;

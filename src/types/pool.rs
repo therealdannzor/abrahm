@@ -4,7 +4,7 @@ use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use themis::keys::EcdsaPublicKey;
 
-use crate::transaction::Transaction;
+use super::transaction::Transaction;
 
 // IndexedTransaction contains a Transaction with some extra meta data such as the
 // sender and the sender's account nonce
@@ -185,7 +185,7 @@ impl TxPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transaction::*;
+    use crate::types::transaction::*;
     use themis::keygen;
     use themis::keys::EcdsaPublicKey;
 

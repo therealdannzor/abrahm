@@ -1,7 +1,7 @@
 #![allow(unused)]
 use super::engine::Engine;
-use crate::block::Block;
 use crate::ledger::state_db::StateDB;
+use crate::types::block::Block;
 use std::sync::mpsc;
 use themis::keys::EcdsaPublicKey;
 

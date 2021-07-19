@@ -1,12 +1,12 @@
 #![allow(unused)]
 
-use crate::block::Block;
 use crate::consensus::common::ValidatorSet;
 use crate::consensus::core::ConsensusChain;
 use crate::consensus::engine::Engine;
 use crate::ledger::state_db::{KeyValueIO, StateDB};
 use crate::network::core::Net;
-use crate::pool::TxPool;
+use crate::types::block::Block;
+use crate::types::pool::TxPool;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 
 use std::sync::mpsc;
