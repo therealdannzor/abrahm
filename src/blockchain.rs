@@ -6,7 +6,7 @@ use crate::consensus::core::ConsensusChain;
 use crate::consensus::engine::Engine;
 use crate::ledger::state_db::{KeyValueIO, StateDB};
 use crate::network::core::Net;
-use crate::txn_pool::TxPool;
+use crate::pool::TxPool;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 
 use std::sync::mpsc;

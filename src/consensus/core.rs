@@ -1,7 +1,6 @@
 #![allow(unused)]
 use super::engine::Engine;
 use crate::block::Block;
-use crate::core::Blockchain;
 use crate::ledger::state_db::StateDB;
 use std::sync::mpsc;
 use themis::keys::EcdsaPublicKey;
