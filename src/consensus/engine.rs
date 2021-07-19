@@ -10,6 +10,7 @@ use super::common::{
 use super::leader_process::ValidatorProcess;
 pub use super::state::{State, M};
 use super::view::{CheckPoint, ViewChangeMessage};
+use themis::keys::EcdsaPublicKey;
 
 // Engine is the second highest abstraction of the consensus engine (after ConsensusChain) which contains
 // all the neccessary information for a validator to participate in a the replication process.
@@ -485,7 +486,7 @@ impl Engine {
         Ok(())
     }
 
-    pub fn new(id: String, validators: ValidatorSet) -> Self {
+    pub fn new(id: EcdsaPublicKey, validators: Vec<EcdsaPublicKey>) -> Self {
         let mut message_log: HashMap<u64, AckMessagesView> = HashMap::new();
         message_log.insert(0, AckMessagesView::new(None, None, None, None));
         Self {
@@ -521,6 +522,7 @@ impl Engine {
 
 mod tests {
     use super::*;
+    use crate::consensus::testcommons::generate_keys;
     use crate::consensus::transition::{Transact, Transition};
     use tokio_test::{assert_err, assert_ok};
 
@@ -548,13 +550,8 @@ mod tests {
     }
 
     fn setup() -> Engine {
-        Engine::new(
-            String::from("A"),
-            vec!["A", "B", "C", "D"]
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect(),
-        )
+        let keys = generate_keys(4);
+        Engine::new(keys[0].clone(), keys)
     }
 
     #[test]

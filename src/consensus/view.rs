@@ -3,6 +3,7 @@
 use super::common::{SequenceNumber, View};
 use super::state::{State, M};
 use std::vec::Vec;
+use themis::keys::EcdsaPublicKey;
 
 /// Section 4.4 View Changes
 
@@ -62,14 +63,14 @@ impl ViewChangeMessage {
 #[derive(Clone)]
 pub struct CheckPoint {
     // Replica identity
-    i: String,
+    i: EcdsaPublicKey,
     // The sequence number in the last request reflected in d
     n: SequenceNumber,
     // The message digest of the state; same as the message digest in `M`
     d: String,
 }
 impl CheckPoint {
-    pub fn new(i: String, n: SequenceNumber, d: String) -> Self {
+    pub fn new(i: EcdsaPublicKey, n: SequenceNumber, d: String) -> Self {
         Self { i, n, d }
     }
 
@@ -272,6 +273,7 @@ impl NewViewMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consensus::testcommons::generate_keys;
     use std::iter::Map;
 
     const DIG: &str = "dig"; // digest
@@ -279,8 +281,9 @@ mod tests {
 
     fn create_quorum_checkpoints(faulty: u8, n: SequenceNumber, d: &str) -> Vec<CheckPoint> {
         let mut vcp: Vec<CheckPoint> = Vec::new();
+        let keys = generate_keys(2 * faulty + 1);
         for i in 0..2 * faulty + 1 {
-            vcp.push(CheckPoint::new(i.to_string(), n, d.to_string()));
+            vcp.push(CheckPoint::new(keys[i as usize].clone(), n, d.to_string()));
         }
         vcp
     }

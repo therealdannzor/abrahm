@@ -4,6 +4,7 @@ use crate::block::Block;
 use crate::core::Blockchain;
 use crate::ledger::state_db::StateDB;
 use std::sync::mpsc;
+use themis::keys::EcdsaPublicKey;
 
 // ConsensusChain represents the blockchain replication process to order and finalize state,
 // what is considered the 'truth'. We call this continuous activity state negotiation.
@@ -20,10 +21,10 @@ pub struct ConsensusChain {
     head_block: Block,
 
     // The client identity
-    id: String,
+    id: EcdsaPublicKey,
 
     // The client in charge of proposing a state change
-    proposer: String,
+    proposer: EcdsaPublicKey,
 
     // The channel to send updates to the core blockchain
     sender: mpsc::Sender<Block>,
@@ -33,8 +34,8 @@ impl ConsensusChain {
     pub fn new(
         engine: Engine,
         head_block: Block,
-        id: String,
-        proposer: String,
+        id: EcdsaPublicKey,
+        proposer: EcdsaPublicKey,
         sender: mpsc::Sender<Block>,
     ) -> Self {
         Self {
@@ -46,7 +47,7 @@ impl ConsensusChain {
         }
     }
 
-    pub fn switch_proposer(&mut self, new: String) {
+    pub fn switch_proposer(&mut self, new: EcdsaPublicKey) {
         self.proposer = new
     }
 

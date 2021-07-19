@@ -5,5 +5,6 @@ pub mod leader_process;
 pub mod messages_tp;
 pub mod request;
 pub mod state;
+pub mod testcommons;
 pub mod transition;
 pub mod view;

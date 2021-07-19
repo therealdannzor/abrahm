@@ -46,21 +46,19 @@ impl Blockchain {
         stream_cap: usize,
         public_key: EcdsaPublicKey,
         secret_key: EcdsaPrivateKey,
-        replica_id: String,
-        first_proposer: String,
-        validators: ValidatorSet,
+        validators: Vec<EcdsaPublicKey>,
         blockchain_channel: mpsc::Sender<Block>,
     ) -> Self {
         Self {
             chain: vec![genesis_block.clone()],
             pool: TxPool::new(),
             account_db: account_db_setup(db_path),
-            net: Net::new(stream_cap, public_key, secret_key),
+            net: Net::new(stream_cap, public_key.clone(), secret_key),
             consensus: ConsensusChain::new(
-                Engine::new(replica_id.clone(), validators),
+                Engine::new(validators[0].clone(), validators.clone()),
                 genesis_block,
-                replica_id.clone(),
-                first_proposer,
+                public_key,
+                validators[0].clone(),
                 blockchain_channel,
             ),
         }
@@ -97,6 +95,7 @@ fn account_db_setup(db_path: &str) -> StateDB {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consensus::testcommons::generate_keys;
     use crate::swiss_knife::helper;
     use serial_test::serial;
     use std::convert::TryFrom;
@@ -110,24 +109,11 @@ mod tests {
     #[test]
     #[serial]
     fn block_init_and_insertion() {
+        let keys = generate_keys(4);
         let genesis = Block::genesis("0x");
         let (sk, pk) = themis::keygen::gen_ec_key_pair().split();
         let (send, recv): (mpsc::Sender<Block>, mpsc::Receiver<Block>) = mpsc::channel();
-        let mut bc = Blockchain::new(
-            genesis,
-            "/test",
-            String::from("A"),
-            10,
-            pk,
-            sk,
-            String::from("A"),
-            String::from("A"),
-            vec!["A", "B", "C", "D"]
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect(),
-            send,
-        );
+        let mut bc = Blockchain::new(genesis, "/test", 10, pk, sk, keys, send);
 
         let exp_len = 1;
         let exp_hash = hashed!("0x");

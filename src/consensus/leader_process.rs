@@ -1,8 +1,9 @@
 #![allow(unused)]
 
-use super::common::{Committer, ValidatorSet, View};
+use super::common::View;
 use super::state::State;
 use std::vec::Vec;
+use themis::keys::EcdsaPublicKey;
 
 /// Leader Election Process
 
@@ -16,7 +17,7 @@ use std::vec::Vec;
 // periodically in a consistent manner.
 pub struct ValidatorProcess {
     // Replica ID
-    id: Committer,
+    id: EcdsaPublicKey,
 
     // The latest view as far as this replica is concerned.
     view: View,
@@ -26,13 +27,13 @@ pub struct ValidatorProcess {
     // request but assigns a sequence number to it and signs it. The other replicas will, in
     // accordance to the leader election protocol, recognize the replica's authority and respond
     // to it (assumed it is honest and responsive).
-    primary: Committer,
+    primary: EcdsaPublicKey,
 
     // Contains the set of validators that can participate in the validation and
     // proposal of requests. This set must be identical for all validators or else there will
     // be a discrepancy in choice of leaders. We assume it is ordered somehow and identitcal
     // to all replicas.
-    set: ValidatorSet,
+    set: Vec<EcdsaPublicKey>,
 
     // The current phase of the algorithm: ACCEPT REQUESTS, PREPREPARE, PREPARE, COMMIT,
     // VIEW-CHANGE, and NEW-VIEW.
@@ -53,7 +54,7 @@ impl ValidatorProcess {
     }
 
     // Retrieve the primary at a view
-    pub fn get_primary_at_view(&self, v: View) -> Committer {
+    pub fn get_primary_at_view(&self, v: View) -> EcdsaPublicKey {
         let size = self.set.len();
         let v = v as usize;
         self.set[v % size].clone()
@@ -64,7 +65,7 @@ impl ValidatorProcess {
     pub fn next_primary(&mut self) {
         let size = self.set.len();
         let v = self.view as usize;
-        self.primary = self.set[v % size].to_string(); // p = v mod |R|
+        self.primary = self.set[v % size].clone(); // p = v mod |R|
     }
 
     pub fn next_phase(&mut self) {
@@ -88,7 +89,7 @@ impl ValidatorProcess {
         (((2f64) / (3f64)) * self.big_n() as f64).ceil() as usize
     }
 
-    pub fn set(&self) -> ValidatorSet {
+    pub fn set(&self) -> Vec<EcdsaPublicKey> {
         self.set.clone()
     }
 
@@ -96,11 +97,11 @@ impl ValidatorProcess {
         self.phase.clone()
     }
 
-    pub fn primary(&self) -> Committer {
+    pub fn primary(&self) -> EcdsaPublicKey {
         self.primary.clone()
     }
 
-    pub fn id(&self) -> Committer {
+    pub fn id(&self) -> EcdsaPublicKey {
         self.id.clone()
     }
 
@@ -113,7 +114,7 @@ impl ValidatorProcess {
         v
     }
 
-    pub fn new(id: String, set: Vec<Committer>) -> Self {
+    pub fn new(id: EcdsaPublicKey, set: Vec<EcdsaPublicKey>) -> Self {
         if set.len() < 4 {
             panic!("need at least 4 validators");
         }
@@ -121,7 +122,7 @@ impl ValidatorProcess {
         Self {
             id,
             view: 0,
-            primary: set[0].to_string(),
+            primary: set[0].clone(),
             set,
             phase: State::init(),
             normal_mode: true,
@@ -132,18 +133,17 @@ impl ValidatorProcess {
 mod tests {
     use super::*;
     use crate::consensus::state::State;
+    use crate::consensus::testcommons::generate_keys;
     use std::iter::Iterator;
+    use themis::keygen;
 
     #[test]
     fn leader_rotation() {
-        let set: Vec<String> = vec!["A", "B", "C", "D"]
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect();
+        let set = generate_keys(4);
 
         // Go through a full cycle of validators with changing phase at each new view
-        let mut vp = ValidatorProcess::new(String::from("A"), set);
-        assert_eq!("A", vp.primary());
+        let mut vp = ValidatorProcess::new(set[0].clone(), set.clone());
+        assert_eq!(set[0], vp.primary());
         assert_eq!(State::new(0), vp.phase());
         assert_eq!(0, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -151,7 +151,7 @@ mod tests {
         vp.inc_v();
         vp.next_primary();
         vp.phase.next();
-        assert_eq!("B", vp.primary());
+        assert_eq!(set[1], vp.primary());
         assert_eq!(State::new(1), vp.phase());
         assert_eq!(1, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -159,7 +159,7 @@ mod tests {
         vp.inc_v();
         vp.next_primary();
         vp.phase.next();
-        assert_eq!("C", vp.primary());
+        assert_eq!(set[2], vp.primary());
         assert_eq!(State::new(2), vp.phase());
         assert_eq!(2, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -167,7 +167,7 @@ mod tests {
         vp.inc_v();
         vp.next_primary();
         vp.phase.next();
-        assert_eq!("D", vp.primary());
+        assert_eq!(set[3], vp.primary());
         assert_eq!(State::new(3), vp.phase());
         assert_eq!(3, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -175,7 +175,7 @@ mod tests {
         vp.inc_v();
         vp.next_primary();
         vp.phase.next();
-        assert_eq!("A", vp.primary());
+        assert_eq!(set[0], vp.primary());
         assert_eq!(State::new(0), vp.phase());
         assert_eq!(4, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -183,7 +183,7 @@ mod tests {
 
         // Process interrupted because primary did not respond
         vp.phase.enter_vc();
-        assert_eq!("A", vp.primary());
+        assert_eq!(set[0], vp.primary());
         assert_eq!(State::new(4), vp.phase());
         vp.phase.next();
         assert_eq!(State::new(5), vp.phase());
@@ -202,12 +202,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn less_than_four_validators() {
-        ValidatorProcess::new(
-            String::from("A"),
-            vec!["A", "B", "C"]
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect(),
-        );
+        let vals = generate_keys(3);
+        let local_id = vals[0].clone();
+        ValidatorProcess::new(local_id, vals);
     }
 }
