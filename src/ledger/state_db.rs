@@ -66,7 +66,6 @@ impl KeyValueIO for StateDB {
             }
         }
 
-        println!("DOING SOME REAL PUTTING IN THE DB BACKEND, value: {}", val);
         let res = &self.db.put(key.clone(), val.as_bytes());
         match res {
             Ok(_) => self.update_root_hash(key.clone(), val),

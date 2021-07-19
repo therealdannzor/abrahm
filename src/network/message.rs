@@ -269,7 +269,6 @@ mod tests {
         let mut message = vec![8, 1, 49, 54, 48];
         message.extend(payload.clone());
         let actual = mw.validate_received(message);
-        println!("ERR {:?}", actual.as_ref().err());
     }
 
     #[test]
