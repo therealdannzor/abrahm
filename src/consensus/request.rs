@@ -1,5 +1,5 @@
 #![allow(unused)]
-use super::transition::Transition;
+use super::{state::State, transition::Transition};
 use crate::swiss_knife::helper;
 use crypto::{digest::Digest, sha2::Sha256};
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,10 @@ impl Request {
 
     pub fn from(&self) -> String {
         self.origin_id.clone()
+    }
+
+    pub fn next_state(&self) -> Transition {
+        self.next_state.clone()
     }
 
     pub fn digest(&self) -> String {

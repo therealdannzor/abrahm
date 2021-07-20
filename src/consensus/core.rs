@@ -53,4 +53,8 @@ impl ConsensusChain {
     pub fn latest_block(self) -> Block {
         self.head_block
     }
+
+    pub fn engine(mut self) -> Engine {
+        self.engine
+    }
 }

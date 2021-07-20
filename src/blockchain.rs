@@ -1,12 +1,9 @@
 #![allow(unused)]
 
-use crate::consensus::common::ValidatorSet;
-use crate::consensus::core::ConsensusChain;
-use crate::consensus::engine::Engine;
+use crate::consensus::{common::ValidatorSet, core::ConsensusChain, engine::Engine};
 use crate::ledger::state_db::{KeyValueIO, StateDB};
 use crate::network::core::Net;
-use crate::types::block::Block;
-use crate::types::pool::TxPool;
+use crate::types::{block::Block, pool::TxPool};
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 
 use std::sync::mpsc;
@@ -62,6 +59,10 @@ impl Blockchain {
                 blockchain_channel,
             ),
         }
+    }
+
+    pub fn start(self) {
+        let mut result = self.consensus.engine().process_consensus();
     }
 
     // append_block appends a block `b` which is assumed to have:

@@ -486,6 +486,12 @@ impl Engine {
         Ok(())
     }
 
+    fn process_request(&mut self) -> bool {
+        let curr_view = self.val_engine.view();
+        let _req = &self.message_log.get(&curr_view).as_ref().unwrap().request;
+        true
+    }
+
     pub fn new(id: EcdsaPublicKey, validators: Vec<EcdsaPublicKey>) -> Self {
         let mut message_log: HashMap<u64, AckMessagesView> = HashMap::new();
         message_log.insert(0, AckMessagesView::new(None, None, None, None));
