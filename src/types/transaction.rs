@@ -3,14 +3,14 @@ use std::fmt::{Display, Formatter};
 use themis::keys::EcdsaPublicKey;
 
 #[derive(Clone)]
-struct Label {
+pub struct Label {
     from: EcdsaPublicKey,
     to: EcdsaPublicKey,
-    amount: i32,
+    amount: u32,
 }
 
 impl Label {
-    fn new(from: EcdsaPublicKey, to: EcdsaPublicKey, amount: i32) -> Self {
+    fn new(from: EcdsaPublicKey, to: EcdsaPublicKey, amount: u32) -> Self {
         Self { from, to, amount }
     }
 }
@@ -33,7 +33,7 @@ impl Transaction {
     pub fn new(
         from: EcdsaPublicKey,
         to: EcdsaPublicKey,
-        amount: i32,
+        amount: u32,
         hash: &'static str,
         expiration_time: u64,
     ) -> Self {

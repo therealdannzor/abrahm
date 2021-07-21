@@ -194,7 +194,7 @@ mod tests {
         pk
     }
 
-    fn new_tx(amount: i32) -> Transaction {
+    fn new_tx(amount: u32) -> Transaction {
         let alice = pub_key();
         let bob = pub_key();
         Transaction::new(
