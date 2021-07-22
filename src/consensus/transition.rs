@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 extern crate crypto;
 use self::crypto::digest::Digest;
 use self::crypto::sha2::Sha256;
@@ -109,6 +107,15 @@ impl Transact {
         }
     }
 
+    pub fn from(&self) -> Vec<u8> {
+        self.from.clone()
+    }
+
+    pub fn to(&self) -> Vec<u8> {
+        self.to.clone()
+    }
+
+    #[allow(dead_code)]
     // pack all components and hash
     pub fn serialize(&self) -> String {
         let mut res = std::str::from_utf8(&self.to.as_ref()).unwrap().to_string();
