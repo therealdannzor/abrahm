@@ -123,20 +123,27 @@ pub fn validate_public_key(key: &[u8]) -> Option<PublicKey> {
     }
 }
 
-fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
-    let next_transition = Transition::new("0x", vec![Transact::new(from, to, amount)]);
+fn create_request_type(
+    account: &str,
+    from: EcdsaPublicKey,
+    to: EcdsaPublicKey,
+    amount: i32,
+) -> Request {
+    let next_transition =
+        Transition::new(String::from("0x"), vec![Transact::new(from, to, amount)]);
     Request::new(next_transition, "id")
 }
 
 mod tests {
     use super::*;
+    use crate::consensus::testcommons::generate_keys;
     use crate::hashed;
     use crate::swiss_knife::helper::generate_hash_from_input;
     use crypto::digest::Digest;
     use crypto::sha2::Sha256;
     use std::convert::TryFrom;
     use themis::keygen;
-    use themis::keys::PublicKey;
+    use themis::keys::EcdsaPublicKey;
     use themis::secure_message::{SecureSign, SecureVerify};
     use tokio_test::assert_err;
 
@@ -176,7 +183,9 @@ mod tests {
         let (sk, pk) = keygen::gen_ec_key_pair().split();
         let mut mw = MessageWorker::new(sk, pk.clone());
         mw.insert_peer(1, pk.clone());
-        let request = create_request_type("0x", "Alice", "Bob", 1);
+
+        let bob_pk = generate_keys(1);
+        let request = create_request_type("0x", pk, bob_pk[0].clone(), 1);
 
         // first part of the message (public key)
         let target_id = u8::from(1);

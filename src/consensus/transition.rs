@@ -4,6 +4,7 @@ extern crate crypto;
 use self::crypto::digest::Digest;
 use self::crypto::sha2::Sha256;
 use serde::{Deserialize, Serialize};
+use themis::keys::EcdsaPublicKey;
 
 #[derive(Serialize, Deserialize, Clone)]
 // Transition represents the state transition from a current and established state S0, to a future
@@ -38,9 +39,18 @@ fn next_state(txs: std::vec::Vec<Transact>, curr_root_hash: &str) -> String {
     let mut input = curr_root_hash.to_string();
 
     for tx in txs.iter() {
-        input.push_str(&tx.from);
-        input.push_str(&tx.to);
-        input.push_str(&tx.amount.to_string());
+        let from_u8 = std::str::from_utf8(&tx.from.as_ref());
+        if from_u8.is_ok() {
+            input.insert_str(0, from_u8.unwrap());
+        }
+        let from_u8 = std::str::from_utf8(&tx.to.as_ref());
+        if from_u8.is_ok() {
+            input.insert_str(0, from_u8.unwrap());
+        }
+        let from_u8 = std::str::from_utf8(&tx.amount.to_string().as_ref());
+        if from_u8.is_ok() {
+            input.insert_str(0, from_u8.unwrap());
+        }
     }
 
     let mut hash_out = Sha256::new();
@@ -50,12 +60,12 @@ fn next_state(txs: std::vec::Vec<Transact>, curr_root_hash: &str) -> String {
 }
 
 impl Transition {
-    pub fn new(hash: &str, txs: std::vec::Vec<Transact>) -> Self {
+    pub fn new(hash: String, txs: std::vec::Vec<Transact>) -> Self {
         if hash == "" {
             panic!("cannot have an empty existing root hash");
         }
 
-        let next_state = next_state(txs.clone(), hash);
+        let next_state = next_state(txs.clone(), &hash);
 
         Self {
             from_root_hash: hash.to_string(),
@@ -82,36 +92,33 @@ impl Transition {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Transact {
     // sender
-    from: String,
+    from: Vec<u8>,
     // recipient
-    to: String,
+    to: Vec<u8>,
     // amount to send
     amount: i32,
 }
 
 impl Transact {
-    pub fn new(from: &str, to: &str, amount: i32) -> Self {
+    pub fn new(from: EcdsaPublicKey, to: EcdsaPublicKey, amount: i32) -> Self {
         if amount < 1 {
             panic!("non-valid amount in a transaction");
         }
 
-        if from == "" || to == "" {
-            panic!("cannot use empty from or to account identifiers");
-        }
-
         Transact {
-            from: from.to_string(),
-            to: to.to_string(),
+            from: from.as_ref().to_vec(),
+            to: to.as_ref().to_vec(),
             amount,
         }
     }
 
     // pack all components and hash
     pub fn serialize(&self) -> String {
+        let mut res = std::str::from_utf8(&self.to.as_ref()).unwrap().to_string();
+        let from_u8 = std::str::from_utf8(&self.from.as_ref()).unwrap();
+        res.insert_str(0, from_u8);
+
         let mut hash_out = Sha256::new();
-        let mut res = self.from.clone();
-        res.push_str(&self.to.clone());
-        res.push_str(&self.amount.to_string());
         hash_out.input_str(&res);
         hash_out.result_str()
     }

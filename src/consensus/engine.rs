@@ -530,10 +530,17 @@ mod tests {
     use super::*;
     use crate::consensus::testcommons::generate_keys;
     use crate::consensus::transition::{Transact, Transition};
+    use themis::keys::EcdsaPublicKey;
     use tokio_test::{assert_err, assert_ok};
 
-    fn create_request_type(account: &str, from: &str, to: &str, amount: i32) -> Request {
-        let next_transition = Transition::new("0x", vec![Transact::new(from, to, amount)]);
+    fn create_request_type(
+        account: &str,
+        from: EcdsaPublicKey,
+        to: EcdsaPublicKey,
+        amount: i32,
+    ) -> Request {
+        let next_transition =
+            Transition::new(String::from("0x"), vec![Transact::new(from, to, amount)]);
         Request::new(next_transition, "id")
     }
 
@@ -563,7 +570,8 @@ mod tests {
     #[test]
     fn prepared_and_committed_predicate_single_view_and_seq() {
         let mut engine = setup();
-        let mut r1 = create_request_type("0x", "A", "B", 1);
+        let vals = engine.val_engine.set();
+        let mut r1 = create_request_type("0x", vals[0].clone(), vals[1].clone(), 1);
         let view = 0;
         let seq_no = 0;
 
