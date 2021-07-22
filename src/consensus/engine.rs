@@ -537,7 +537,7 @@ mod tests {
         account: &str,
         from: EcdsaPublicKey,
         to: EcdsaPublicKey,
-        amount: i32,
+        amount: u32,
     ) -> Request {
         let next_transition =
             Transition::new(String::from("0x"), vec![Transact::new(from, to, amount)]);

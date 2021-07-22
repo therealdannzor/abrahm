@@ -47,10 +47,7 @@ fn next_state(txs: std::vec::Vec<Transact>, curr_root_hash: &str) -> String {
         if from_u8.is_ok() {
             input.insert_str(0, from_u8.unwrap());
         }
-        let from_u8 = std::str::from_utf8(&tx.amount.to_string().as_ref());
-        if from_u8.is_ok() {
-            input.insert_str(0, from_u8.unwrap());
-        }
+        input.insert_str(0, &tx.amount.to_string());
     }
 
     let mut hash_out = Sha256::new();
@@ -96,11 +93,11 @@ pub struct Transact {
     // recipient
     to: Vec<u8>,
     // amount to send
-    amount: i32,
+    amount: u32,
 }
 
 impl Transact {
-    pub fn new(from: EcdsaPublicKey, to: EcdsaPublicKey, amount: i32) -> Self {
+    pub fn new(from: EcdsaPublicKey, to: EcdsaPublicKey, amount: u32) -> Self {
         if amount < 1 {
             panic!("non-valid amount in a transaction");
         }
