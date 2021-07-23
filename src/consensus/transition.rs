@@ -115,6 +115,10 @@ impl Transact {
         self.to.clone()
     }
 
+    pub fn amount(&self) -> u32 {
+        self.amount.clone()
+    }
+
     #[allow(dead_code)]
     // pack all components and hash
     pub fn serialize(&self) -> String {
