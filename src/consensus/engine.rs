@@ -566,7 +566,11 @@ mod tests {
     fn prepared_and_committed_predicate_single_view_and_seq() {
         let mut engine = setup();
         let vals = engine.val_engine.set();
-        let mut r1 = create_request_type("0x", vals[0].clone(), vals[1].clone(), 1);
+
+        // We give the validators short codes depending on where they are placed in the validator
+        // set. The first one is 0 and the last one is 3 in this case (4 in total; the min amount)
+        let mut r1 =
+            create_request_type("0x", 0 /* val index 0 */, 1 /* val index 2 */, 1);
         let view = 0;
         let seq_no = 0;
 
