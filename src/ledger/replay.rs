@@ -7,9 +7,11 @@ use themis::keys::EcdsaPublicKey;
 
 // Replay replays a proposed transition on the ledger to verify its validitiy
 pub struct Replay {
-    cache: HashMap<EcdsaPublicKey, u32>,
+    cache: HashMap<u8, Peer>,
     last_state_hash: String,
 }
+struct Peer(EcdsaPublicKey, /* balance */ u32);
+
 impl Replay {
     pub fn new(last_state_hash: String) -> Self {
         Self {
@@ -23,68 +25,90 @@ impl Replay {
     pub fn run_transition(&mut self, txs: Vec<Transact>) -> Result<(), std::io::Error> {
         let mut balances = HashMap::<EcdsaPublicKey, u32>::new();
         for it in txs.clone().iter() {
-            let from = it.from();
-            let to = it.to();
+            let sender_short_id = it.from();
+            let recipient_short_id = it.to();
             let amt = it.amount();
-            let from_pk = EcdsaPublicKey::try_from_slice(&from);
-            if from_pk.is_err() {
+
+            // subtract from the sending peer
+            let sender_peer = self.cache.get(&sender_short_id);
+            if sender_peer.is_none() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    from_pk.err().unwrap().to_string(),
+                    "missing public key",
                 ));
             }
-            let from_pk = from_pk.unwrap();
-            let from_bal = self.cache_balance(from_pk.clone());
+            let sender_pk = sender_peer.unwrap().0.clone();
+            let sender_bal = self.cache_balance(sender_short_id);
             let fee = calculate_fee(amt as u16) as u32;
-            if from_bal < amt + fee {
+            if sender_bal < amt + fee {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "not enough funds to make transfer",
                 ));
             }
-            let new_bal = from_bal - amt - fee;
-            self.cache.insert(from_pk, new_bal);
-            let to_pk = EcdsaPublicKey::try_from_slice(&to);
-            if to_pk.is_err() {
+            let new_bal = sender_bal - amt - fee;
+            let updated_peer = Peer(sender_pk, new_bal);
+            self.cache.insert(sender_short_id, updated_peer);
+
+            // credit the receiving peer
+            let recipient_peer = self.cache.get(&recipient_short_id);
+            if recipient_peer.is_none() {
                 return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    to_pk.err().unwrap().to_string(),
+                    std::io::ErrorKind::InvalidData,
+                    "target peer short code not found",
                 ));
             }
-            let to_pk = to_pk.unwrap();
-            let to_bal = self.cache_balance(to_pk.clone());
-            let new_bal = to_bal + amt;
-            self.cache.insert(to_pk, new_bal);
+            let recipient_pk = &recipient_peer.unwrap().0;
+            let recipient_bal = self.cache_balance(recipient_short_id);
+            let new_bal = recipient_bal + amt;
+            let updated_peer = Peer(recipient_pk.clone(), new_bal);
+            self.cache.insert(recipient_short_id, updated_peer);
         }
         Ok(())
     }
 
-    fn cache_balance(&self, account: EcdsaPublicKey) -> u32 {
-        *self.cache.get(&account).or(Some(&0)).unwrap()
+    fn cache_balance(&self, account: u8) -> u32 {
+        let p = self.cache.get(&account);
+        if p.is_none() {
+            return 0;
+        } else {
+            return p.unwrap().1;
+        }
     }
 
-    // incrememts the balance with an amount. If the key is not recognized, it inserts
-    // a default value of 0 before it adds the amount.
-    fn inc_balance(&mut self, account: EcdsaPublicKey, amount: u32) -> u32 {
-        *self.cache.entry(account.clone()).or_insert(0) += amount;
-        *self.cache.get(&account).unwrap()
+    // increments the balance with an amount and returns a Some of the new amount.
+    // If the key is not recognized, it returns None.
+    fn inc_balance(&mut self, account: u8, amount: u32) -> Option<u32> {
+        let curr_bal = self.cache_balance(account);
+        let peer = self.cache.get(&account);
+        if peer.is_none() {
+            return None;
+        } else if curr_bal.checked_add(amount).is_some() {
+            let peer = peer.unwrap();
+            let new_bal = curr_bal.checked_add(amount).unwrap();
+            let peer_updated = Peer(peer.0.clone(), new_bal);
+            self.cache.insert(account, peer_updated);
+            return Some(new_bal);
+        } else {
+            return None;
+        }
     }
 
     // decrements the balance with an amount. If the key is not recognized, it inserts
     // a default value of 0 before it subtracts the amount.
-    fn dec_balance(&mut self, account: EcdsaPublicKey, amount: u32) -> u32 {
-        let curr_bal = self.cache.get(&account.clone());
-        if curr_bal.is_none() {
-            self.cache.insert(account.clone(), 0);
-            return 0;
-            // this shouldn't really happen due to other checks
-        } else if curr_bal.unwrap() < &amount {
-            self.cache.insert(account.clone(), 0);
-            return 0;
+    fn dec_balance(&mut self, account: u8, amount: u32) -> Option<u32> {
+        let curr_bal = self.cache_balance(account);
+        let peer = self.cache.get(&account);
+        if peer.is_none() {
+            return None;
+        } else if curr_bal.checked_sub(amount).is_some() {
+            let peer = peer.unwrap();
+            let new_bal = curr_bal.checked_sub(amount).unwrap();
+            let peer_updated = Peer(peer.0.clone(), new_bal);
+            self.cache.insert(account, peer_updated);
+            return Some(new_bal);
         } else {
-            let delta = curr_bal.unwrap() - amount;
-            self.cache.insert(account, delta);
-            return delta;
+            return None;
         }
     }
 
@@ -99,9 +123,13 @@ mod tests {
     use serial_test::serial;
     use tokio_test::assert_ok;
 
-    fn setup(key: EcdsaPublicKey) -> Replay {
-        let keys = generate_keys(1);
-        let rep = Replay::new(String::from("0x"));
+    fn setup(amount_keys: u8) -> Replay {
+        let keys = generate_keys(amount_keys);
+        let mut rep = Replay::new(String::from("0x"));
+        for i in 0..keys.len() {
+            let p = Peer(keys[i].clone(), 0);
+            rep.cache.insert(i as u8, p);
+        }
         rep
     }
 
@@ -109,19 +137,16 @@ mod tests {
     #[serial]
     fn run_happy_transitions_and_cache_correctly() {
         // scenario setup
-        let keys = &generate_keys(2);
-        let alice_pk = &keys[0];
-        let bob_pk = &keys[1];
-        let mut rep = setup(alice_pk.clone());
-        rep.inc_balance(alice_pk.clone(), 50);
-        rep.inc_balance(bob_pk.clone(), 50);
+        let mut rep = setup(2);
+        rep.inc_balance(0, 50);
+        rep.inc_balance(1, 50);
 
         // Create proposed transitions:          send 40 from A to B and 60 from B to A.
         // The fee to transfer is:               0.05 x 40 = 2
         // After which the end result should be: balance(A) = 68 and balance(B) = 30
         let txs = vec![
-            Transact::new(alice_pk.clone(), bob_pk.clone(), 30),
-            Transact::new(bob_pk.clone(), alice_pk.clone(), 50),
+            Transact::new(0 /* A */, 1 /* B */, 30),
+            Transact::new(1 /* B */, 0 /* A */, 50),
         ];
 
         let result = rep.run_transition(txs);
