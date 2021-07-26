@@ -533,12 +533,7 @@ mod tests {
     use themis::keys::EcdsaPublicKey;
     use tokio_test::{assert_err, assert_ok};
 
-    fn create_request_type(
-        account: &str,
-        from: EcdsaPublicKey,
-        to: EcdsaPublicKey,
-        amount: u32,
-    ) -> Request {
+    fn create_request_type(account: &str, from: u8, to: u8, amount: u32) -> Request {
         let next_transition =
             Transition::new(String::from("0x"), vec![Transact::new(from, to, amount)]);
         Request::new(next_transition, "id")

@@ -2,7 +2,6 @@ extern crate crypto;
 use self::crypto::digest::Digest;
 use self::crypto::sha2::Sha256;
 use serde::{Deserialize, Serialize};
-use themis::keys::EcdsaPublicKey;
 
 #[derive(Serialize, Deserialize, Clone)]
 // Transition represents the state transition from a current and established state S0, to a future
@@ -35,19 +34,9 @@ pub struct Transition {
 // hardening that is a next step after having a complete e2e POC.
 fn next_state(txs: std::vec::Vec<Transact>, curr_root_hash: &str) -> String {
     let mut input = curr_root_hash.to_string();
-
     for tx in txs.iter() {
-        let from_u8 = std::str::from_utf8(&tx.from.as_ref());
-        if from_u8.is_ok() {
-            input.insert_str(0, from_u8.unwrap());
-        }
-        let from_u8 = std::str::from_utf8(&tx.to.as_ref());
-        if from_u8.is_ok() {
-            input.insert_str(0, from_u8.unwrap());
-        }
-        input.insert_str(0, &tx.amount.to_string());
+        input.push_str(&tx.serialize());
     }
-
     let mut hash_out = Sha256::new();
     hash_out.input_str(&input);
 
@@ -87,31 +76,27 @@ impl Transition {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Transact {
     // sender
-    from: Vec<u8>,
+    from: u8,
     // recipient
-    to: Vec<u8>,
+    to: u8,
     // amount to send
     amount: u32,
 }
 
 impl Transact {
-    pub fn new(from: EcdsaPublicKey, to: EcdsaPublicKey, amount: u32) -> Self {
+    pub fn new(from: u8, to: u8, amount: u32) -> Self {
         if amount < 1 {
             panic!("non-valid amount in a transaction");
         }
 
-        Transact {
-            from: from.as_ref().to_vec(),
-            to: to.as_ref().to_vec(),
-            amount,
-        }
+        Transact { from, to, amount }
     }
 
-    pub fn from(&self) -> Vec<u8> {
+    pub fn from(&self) -> u8 {
         self.from.clone()
     }
 
-    pub fn to(&self) -> Vec<u8> {
+    pub fn to(&self) -> u8 {
         self.to.clone()
     }
 
@@ -119,12 +104,11 @@ impl Transact {
         self.amount.clone()
     }
 
-    #[allow(dead_code)]
     // pack all components and hash
     pub fn serialize(&self) -> String {
-        let mut res = std::str::from_utf8(&self.to.as_ref()).unwrap().to_string();
-        let from_u8 = std::str::from_utf8(&self.from.as_ref()).unwrap();
-        res.insert_str(0, from_u8);
+        let mut res = "".to_string();
+        res.insert_str(0, &self.from().to_string());
+        res.insert_str(0, &self.to().to_string());
 
         let mut hash_out = Sha256::new();
         hash_out.input_str(&res);
