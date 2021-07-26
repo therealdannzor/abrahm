@@ -48,10 +48,23 @@ pub fn cmp_message_with_signed_digest(
 
     let m_hashed = hashed!(plain_message.unwrap());
     let recv = std::str::from_utf8(&recv);
+    if recv.is_err() {
+        log::debug!("cmp message: received message is not utf-8");
+        return false;
+    }
     m_hashed == recv.unwrap()
 }
 
 pub fn u8_to_ascii_decimal(input: u8) -> Vec<u8> {
+    let num: Vec<u8> = input
+        .to_string()
+        .chars()
+        .map(|d| d.to_ascii_lowercase() as u8)
+        .collect();
+    num
+}
+
+pub fn usize_to_ascii_decimal(input: usize) -> Vec<u8> {
     let num: Vec<u8> = input
         .to_string()
         .chars()

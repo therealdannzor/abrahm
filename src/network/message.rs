@@ -48,30 +48,29 @@ impl MessageWorker {
 
     // The message structure is as follows:
     //
-    // * identity (1 character, a single digit identifier mapped to a public key)
-    // * message type flag (1 character, covers both transaction and consensus);
-    // * message payload length flag (3 characters)
-    // * serialized message (varying length, indicated by previous length flag)
-    // * signed message digest (the rest of the message, does not matter that its length
-    //   differs with ¬± 2 chars, althought it could be interesting to understand as an
-    //   exercise TODO: investigate!)
+    // * consensus round type: 1 character (0 is for a request/tx)
+    // * peer identifier: 1 character (digit)
+    // * message payload length: 3 characters
+    // * serialized message: varying length (indicated by previous length flag)
+    // * signed message digest: the rest of the message, does not (TODO: or does it?)
+    //   matter that its length differs with ± 2 chars, althought it could be interesting#
+    //   to understand as an exercise TODO!)
     pub fn validate_received(&self, message: Vec<u8>) -> Result<bool, Box<dyn std::error::Error>> {
         if message.len() < 152 {
-            return Err(validation_error("length less than expected"));
+            return Err(validation_error("recv message length less than expected"));
         }
-        let targ_short_id = message[0];
+
+        let consensus_round = message[0];
+        if consensus_round > 6 {
+            return Err(validation_error("invalid consensus message round"));
+        }
+        let targ_short_id = message[1];
         let targ_pub_key = self.peer_shortnames.get(&targ_short_id);
         if targ_pub_key.is_none() {
             return Err(validation_error("missing public key from other peer"));
         }
 
         let targ_pub_key = targ_pub_key.unwrap();
-        let consensus_round_type = message[1];
-        if consensus_round_type > 5 {
-            return Err(validation_error("invalid consensus message flag"));
-        }
-
-        let consensus_round = parse_u8_to_enum(consensus_round_type);
 
         let mut payload_len: Vec<u8> = Vec::new();
         for i in 0..3 {
@@ -123,12 +122,7 @@ pub fn validate_public_key(key: &[u8]) -> Option<PublicKey> {
     }
 }
 
-fn create_request_type(
-    account: &str,
-    from: EcdsaPublicKey,
-    to: EcdsaPublicKey,
-    amount: u32,
-) -> Request {
+fn create_request_type(account: &str, from: u8, to: u8, amount: u32) -> Request {
     let next_transition =
         Transition::new(String::from("0x"), vec![Transact::new(from, to, amount)]);
     Request::new(next_transition, "id")
@@ -138,6 +132,7 @@ mod tests {
     use super::*;
     use crate::consensus::testcommons::generate_keys;
     use crate::hashed;
+    use crate::network::common::usize_to_ascii_decimal;
     use crate::swiss_knife::helper::generate_hash_from_input;
     use crypto::digest::Digest;
     use crypto::sha2::Sha256;
@@ -148,7 +143,7 @@ mod tests {
     use tokio_test::assert_err;
 
     #[test]
-    pub fn sign_and_decrypt_ultra_short_message() {
+    pub fn sign_and_decrypt_consensus_message() {
         // Setup the client signation and known information about a supposed foreign peer
         // (in this case we use the client's public key as the foreign peer's identity for brevity)
         let (sk, pk) = keygen::gen_ec_key_pair().split();
@@ -157,15 +152,16 @@ mod tests {
 
         // Sign a secret message with shortest possible length
         let signed = mw.sign_message_digest(&String::from("1"));
+        let sign_len = usize_to_ascii_decimal(signed.len());
         // Construct the complete message as passed over TCP:
-        // Index 0:        Peer ID
-        // Index 1:        Consensus message type
+        // Index 0:        Is consensus (1) or transaction (0)
+        // Index 1:        Peer ID
         // Index 2 to 4:   Length (L) of payload
         // Index 5 to 5+L: Payload
         //
         // 48 = digit 0 in ASCII decimal
         // 49 = digit 1 in ASCII decimal
-        let mut msg = vec![1, 0, 48, 48, 49, 49];
+        let mut msg = vec![1, 1, 48, 48, 49, 49];
         // After appending the signed message:
         // From index 5+L+1 to the end : The signed message
         msg.extend(signed);
@@ -182,44 +178,37 @@ mod tests {
     fn outgoing_message_serialize_request_struct_and_verify_authenticity() {
         let (sk, pk) = keygen::gen_ec_key_pair().split();
         let mut mw = MessageWorker::new(sk, pk.clone());
-        mw.insert_peer(1, pk.clone());
+        mw.insert_peer(49 /* corresponds to 1 */, pk.clone());
+        let bob_pk = &generate_keys(1)[0];
+        mw.insert_peer(2, bob_pk.clone());
 
-        let bob_pk = generate_keys(1);
-        let request = create_request_type("0x", pk, bob_pk[0].clone(), 1);
+        let request = create_request_type("0x", 1, 2, 1);
 
-        // first part of the message (public key)
-        let target_id = u8::from(1);
+        // 1st component: a single byte representing message type
+        let is_consensus = u8::from(1);
 
-        // second part of the message (single byte representing message type)
-        let type_flag = u8::from(0);
+        // 2nd component: peer which sends the signed message
+        let peer_id = u8_to_ascii_decimal(u8::from(1));
 
-        // third and fourth part of the message (request length )
+        // 4th component: the serialized message
         let serialized = serde_json::to_string(&request);
         if serialized.is_err() {
             panic!("error serializing: {:?}", serialized.unwrap());
         }
-        let message_length = u8::try_from(serialized.as_ref().unwrap().len());
-        if message_length.is_err() {
-            panic!(
-                "error message length overflow, maximum is 255, got: {}",
-                message_length.unwrap()
-            );
-        }
+        let serialized = serialized.unwrap();
 
-        // this is the u8 size of the length, we need to split this up into individual units ascii
-        // coded, three digits in total
-        let message_length = message_length.unwrap();
-        let message_length = u8_to_ascii_decimal(message_length);
+        // 3rd component: the length of the message
+        let message_length = usize_to_ascii_decimal(serialized.len());
 
         // prepare to sign the request
-        let signed_request = mw.sign_message_digest(&serialized.as_ref().unwrap());
+        let signed_request = mw.sign_message_digest(&serialized);
 
         // add all components to a complete message
         let mut full_message = Vec::new();
-        full_message.push(target_id);
-        full_message.push(type_flag);
+        full_message.push(is_consensus);
+        full_message.extend(peer_id);
         full_message.extend(message_length);
-        full_message.extend(serialized.unwrap().as_bytes().to_vec());
+        full_message.extend(serialized.as_bytes().to_vec());
         full_message.extend(signed_request);
         let result = mw.validate_received(full_message);
         if result.is_err() {
