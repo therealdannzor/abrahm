@@ -121,7 +121,7 @@ mod tests {
     use super::*;
     use crate::consensus::{testcommons::generate_keys, transition::Transact};
     use serial_test::serial;
-    use tokio_test::assert_ok;
+    use tokio_test::{assert_err, assert_ok};
 
     fn setup(amount_keys: u8) -> Replay {
         let keys = generate_keys(amount_keys);
@@ -141,15 +141,56 @@ mod tests {
         rep.inc_balance(0, 50);
         rep.inc_balance(1, 50);
 
-        // Create proposed transitions:          send 40 from A to B and 60 from B to A.
-        // The fee to transfer is:               0.05 x 40 = 2
-        // After which the end result should be: balance(A) = 68 and balance(B) = 30
+        // Create proposed transitions:
         let txs = vec![
-            Transact::new(0 /* A */, 1 /* B */, 30),
-            Transact::new(1 /* B */, 0 /* A */, 50),
+            Transact::new(0 /* A */, 1 /* B */, 40), // Send 40 from A to B
+            Transact::new(1 /* B */, 0 /* A */, 60), // Send 60 from B to A
         ];
-
         let result = rep.run_transition(txs);
         assert_ok!(result);
+
+        // The fee to transfer is:
+        // For A: ceil(0.05 x 40) = 2
+        // For B: ceil(0.05 x 60) = 3
+        // End result: balance(A) = 68 and balance(B) = 27
+        assert_eq!(68, rep.cache_balance(0));
+        assert_eq!(27, rep.cache_balance(1));
+
+        let mut txs = vec![];
+        for i in 0..4 {
+            txs.push(Transact::new(0, 1, 1));
+        }
+        let result = rep.run_transition(txs);
+        assert_ok!(result);
+        assert_eq!(60, rep.cache_balance(0));
+        assert_eq!(31, rep.cache_balance(1));
+
+        // Send 8 batches of txs of 9 from A to B.
+        // Each batch should cost 1 (10 in total) so A's balance
+        // should be completely empty after only 6, leaving 2 of
+        // them as invalid.
+        let mut txs = vec![];
+        for i in 0..8 {
+            txs.push(Transact::new(0, 1, 9));
+        }
+        let result = rep.run_transition(txs);
+        assert_err!(result);
+        assert_eq!(0, rep.cache_balance(0));
+        assert_eq!(85, rep.cache_balance(1));
+    }
+
+    #[test]
+    #[serial]
+    fn run_void_transitions_no_cache_change() {
+        let mut rep = setup(2);
+        assert_eq!(0, rep.cache_balance(0));
+        assert_eq!(0, rep.cache_balance(1));
+
+        rep.inc_balance(0, 50);
+        let tx = vec![Transact::new(0, 1, 50)];
+        let result = rep.run_transition(tx);
+        assert_err!(result);
+        assert_eq!(50, rep.cache_balance(0));
+        assert_eq!(0, rep.cache_balance(1));
     }
 }
