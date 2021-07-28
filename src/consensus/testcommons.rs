@@ -1,3 +1,4 @@
+#![allow(unused)]
 use themis::keygen;
 use themis::keys::EcdsaPublicKey;
 

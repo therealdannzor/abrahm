@@ -130,6 +130,7 @@ impl ValidatorProcess {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::consensus::state::State;

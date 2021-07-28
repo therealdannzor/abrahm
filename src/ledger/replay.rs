@@ -161,6 +161,7 @@ fn cache_balance(account: u8, cache: HashMap<u8, Peer>) -> u32 {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::consensus::testcommons::generate_keys;

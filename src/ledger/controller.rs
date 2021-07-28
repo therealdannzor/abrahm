@@ -170,6 +170,7 @@ pub fn calculate_fee(amount: u16) -> f64 {
     (((amount as f64) / 100f64) * 5f64).ceil()
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;

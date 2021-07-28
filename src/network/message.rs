@@ -128,6 +128,7 @@ fn create_request_type(account: &str, from: u8, to: u8, amount: u32) -> Request 
     Request::new(next_transition, "id")
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::consensus::testcommons::generate_keys;
