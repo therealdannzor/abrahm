@@ -1,24 +1,20 @@
-#![allow(unused)]
-
-use crate::consensus::transition::{Transact, Transition};
-use crate::ledger::controller::{calculate_fee, LedgerStateController};
+use crate::consensus::transition::Transact;
+use crate::ledger::controller::calculate_fee;
 use std::collections::HashMap;
 use themis::keys::EcdsaPublicKey;
 
 // Replay replays a proposed transition on the ledger to verify its validitiy
 pub struct Replay {
     cache: HashMap<u8, Peer>,
-    last_state_hash: String,
 }
 
 #[derive(Clone, Debug)]
 pub struct Peer(EcdsaPublicKey, /* balance */ u32);
 
 impl Replay {
-    pub fn new(last_state_hash: String) -> Self {
+    pub fn new() -> Self {
         Self {
             cache: HashMap::new(),
-            last_state_hash,
         }
     }
 
@@ -116,10 +112,6 @@ impl Replay {
             ));
         }
     }
-
-    fn update_state_hash(mut self, hash: String) {
-        self.last_state_hash = hash;
-    }
 }
 
 fn peer_has_funds(id: u8, amount: u32, record: HashMap<u8, Peer>) -> Result<u32, std::io::Error> {
@@ -127,7 +119,6 @@ fn peer_has_funds(id: u8, amount: u32, record: HashMap<u8, Peer>) -> Result<u32,
     if peer.is_err() {
         return Err(peer.err().unwrap());
     }
-    let pk = peer.unwrap().0.clone();
     let bal = cache_balance(id, record.clone());
     let fee = calculate_fee(amount as u16) as u32;
     if bal < amount as u32 + fee {
@@ -172,13 +163,13 @@ fn cache_balance(account: u8, cache: HashMap<u8, Peer>) -> u32 {
 
 mod tests {
     use super::*;
-    use crate::consensus::{testcommons::generate_keys, transition::Transact};
+    use crate::consensus::testcommons::generate_keys;
     use serial_test::serial;
     use tokio_test::{assert_err, assert_ok};
 
     fn setup(amount_keys: u8) -> Replay {
         let keys = generate_keys(amount_keys);
-        let mut rep = Replay::new(String::from("0x"));
+        let mut rep = Replay::new();
         for i in 0..keys.len() {
             let p = Peer(keys[i].clone(), 0);
             rep.cache.insert(i as u8, p);
@@ -193,8 +184,10 @@ mod tests {
         let mut rep = setup(2);
         assert_eq!(0, cache_balance(0, rep.cache()));
         assert_eq!(0, cache_balance(1, rep.cache()));
-        rep.fund(0, 100);
-        rep.fund(1, 100);
+        let res = rep.fund(0, 100);
+        assert_ok!(res);
+        let res = rep.fund(1, 100);
+        assert_ok!(res);
         assert_eq!(100, cache_balance(0, rep.cache()));
         assert_eq!(100, cache_balance(1, rep.cache()));
 
@@ -214,7 +207,7 @@ mod tests {
         assert_eq!(77, cache_balance(1, rep.cache()));
 
         let mut txs = vec![];
-        for i in 0..4 {
+        for _i in 0..4 {
             txs.push(Transact::new(0, 1, 1));
         }
         let result = rep.run_transition(txs);
@@ -222,18 +215,25 @@ mod tests {
         assert_eq!(110, cache_balance(0, rep.cache()));
         assert_eq!(81, cache_balance(1, rep.cache()));
 
-        // Send 6 batches of txs of 20 from A to B.
-        // Each batch should cost 1 (21 in total) so A's balance
-        // should not be sufficient which means that we are bailing.
-        // No change will occur.
+        // Send 8 batches of txs of 20 from A to B.
+        // Each batch should cost 21 in total so A's balance
+        // should not be sufficient which means that we are
+        // bailing. No change will occur.
         let mut txs = vec![];
-        for i in 0..8 {
+        for _i in 0..8 {
             txs.push(Transact::new(0, 1, 20));
         }
         let result = rep.run_transition(txs);
         assert_err!(result);
         assert_eq!(110, cache_balance(0, rep.cache()));
         assert_eq!(81, cache_balance(1, rep.cache()));
+
+        let res = rep.defund(0, 110);
+        assert_ok!(res);
+        let res = rep.defund(1, 81);
+        assert_ok!(res);
+        assert_eq!(0, cache_balance(0, rep.cache()));
+        assert_eq!(0, cache_balance(1, rep.cache()));
     }
 
     #[test]
@@ -243,11 +243,17 @@ mod tests {
         assert_eq!(0, cache_balance(0, rep.cache()));
         assert_eq!(0, cache_balance(1, rep.cache()));
 
-        rep.fund(0, 50);
+        let res = rep.fund(0, 50);
+        assert_ok!(res);
         let tx = vec![Transact::new(0, 1, 50)];
         let result = rep.run_transition(tx);
         assert_err!(result);
         assert_eq!(50, cache_balance(0, rep.cache()));
         assert_eq!(0, cache_balance(1, rep.cache()));
+        let res = rep.defund(0, 51);
+        assert_err!(res);
+        let res = rep.defund(0, 50);
+        assert_ok!(res);
+        assert_eq!(0, cache_balance(0, rep.cache()));
     }
 }
