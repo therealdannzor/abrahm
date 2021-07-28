@@ -11,7 +11,7 @@ pub struct Replay {
     last_state_hash: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Peer(EcdsaPublicKey, /* balance */ u32);
 
 impl Replay {
@@ -45,13 +45,13 @@ impl Replay {
             let amt = it.amount();
 
             // check that we have seen this peer before
-            let sender_peer = peer_in_record(sender_short_id, self.cache.clone());
+            let sender_peer = peer_in_record(sender_short_id, tmp.clone());
             if sender_peer.is_err() {
                 return Err(sender_peer.err().unwrap());
             }
 
             // check that the peer can afford the transfer cost (amount + fee)
-            let valid_funds = peer_has_funds(sender_short_id, amt, self.cache.clone());
+            let valid_funds = peer_has_funds(sender_short_id, amt, tmp.clone());
             if valid_funds.is_err() {
                 return Err(valid_funds.err().unwrap());
             }
@@ -61,30 +61,31 @@ impl Replay {
             tmp.insert(sender_short_id, updated_peer);
 
             // credit the receiving peer
-            let recipient_peer = peer_in_record(recipient_short_id, self.cache.clone());
+            let recipient_peer = peer_in_record(recipient_short_id, tmp.clone());
             if recipient_peer.is_err() {
                 return Err(recipient_peer.err().unwrap());
             }
             let recipient_peer = recipient_peer.unwrap();
-            let updated_recip_peer =
-                self.inc_balance(recipient_peer.clone(), recipient_peer.1 + amt);
-            if updated_recip_peer.is_err() {
-                return Err(updated_recip_peer.err().unwrap());
-            }
-            let updated_recip_peer = updated_recip_peer.unwrap();
+            let updated_recip_peer = Peer(recipient_peer.0.clone(), recipient_peer.1 + amt);
             tmp.insert(recipient_short_id, updated_recip_peer);
         }
         self.update_cache(tmp);
         Ok(())
     }
 
-    // increments the balance with an amount and returns a Some with the updated peer.
+    // funds the balance with an amount and returns a Some with the updated peer.
     // If the amount is invalid it returns None.
-    fn inc_balance(&mut self, peer: Peer, amount: u32) -> Result<Peer, std::io::Error> {
-        let curr_bal = peer.1;
+    fn fund(&mut self, peer_id: u8, amount: u32) -> Result<Peer, std::io::Error> {
+        let p = peer_in_record(peer_id, self.cache.clone());
+        if p.is_err() {
+            return Err(p.err().unwrap());
+        }
+        let p = p.unwrap();
+        let curr_bal = p.1;
         if curr_bal.checked_add(amount).is_some() {
             let new_bal = curr_bal.checked_add(amount).unwrap();
-            let peer_updated = Peer(peer.0.clone(), new_bal);
+            let peer_updated = Peer(p.0.clone(), new_bal);
+            self.cache.insert(peer_id, peer_updated.clone());
             return Ok(peer_updated.clone());
         } else {
             return Err(std::io::Error::new(
@@ -94,21 +95,25 @@ impl Replay {
         }
     }
 
-    // decrements the balance with an amount. If the key is not recognized, it inserts
+    // defunds the balance with an amount. If the key is not recognized, it inserts
     // a default value of 0 before it subtracts the amount.
-    fn dec_balance(&mut self, account: u8, amount: u32) -> Option<u32> {
-        let curr_bal = cache_balance(account, self.cache.clone());
-        let peer = self.cache.get(&account);
-        if peer.is_none() {
-            return None;
-        } else if curr_bal.checked_sub(amount).is_some() {
-            let peer = peer.unwrap();
+    fn defund(&mut self, peer_id: u8, amount: u32) -> Result<Peer, std::io::Error> {
+        let p = peer_in_record(peer_id, self.cache.clone());
+        if p.is_err() {
+            return Err(p.err().unwrap());
+        }
+        let p = p.unwrap();
+        let curr_bal = p.1;
+        if curr_bal.checked_sub(amount).is_some() {
             let new_bal = curr_bal.checked_sub(amount).unwrap();
-            let peer_updated = Peer(peer.0.clone(), new_bal);
-            self.cache.insert(account, peer_updated);
-            return Some(new_bal);
+            let peer_updated = Peer(p.0.clone(), new_bal);
+            self.cache.insert(peer_id, peer_updated.clone());
+            return Ok(peer_updated.clone());
         } else {
-            return None;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "amount to decrement invalid",
+            ));
         }
     }
 
@@ -186,8 +191,12 @@ mod tests {
     fn run_happy_transitions_and_cache_correctly() {
         // scenario setup
         let mut rep = setup(2);
-        inc_balance(0, 50, rep.cache());
-        inc_balance(1, 50, rep.cache());
+        assert_eq!(0, cache_balance(0, rep.cache()));
+        assert_eq!(0, cache_balance(1, rep.cache()));
+        rep.fund(0, 100);
+        rep.fund(1, 100);
+        assert_eq!(100, cache_balance(0, rep.cache()));
+        assert_eq!(100, cache_balance(1, rep.cache()));
 
         // Create proposed transitions:
         let txs = vec![
@@ -200,9 +209,9 @@ mod tests {
         // The fee to transfer is:
         // For A: ceil(0.05 x 40) = 2
         // For B: ceil(0.05 x 60) = 3
-        // End result: balance(A) = 68 and balance(B) = 27
-        assert_eq!(68, cache_balance(0, rep.cache()));
-        assert_eq!(27, cache_balance(1, rep.cache()));
+        // End result: balance(A) = 118 and balance(B) = 77
+        assert_eq!(118, cache_balance(0, rep.cache()));
+        assert_eq!(77, cache_balance(1, rep.cache()));
 
         let mut txs = vec![];
         for i in 0..4 {
@@ -210,21 +219,21 @@ mod tests {
         }
         let result = rep.run_transition(txs);
         assert_ok!(result);
-        assert_eq!(60, cache_balance(0, rep.cache()));
-        assert_eq!(31, cache_balance(1, rep.cache()));
+        assert_eq!(110, cache_balance(0, rep.cache()));
+        assert_eq!(81, cache_balance(1, rep.cache()));
 
-        // Send 8 batches of txs of 9 from A to B.
-        // Each batch should cost 1 (10 in total) so A's balance
-        // should be completely empty after only 6, leaving 2 of
-        // them as invalid.
+        // Send 6 batches of txs of 20 from A to B.
+        // Each batch should cost 1 (21 in total) so A's balance
+        // should not be sufficient which means that we are bailing.
+        // No change will occur.
         let mut txs = vec![];
         for i in 0..8 {
-            txs.push(Transact::new(0, 1, 9));
+            txs.push(Transact::new(0, 1, 20));
         }
         let result = rep.run_transition(txs);
         assert_err!(result);
-        assert_eq!(0, cache_balance(0, rep.cache()));
-        assert_eq!(85, cache_balance(1, rep.cache()));
+        assert_eq!(110, cache_balance(0, rep.cache()));
+        assert_eq!(81, cache_balance(1, rep.cache()));
     }
 
     #[test]
@@ -234,7 +243,7 @@ mod tests {
         assert_eq!(0, cache_balance(0, rep.cache()));
         assert_eq!(0, cache_balance(1, rep.cache()));
 
-        inc_balance(0, 50, rep.cache());
+        rep.fund(0, 50);
         let tx = vec![Transact::new(0, 1, 50)];
         let result = rep.run_transition(tx);
         assert_err!(result);
