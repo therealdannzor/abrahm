@@ -45,7 +45,7 @@ pub fn filter_viewchange(needle: View, haystack: Vec<ViewChangeMessage>) -> Vec<
 }
 
 // Filters all messages in the same consensus phase. Does not modify input.
-pub fn filter_phase(needle: State, haystack: Vec<M>) -> Vec<M> {
+pub fn filter_phase(needle: State, haystack: &Vec<M>) -> Vec<M> {
     let mut result: Vec<M> = Vec::new();
     for m in haystack.iter().clone() {
         if m.phase == needle {

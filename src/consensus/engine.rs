@@ -272,14 +272,14 @@ impl Engine {
     // Assert ageement of at least 2F+1 (>2/3) out of a total of N=3F+1 nodes.
     // Assumes that the message set is for a particular view and that we do not
     // accept duplicates to the message set.
-    fn is_quorum(self, message_set: Vec<M>) -> Result<String, &'static str> {
+    fn is_quorum(&self) -> Result<String, &'static str> {
         if self.val_engine.big_n() < 4 {
             panic!("invalid validator set size, this should not happen");
         }
 
         // Make sure we have messages from:
         // the same phase
-        let ft = filter_phase(self.val_engine.phase(), self.working_buffer);
+        let ft = filter_phase(self.val_engine.phase(), &self.working_buffer);
         // and the same view.
         let ft = filter_view(self.val_engine.view(), ft);
 
@@ -400,9 +400,11 @@ impl Engine {
                         .prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        unimplemented!(
-                            "verify that we have quorum of preprepares and move to prepare"
-                        );
+                        if self.is_quorum().is_ok() {
+                            self.val_engine.next_phase();
+                        } else {
+                            return Err(std::io::Error::new(ErrorKind::NotFound, "no quorum yet"));
+                        }
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
                     }
