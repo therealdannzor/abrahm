@@ -272,7 +272,7 @@ impl Engine {
     // Assert ageement of at least 2F+1 (>2/3) out of a total of N=3F+1 nodes.
     // Assumes that the message set is for a particular view and that we do not
     // accept duplicates to the message set.
-    fn is_quorum(&self) -> Result<String, &'static str> {
+    fn is_quorum(&self) -> Result<String, std::io::Error> {
         if self.val_engine.big_n() < 4 {
             panic!("invalid validator set size, this should not happen");
         }
@@ -296,7 +296,7 @@ impl Engine {
         if amount >= quorum {
             Ok(vote)
         } else {
-            Err("no quorum achieved")
+            Err(std::io::Error::new(ErrorKind::Other, "no quorum achieved"))
         }
     }
 
@@ -400,10 +400,11 @@ impl Engine {
                         .prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        if self.is_quorum().is_ok() {
+                        let quo = self.is_quorum();
+                        if quo.is_ok() {
                             self.val_engine.next_phase();
                         } else {
-                            return Err(std::io::Error::new(ErrorKind::NotFound, "no quorum yet"));
+                            return Err(quo.err().unwrap());
                         }
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
@@ -414,9 +415,12 @@ impl Engine {
                         .prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        unimplemented!(
-                            "verify that we have quorum of preprepares and move to prepare"
-                        );
+                        let quo = self.is_quorum();
+                        if quo.is_ok() {
+                            self.val_engine.next_phase();
+                        } else {
+                            return Err(quo.err().unwrap());
+                        }
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
                     }
