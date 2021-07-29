@@ -22,6 +22,9 @@ pub struct ValidatorProcess {
     // The latest view as far as this replica is concerned.
     view: View,
 
+    // Transaction nonce
+    sequence_number: usize,
+
     // The replica which starts the normal-case operation of sending a pre-prepare message with
     // a request. Note that the primary does not have to be the one who actually proposes the
     // request but assigns a sequence number to it and signs it. The other replicas will, in
@@ -114,6 +117,10 @@ impl ValidatorProcess {
         v
     }
 
+    pub fn n(&self) -> usize {
+        self.sequence_number.clone()
+    }
+
     pub fn new(id: EcdsaPublicKey, set: Vec<EcdsaPublicKey>) -> Self {
         if set.len() < 4 {
             panic!("need at least 4 validators");
@@ -122,6 +129,7 @@ impl ValidatorProcess {
         Self {
             id,
             view: 0,
+            sequence_number: 0,
             primary: set[0].clone(),
             set,
             phase: State::init(),

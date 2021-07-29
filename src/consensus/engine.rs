@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 use crate::consensus::request::Request;
+use crate::ledger::replay::Replay;
 use std::{collections::HashMap, io::ErrorKind, vec::Vec};
 
 use super::common::{
@@ -51,6 +52,9 @@ pub struct Engine {
 
     // Only accept sequence numbers below this
     high_watermark: u64,
+
+    // Cache transitions and replay a request to verify its validity
+    rep: Replay,
 }
 
 #[derive(Clone)]
@@ -94,8 +98,8 @@ impl AckMessagesView {
     fn set_request(&mut self, request: Option<Request>) {
         self.request = request;
     }
-    fn set_preprepare(&mut self, message: Option<M>) {
-        self.preprepare = message;
+    fn set_preprepare(&mut self, message: M) {
+        self.preprepare = Some(message);
     }
     fn set_prepare(mut self, message: M) {
         self.prepare = Some(message);
@@ -344,7 +348,43 @@ impl Engine {
             // accept messages
             0 => {
                 if self.message_log.get(&curr_view).unwrap().request.is_some() {
-                    unimplemented!("process request, and if valid, proceed to preprepare on it");
+                    let txs = self
+                        .message_log
+                        .get(&curr_view)
+                        .clone()
+                        .unwrap()
+                        .request
+                        .as_ref()
+                        .unwrap()
+                        .next_state()
+                        .txs();
+                    let is_valid = self.rep.run_transition(txs);
+                    if is_valid.is_err() {
+                        return Err(is_valid.err().unwrap());
+                    }
+                    let pk = self.val_engine.id().clone();
+                    // public key type is always valid utf-8
+                    let pk = std::str::from_utf8(&pk.as_ref().to_vec())
+                        .unwrap()
+                        .to_string();
+                    let curr_state = self.val_engine.phase();
+                    let seq_number = self.val_engine.n();
+                    let digest: String = self
+                        .message_log
+                        .get(&curr_view)
+                        .clone()
+                        .unwrap()
+                        .request
+                        .as_ref()
+                        .unwrap()
+                        .digest();
+                    let preprepare = M::new(curr_state, pk, curr_view, seq_number as u64, digest);
+                    self.message_log
+                        .get_mut(&curr_view)
+                        .unwrap()
+                        .set_preprepare(preprepare);
+                    // proceed to prepepared
+                    self.val_engine.next_phase()
                 } else {
                     return Err(std::io::Error::new(
                         ErrorKind::NotConnected,
@@ -506,6 +546,7 @@ impl Engine {
             timeout: std::time::Duration::from_secs(5), // initial guesstimate
             low_watermark: 0,
             high_watermark: 100, // initial guesstimate
+            rep: Replay::new(),
         }
     }
 
@@ -526,6 +567,7 @@ impl Engine {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::consensus::testcommons::generate_keys;
@@ -594,7 +636,7 @@ mod tests {
             .message_log
             .get_mut(&view)
             .unwrap()
-            .set_preprepare(Some(message));
+            .set_preprepare(message);
 
         // failing due to missing signatures
         assert_err!(engine.prepared(r1.clone(), view, seq_no));

@@ -23,7 +23,7 @@ pub struct Transition {
     // current state as a hash (S0)
     from_root_hash: String,
     // the operations which translates to the next state
-    txs: std::vec::Vec<Transact>,
+    txs: Vec<Transact>,
     // the new state hash after operations are applied (S1)
     to_root_hash: String,
 }
@@ -56,6 +56,10 @@ impl Transition {
             txs,
             to_root_hash: next_state,
         }
+    }
+
+    pub fn txs(&self) -> Vec<Transact> {
+        self.txs.clone()
     }
 
     pub fn digest(&self) -> String {
