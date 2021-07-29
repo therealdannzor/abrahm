@@ -110,11 +110,20 @@ impl AckMessagesView {
     fn add_preprepare_sig(&mut self, message: M) {
         self.preprepare_sigs.push(message);
     }
+    fn set_preprepare_sigs(&mut self, message: Vec<M>) {
+        self.preprepare_sigs = message;
+    }
     fn add_prepare_sig(mut self, message: M) {
         self.prepare_sigs.push(message);
     }
+    fn set_prepare_sigs(&mut self, message: Vec<M>) {
+        self.prepare_sigs = message;
+    }
     fn add_commit_sig(&mut self, message: M) {
         self.commit_sigs.push(message);
+    }
+    fn set_commit_sigs(&mut self, message: Vec<M>) {
+        self.commit_sigs = message;
     }
 }
 impl AsRef<AckMessagesView> for AckMessagesView {
@@ -272,16 +281,20 @@ impl Engine {
     // Assert ageement of at least 2F+1 (>2/3) out of a total of N=3F+1 nodes.
     // Assumes that the message set is for a particular view and that we do not
     // accept duplicates to the message set.
-    fn is_quorum(&self) -> Result<String, std::io::Error> {
+    // If there is a quorum (agreement), we store the messages in our log and
+    // return the proposal.
+    fn process_quorum(&mut self) -> Result<String, std::io::Error> {
         if self.val_engine.big_n() < 4 {
             panic!("invalid validator set size, this should not happen");
         }
 
         // Make sure we have messages from:
         // the same phase
-        let ft = filter_phase(self.val_engine.phase(), &self.working_buffer);
+        let ph = self.val_engine.phase();
+        let ft = filter_phase(ph.clone(), &self.working_buffer);
         // and the same view.
-        let ft = filter_view(self.val_engine.view(), ft);
+        let v = self.val_engine.view().clone();
+        let ft = filter_view(v, ft.clone());
 
         // total unique votes (N)
         let n = ft.len();
@@ -291,9 +304,31 @@ impl Engine {
         // Quorum:                 2F + 1
         let quorum = gt_two_thirds(n);
 
-        let (vote, amount) = count_votes(ft);
+        let (vote, amount) = count_votes(ft.clone());
 
         if amount >= quorum {
+            let ack_m_v = self.message_log.get(&v).unwrap();
+            match ph.into_inner() {
+                // pending preprepared
+                1 => self
+                    .message_log
+                    .get_mut(&v)
+                    .unwrap()
+                    .set_preprepare_sigs(ft.clone()),
+                // pending prepared
+                2 => self
+                    .message_log
+                    .get_mut(&v)
+                    .unwrap()
+                    .set_prepare_sigs(ft.clone()),
+                // pending committed
+                3 => self
+                    .message_log
+                    .get_mut(&v)
+                    .unwrap()
+                    .set_commit_sigs(ft.clone()),
+                _ => (),
+            }
             Ok(vote)
         } else {
             Err(std::io::Error::new(ErrorKind::Other, "no quorum achieved"))
@@ -400,9 +435,10 @@ impl Engine {
                         .prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        let quo = self.is_quorum();
+                        let quo = self.process_quorum();
                         if quo.is_ok() {
                             self.val_engine.next_phase();
+                            self.working_buffer.clear();
                         } else {
                             return Err(quo.err().unwrap());
                         }
@@ -415,9 +451,10 @@ impl Engine {
                         .prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        let quo = self.is_quorum();
+                        let quo = self.process_quorum();
                         if quo.is_ok() {
                             self.val_engine.next_phase();
+                            self.working_buffer.clear();
                         } else {
                             return Err(quo.err().unwrap());
                         }
