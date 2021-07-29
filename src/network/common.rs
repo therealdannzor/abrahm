@@ -64,6 +64,7 @@ pub fn u8_to_ascii_decimal(input: u8) -> Vec<u8> {
     num
 }
 
+#[allow(dead_code)]
 pub fn usize_to_ascii_decimal(input: usize) -> Vec<u8> {
     let num: Vec<u8> = input
         .to_string()

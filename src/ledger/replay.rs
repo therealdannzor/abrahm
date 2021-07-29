@@ -18,6 +18,7 @@ impl Replay {
         }
     }
 
+    #[allow(dead_code)]
     pub fn cache(&self) -> HashMap<u8, Peer> {
         self.cache.clone()
     }
@@ -69,6 +70,7 @@ impl Replay {
         Ok(())
     }
 
+    #[allow(dead_code)]
     // funds the balance with an amount and returns a Some with the updated peer.
     // If the amount is invalid it returns None.
     fn fund(&mut self, peer_id: u8, amount: u32) -> Result<Peer, std::io::Error> {
@@ -91,6 +93,7 @@ impl Replay {
         }
     }
 
+    #[allow(dead_code)]
     // defunds the balance with an amount. If the key is not recognized, it inserts
     // a default value of 0 before it subtracts the amount.
     fn defund(&mut self, peer_id: u8, amount: u32) -> Result<Peer, std::io::Error> {
