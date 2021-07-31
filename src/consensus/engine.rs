@@ -471,9 +471,15 @@ impl Engine {
                         .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        unimplemented!("verify that we have a quorum of prepares move to commit");
+                        let quo = self.process_quorum();
+                        if quo.is_ok() {
+                            self.val_engine.next_phase();
+                            self.working_buffer.clear();
+                        } else {
+                            return Err(quo.err().unwrap());
+                        }
                     } else {
-                        return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
+                        return Err(std::io::Error::new(ErrorKind::Other, "not committed yet"));
                     }
                 } else if self.message_log.get(&curr_view).unwrap().commit_sigs.len() > 0 {
                     let sequence_number = msg_log.prepare_sigs[0].n;
@@ -481,7 +487,13 @@ impl Engine {
                         .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        unimplemented!("verify that we have a quorum of commits and commit the request as a block");
+                        let quo = self.process_quorum();
+                        if quo.is_ok() {
+                            self.val_engine.next_phase();
+                            self.working_buffer.clear();
+                        } else {
+                            return Err(quo.err().unwrap());
+                        }
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not committed yet"));
                     }
@@ -500,7 +512,13 @@ impl Engine {
                         .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        unimplemented!("broadcast that block has been committed and start consensus process from scratch");
+                        let quo = self.process_quorum();
+                        if quo.is_ok() {
+                            self.val_engine.next_phase();
+                            self.working_buffer.clear();
+                        } else {
+                            return Err(quo.err().unwrap());
+                        }
                     } else {
                         return Err(std::io::Error::new(
                             ErrorKind::Interrupted,
@@ -513,6 +531,13 @@ impl Engine {
                         .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
+                        let quo = self.process_quorum();
+                        if quo.is_ok() {
+                            self.val_engine.next_phase();
+                            self.working_buffer.clear();
+                        } else {
+                            return Err(quo.err().unwrap());
+                        }
                         unimplemented!("broadcast that block has been committed and start consensus process from scratch");
                     } else {
                         return Err(std::io::Error::new(
