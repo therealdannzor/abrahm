@@ -435,13 +435,7 @@ impl Engine {
                         .prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        let quo = self.process_quorum();
-                        if quo.is_ok() {
-                            self.val_engine.next_phase();
-                            self.working_buffer.clear();
-                        } else {
-                            return Err(quo.err().unwrap());
-                        }
+                        self.next_3p_consensus()?;
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
                     }
@@ -451,13 +445,7 @@ impl Engine {
                         .prepared(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        let quo = self.process_quorum();
-                        if quo.is_ok() {
-                            self.val_engine.next_phase();
-                            self.working_buffer.clear();
-                        } else {
-                            return Err(quo.err().unwrap());
-                        }
+                        self.next_3p_consensus()?;
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not prepared yet"));
                     }
@@ -471,13 +459,7 @@ impl Engine {
                         .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        let quo = self.process_quorum();
-                        if quo.is_ok() {
-                            self.val_engine.next_phase();
-                            self.working_buffer.clear();
-                        } else {
-                            return Err(quo.err().unwrap());
-                        }
+                        self.next_3p_consensus()?;
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not committed yet"));
                     }
@@ -487,13 +469,7 @@ impl Engine {
                         .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        let quo = self.process_quorum();
-                        if quo.is_ok() {
-                            self.val_engine.next_phase();
-                            self.working_buffer.clear();
-                        } else {
-                            return Err(quo.err().unwrap());
-                        }
+                        self.next_3p_consensus()?;
                     } else {
                         return Err(std::io::Error::new(ErrorKind::Other, "not committed yet"));
                     }
@@ -512,13 +488,7 @@ impl Engine {
                         .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        let quo = self.process_quorum();
-                        if quo.is_ok() {
-                            self.val_engine.next_phase();
-                            self.working_buffer.clear();
-                        } else {
-                            return Err(quo.err().unwrap());
-                        }
+                        self.next_3p_consensus()?;
                     } else {
                         return Err(std::io::Error::new(
                             ErrorKind::Interrupted,
@@ -531,13 +501,7 @@ impl Engine {
                         .committed(msg_log_request.clone().unwrap(), curr_view, sequence_number)
                         .is_ok()
                     {
-                        let quo = self.process_quorum();
-                        if quo.is_ok() {
-                            self.val_engine.next_phase();
-                            self.working_buffer.clear();
-                        } else {
-                            return Err(quo.err().unwrap());
-                        }
+                        self.next_3p_consensus()?;
                         unimplemented!("broadcast that block has been committed and start consensus process from scratch");
                     } else {
                         return Err(std::io::Error::new(
@@ -598,6 +562,19 @@ impl Engine {
         let curr_view = self.val_engine.view();
         let _req = &self.message_log.get(&curr_view).as_ref().unwrap().request;
         true
+    }
+
+    // next_3p_consensus should be used to move from preprepare to prepare to commit
+    // and back to receiving requests
+    fn next_3p_consensus(&mut self) -> Result<(), std::io::Error> {
+        let quo = self.process_quorum();
+        if quo.is_ok() {
+            self.val_engine.next_phase();
+            self.working_buffer.clear();
+            Ok(())
+        } else {
+            return Err(quo.err().unwrap());
+        }
     }
 
     pub fn new(id: EcdsaPublicKey, validators: Vec<EcdsaPublicKey>) -> Self {
