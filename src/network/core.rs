@@ -8,12 +8,8 @@ use crate::consensus::request::Request;
 use std::io::ErrorKind;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 
-// Net handles the blockchain network communication.
-//
-// The message worker: (1) signs and prepares messages to be dispatched, and (2) validates received
-// messages.
-//
-// The node contains the record of TCP connections and handles the different network events.
+// Net handles the blockchain network communication. It does this through assembly of
+// consensus messages and dispatches them to external peers.
 pub struct Net {
     // Message IO
     pub message_worker: MessageWorker,
@@ -26,6 +22,33 @@ impl Net {
         Self {
             message_worker: MessageWorker::new(secret_key, public_key.clone()),
             node: Node::new(public_key, stream_cap),
+        }
+    }
+
+    pub fn serve(mut self) -> Option<u16> {
+        let res = self.node.serve();
+        if res.is_none() {
+            return None;
+        } else {
+            return res;
+        }
+    }
+
+    pub fn broadcast_data(self, short_identifier: u8, message: Vec<u8>) -> std::io::Result<()> {
+        let res = self.node.send(message);
+        if res.is_err() {
+            return Err(res.err().unwrap());
+        }
+        Ok(())
+    }
+
+    // crunch_message consumes the oldest unprocessed message stored in the mailbox
+    pub fn crunch_message(self) -> Option<Vec<u8>> {
+        let res = self.node.get_next_message();
+        if res.is_none() {
+            return None;
+        } else {
+            res
         }
     }
 

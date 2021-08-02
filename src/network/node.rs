@@ -55,6 +55,15 @@ impl Node {
     pub fn port(self) -> Option<u16> {
         self.handler.active_listen_port()
     }
+
+    pub fn serve(mut self) -> Option<u16> {
+        let res = self.handler.start();
+        if res.is_err() {
+            return None;
+        } else {
+            return self.port();
+        }
+    }
 }
 
 // TargetSocket encapsulates information on other hosts this client communicates with
