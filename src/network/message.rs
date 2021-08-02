@@ -48,13 +48,13 @@ impl MessageWorker {
 
     // The message structure is as follows:
     //
-    // * consensus round type: 1 character (0 is for a request/tx)
+    // * consensus round: 0 (request / txs), 1 (preprepare), 2 (prepare), 3 (commit),
+    //   4 (view change), 5 (new view), and 6 (checkpoint)
     // * peer identifier: 1 character (digit)
     // * message payload length: 3 characters
     // * serialized message: varying length (indicated by previous length flag)
-    // * signed message digest: the rest of the message, does not (TODO: or does it?)
-    //   matter that its length differs with ± 2 chars, althought it could be interesting#
-    //   to understand as an exercise TODO!)
+    // * signed message digest: the rest of the message (TODO: understand why its length
+    //   differs with ± 2 chars)
     pub fn validate_received(&self, message: Vec<u8>) -> Result<bool, Box<dyn std::error::Error>> {
         if message.len() < 152 {
             return Err(validation_error("recv message length less than expected"));
@@ -155,7 +155,7 @@ mod tests {
         let signed = mw.sign_message_digest(&String::from("1"));
         let sign_len = usize_to_ascii_decimal(signed.len());
         // Construct the complete message as passed over TCP:
-        // Index 0:        Is consensus (1) or transaction (0)
+        // Index 0:        Consensus phase
         // Index 1:        Peer ID
         // Index 2 to 4:   Length (L) of payload
         // Index 5 to 5+L: Payload
