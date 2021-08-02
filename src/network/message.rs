@@ -55,7 +55,7 @@ impl MessageWorker {
     // * serialized message: varying length (indicated by previous length flag)
     // * signed message digest: the rest of the message (TODO: understand why its length
     //   differs with ± 2 chars)
-    pub fn validate_received(&self, message: Vec<u8>) -> Result<bool, Box<dyn std::error::Error>> {
+    pub fn validate_received(&self, message: Vec<u8>) -> Result<(), std::io::Error> {
         if message.len() < 152 {
             return Err(validation_error("recv message length less than expected"));
         }
@@ -98,7 +98,7 @@ impl MessageWorker {
             return Err(validation_error("message authenticity mismatch"));
         }
 
-        Ok(true)
+        Ok(())
     }
 }
 
@@ -111,8 +111,11 @@ impl fmt::Display for MessageValidationError {
 }
 impl std::error::Error for MessageValidationError {}
 
-fn validation_error(text: &str) -> Box<dyn std::error::Error + 'static> {
-    Box::new(MessageValidationError(text.into()))
+fn validation_error(text: &str) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Other,
+        MessageValidationError(text.into()),
+    )
 }
 
 pub fn validate_public_key(key: &[u8]) -> Option<PublicKey> {
@@ -141,7 +144,7 @@ mod tests {
     use themis::keygen;
     use themis::keys::EcdsaPublicKey;
     use themis::secure_message::{SecureSign, SecureVerify};
-    use tokio_test::assert_err;
+    use tokio_test::{assert_err, assert_ok};
 
     #[test]
     pub fn sign_and_decrypt_consensus_message() {
@@ -215,7 +218,7 @@ mod tests {
         if result.is_err() {
             panic!("{:?}", result.err());
         }
-        assert!(result.unwrap())
+        assert_ok!(result);
     }
 
     #[test]
