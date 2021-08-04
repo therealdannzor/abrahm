@@ -20,6 +20,7 @@ pub fn remove_suffix<'a>(s: &'a &str, p: &str) -> &'a str {
     }
 }
 
+#[allow(unused)]
 pub fn remove_trail_chars(s: String) -> Option<String> {
     // check we have a full public key string
     if s.len() == 90 {
