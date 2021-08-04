@@ -1,6 +1,6 @@
 #![allow(unused)]
 use crate::swiss_knife::helper;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::env;
 use themis::keygen::gen_ec_key_pair;
 use themis::keys::EcdsaPublicKey;
@@ -14,13 +14,13 @@ pub struct AccountID {
     pub tx_count: u16,
 }
 
-#[derive(Serialize)]
-struct KeyFile {
+#[derive(Deserialize, Serialize)]
+pub struct KeyFile {
     public: String,
     secret: String,
 }
 impl KeyFile {
-    fn new(public: String, secret: String) -> Self {
+    pub fn new(public: String, secret: String) -> Self {
         Self { public, secret }
     }
 }
