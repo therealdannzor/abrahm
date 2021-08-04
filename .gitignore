@@ -1,9 +1,8 @@
 # build folder
 /target
 
-# keypair
-private.key
-public.key
-
 # tmp test folder
 /test
+
+# key pair
+keyfile.dat
