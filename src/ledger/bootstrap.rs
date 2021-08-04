@@ -1,5 +1,5 @@
 #![allow(unused)]
-use super::account_info::KeyFile;
+use super::keystore::KeyFile;
 use crate::swiss_knife::helper::{is_string_valid_ecdsa, read_file_by_lines};
 use std::convert::TryFrom;
 use themis::keys::EcdsaPublicKey;

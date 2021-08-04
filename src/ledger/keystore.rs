@@ -5,7 +5,7 @@ use std::env;
 use themis::keygen::gen_ec_key_pair;
 use themis::keys::EcdsaPublicKey;
 
-pub struct AccountID {
+pub struct KeyStore {
     // The account identifier (in hexadecimal)
     pub address: EcdsaPublicKey,
     // The file path to the secret key
@@ -25,7 +25,7 @@ impl KeyFile {
     }
 }
 
-impl AccountID {
+impl KeyStore {
     pub fn new() -> Self {
         // get path to the root of the project (location of cargo manifest)
         let cargo_path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
