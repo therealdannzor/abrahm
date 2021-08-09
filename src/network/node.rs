@@ -19,29 +19,29 @@ use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Registry, Token};
 use themis::keys::EcdsaPublicKey;
 
-// Node is the highest abstraction for node-to-node communication on the network
-pub struct Node {
+// NodeActor is the highest abstraction for node-to-node communication on the network
+pub struct NodeActor {
     // The operator and owner of any funds related to this node
     id: EcdsaPublicKey,
     // Handler for TCP connections
-    handler: TcpHandler,
+    tcp: TcpHandler,
 }
-impl Node {
+impl NodeActor {
     pub fn new(id: EcdsaPublicKey, stream_cap: usize) -> Self {
         Self {
             id,
-            handler: TcpHandler::new(stream_cap),
+            tcp: TcpHandler::new(stream_cap),
         }
     }
 
     // send dispatches a message to be sent to other peers
     pub fn send(self, message: Vec<u8>) -> std::io::Result<bool> {
-        return self.handler.enqueue_data_to_send(message);
+        return self.tcp.enqueue_data_to_send(message);
     }
 
     // check_mailbox returns received messages from other peers
     pub fn check_mailbox(self) -> VecDeque<Vec<u8>> {
-        self.handler.mailbox()
+        self.tcp.mailbox()
     }
 
     // get_next_message pops the next message according to FIFO
@@ -53,11 +53,11 @@ impl Node {
     // If is listens to a port, then the Option is a `Some` value and can be consumed.
     // If is does not, it is `None`.
     pub fn port(self) -> Option<u16> {
-        self.handler.active_listen_port()
+        self.tcp.active_listen_port()
     }
 
     pub fn serve(mut self) -> Option<u16> {
-        let res = self.handler.start();
+        let res = self.tcp.start();
         if res.is_err() {
             return None;
         } else {
@@ -97,16 +97,16 @@ struct TcpHandler {
     // Map of `Token` (unique identifiers) -> `TcpStream`
     map: HashMap<Token, TargetSocket>,
 
-    // If the handler is currently listening to a socket
+    // If the tcp is currently listening to a socket
     listening: bool,
 
     // Port number, only when it is listening
     port: Option<u16>,
 
     /* Messages created in the backend to be sent to other peers */
-    // Transmit messages internally to the handler
+    // Transmit messages internally to the tcp
     sender: Sender<Vec<u8>>,
-    // Pull messages for the handler to dispatch
+    // Pull messages for the tcp to dispatch
     receiver: Receiver<Vec<u8>>,
 
     // Received messages from external peers
@@ -184,7 +184,7 @@ impl TcpHandler {
     //
     // 1. new connection event: register the stream and token in the polling mechanism
     //    and add this tuple to the hashmap registry
-    // 2. known connection event: pass the data to a handler
+    // 2. known connection event: pass the data to a tcp
     fn event_listener(&mut self, srv: TcpListener) -> std::io::Result<()> {
         let mut uniq_tkn = Token(PEER_CONN_TKN.0 + 1);
 
