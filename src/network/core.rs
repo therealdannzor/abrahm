@@ -2,7 +2,7 @@
 
 use super::common::usize_to_ascii_decimal;
 use super::message::MessageWorker;
-use super::node::Node;
+use super::node_actor::NodeActor;
 use crate::consensus::messages_tp::{Commit, Prepare, Preprepare};
 use crate::consensus::request::Request;
 use std::io::ErrorKind;
@@ -14,14 +14,14 @@ pub struct Net {
     // Message IO
     pub message_worker: MessageWorker,
     // Node communication IO
-    pub node: Node,
+    pub node: NodeActor,
 }
 
 impl Net {
     pub fn new(stream_cap: usize, public_key: EcdsaPublicKey, secret_key: EcdsaPrivateKey) -> Self {
         Self {
             message_worker: MessageWorker::new(secret_key, public_key.clone()),
-            node: Node::new(public_key, stream_cap),
+            node: NodeActor::new(public_key, stream_cap),
         }
     }
 
