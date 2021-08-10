@@ -1,5 +1,9 @@
 #![allow(unused)]
 
+use log::info;
+use mio::event::Event;
+use mio::net::{TcpListener, TcpStream};
+use mio::{Events, Interest, Poll, Registry, Token};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::io::prelude::*;
@@ -12,12 +16,8 @@ use std::sync::{
 };
 use std::thread::{self, spawn};
 use std::time;
-
-use log::info;
-use mio::event::Event;
-use mio::net::{TcpListener, TcpStream};
-use mio::{Events, Interest, Poll, Registry, Token};
 use themis::keys::EcdsaPublicKey;
+use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 
 // NodeActor is the highest abstraction for node-to-node communication on the network
 pub struct NodeActor {
@@ -25,12 +25,24 @@ pub struct NodeActor {
     id: EcdsaPublicKey,
     // Handler for TCP connections
     tcp: TcpHandler,
+    // Channel to the task (method) to perform
+    receiver: tokio_mpsc::Receiver<ActorMessage>,
 }
+pub enum ActorMessage {
+    OpenPort { response: oneshot::Sender<bool> },
+    GetPort { response: oneshot::Sender<u16> },
+}
+
 impl NodeActor {
-    pub fn new(id: EcdsaPublicKey, stream_cap: usize) -> Self {
+    pub fn new(
+        id: EcdsaPublicKey,
+        stream_cap: usize,
+        receiver: tokio_mpsc::Receiver<ActorMessage>,
+    ) -> Self {
         Self {
             id,
             tcp: TcpHandler::new(stream_cap),
+            receiver,
         }
     }
 
@@ -52,16 +64,27 @@ impl NodeActor {
     // port returns an Option with the port number that the client listens to.
     // If is listens to a port, then the Option is a `Some` value and can be consumed.
     // If is does not, it is `None`.
-    pub fn port(self) -> Option<u16> {
+    pub fn port(&self) -> Option<u16> {
         self.tcp.active_listen_port()
     }
 
-    pub fn serve(mut self) -> Option<u16> {
-        let res = self.tcp.start();
-        if res.is_err() {
-            return None;
-        } else {
-            return self.port();
+    pub fn handle_message(&mut self, msg: ActorMessage) {
+        println!("About to match the message to handle");
+        match msg {
+            ActorMessage::OpenPort { response } => {
+                println!("TCP Start");
+                let res = self.tcp.start();
+                let _ = response.send(true);
+            }
+            ActorMessage::GetPort { response } => {
+                println!("Get TCP Port");
+                let res = self.port();
+                if res.is_none() {
+                    let _ = response.send(0);
+                    return;
+                }
+                let _ = response.send(res.unwrap());
+            }
         }
     }
 }
@@ -142,12 +165,12 @@ impl TcpHandler {
         }
     }
 
-    fn start(&mut self) -> std::io::Result<()> {
+    pub async fn start(&mut self) {
         let listener = self.open_socket();
-        return self.event_listener(listener);
+        self.event_listener(listener);
     }
 
-    fn active_listen_port(self) -> Option<u16> {
+    fn active_listen_port(&self) -> Option<u16> {
         if self.port.is_some() {
             self.port
         } else {
@@ -172,6 +195,7 @@ impl TcpHandler {
         self.listening = true;
         self.port = Some(srv.local_addr().unwrap().port());
         info!("Listening on port: {:?}", self.port.unwrap());
+        println!("Listening on port: {}", self.port.unwrap());
 
         self.p
             .registry()
@@ -187,6 +211,7 @@ impl TcpHandler {
     // 2. known connection event: pass the data to a tcp
     fn event_listener(&mut self, srv: TcpListener) -> std::io::Result<()> {
         let mut uniq_tkn = Token(PEER_CONN_TKN.0 + 1);
+        println!("Event listener started");
 
         loop {
             match self.p.poll(&mut self.event_store, None) {
@@ -334,4 +359,13 @@ fn read_stream_data(
         info!("connection closed");
     }
     Ok(true)
+}
+
+pub async fn run_actor(mut actor: NodeActor) {
+    println!("About to start run_actor");
+    while let Some(msg) = actor.receiver.recv().await {
+        println!("Received something to handle at run_actor!!! <hypemode>");
+        actor.handle_message(msg);
+    }
+    println!("End of life of run_actor");
 }

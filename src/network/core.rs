@@ -2,11 +2,12 @@
 
 use super::common::usize_to_ascii_decimal;
 use super::message::MessageWorker;
-use super::node_actor::NodeActor;
+use super::node_actor::{ActorMessage, NodeActor};
 use crate::consensus::messages_tp::{Commit, Prepare, Preprepare};
 use crate::consensus::request::Request;
 use std::io::ErrorKind;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
+use tokio::sync::mpsc as tokio_mpsc;
 
 // Net handles the blockchain network communication. It does this through assembly of
 // consensus messages and dispatches them to external peers.
@@ -18,19 +19,15 @@ pub struct Net {
 }
 
 impl Net {
-    pub fn new(stream_cap: usize, public_key: EcdsaPublicKey, secret_key: EcdsaPrivateKey) -> Self {
+    pub fn new(
+        stream_cap: usize,
+        public_key: EcdsaPublicKey,
+        secret_key: EcdsaPrivateKey,
+        receiver: tokio_mpsc::Receiver<ActorMessage>,
+    ) -> Self {
         Self {
             message_worker: MessageWorker::new(secret_key, public_key.clone()),
-            node: NodeActor::new(public_key, stream_cap),
-        }
-    }
-
-    pub fn serve(mut self) -> Option<u16> {
-        let res = self.node.serve();
-        if res.is_none() {
-            return None;
-        } else {
-            return res;
+            node: NodeActor::new(public_key, stream_cap, receiver),
         }
     }
 
