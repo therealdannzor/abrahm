@@ -19,9 +19,6 @@ pub struct Blockchain {
     // account states
     account_db: StateDB,
 
-    // network and message management
-    net: Net,
-
     // consensus backend
     consensus: ConsensusChain,
 }
@@ -50,7 +47,6 @@ impl Blockchain {
             chain: vec![genesis_block.clone()],
             pool: TxPool::new(),
             account_db: account_db_setup(db_path),
-            net: Net::new(stream_cap, public_key.clone(), secret_key),
             consensus: ConsensusChain::new(
                 Engine::new(validators[0].clone(), validators.clone()),
                 genesis_block,
