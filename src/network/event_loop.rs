@@ -4,43 +4,69 @@ use super::client_handle::ClientHandle;
 use log::info;
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Registry, Token};
-use std::collections::{HashMap, VecDeque};
-use std::default::Default;
-use std::io::prelude::*;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::str::from_utf8;
+use std::{
+    collections::{HashMap, VecDeque},
+    default::Default,
+    io::prelude::*,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    str::from_utf8,
+};
 use themis::keys::EcdsaPublicKey;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::task::JoinHandle;
 
 pub enum ServerMessage {
     NewClient(EcdsaPublicKey, TcpListener),
-    ClientMessage(EcdsaPublicKey, Vec<u8>),
+    ClientMessage(Token, Vec<u8>),
     ErrorMessage(std::io::Error),
 }
 
 #[derive(Default, Debug)]
 struct ConnData {
-    clients: HashMap<EcdsaPublicKey, ClientMetadata>,
+    clients: HashMap<Token, ClientHandle>,
+    streams: HashMap<Token, TcpStream>,
 }
 
-#[derive(Debug)]
-struct ClientMetadata {
-    stream: TcpStream,
-    token: Token,
+impl ConnData {
+    fn new() -> Self {
+        Self {
+            clients: Default::default(),
+            streams: Default::default(),
+        }
+    }
+    fn insert_stream(mut self, token: Token, stream: TcpStream) {
+        self.streams.insert(token, stream);
+    }
 }
-impl ClientMetadata {
-    pub fn new(stream: TcpStream, token: Token) -> Self {
-        Self { stream, token }
-    }
 
-    fn tcp(&self) -> TcpStream {
-        self.stream
+pub struct ServerHandle {
+    tx: Sender<ServerMessage>,
+}
+
+impl ServerHandle {
+    pub fn new(tx: Sender<ServerMessage>) -> Self {
+        Self { tx }
     }
+}
+
+pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
+    let (send, recv) = channel(32);
+    let handle = ServerHandle::new(send);
+    let join = tokio::spawn(async move {
+        let res = match event_loop(recv).await {
+            Ok(()) => {}
+            Err(e) => {
+                panic!("event loop failed: {:?}", e);
+            }
+        };
+    });
+
+    (handle, join)
 }
 
 const PEER_TOKEN: Token = Token(0);
 
-async fn event_listener(mut recv: Receiver<ServerMessage>) {
+async fn event_loop(mut recv: Receiver<ServerMessage>) -> Result<(), std::io::Error> {
     let mut unique_token = Token(PEER_TOKEN.0 + 1);
     let mut data = ConnData::default();
     let mut poller = match Poll::new() {
@@ -68,11 +94,18 @@ async fn event_listener(mut recv: Receiver<ServerMessage>) {
                     Interest::READABLE.add(Interest::WRITABLE),
                 );
 
-                let client_dat = ClientMetadata::new(conn, token);
-                data.clients.insert(pk, client_dat);
+                data.streams.insert(token, conn);
             }
-            ServerMessage::ClientMessage(pk, msg) => {
-                let mut stream = data.clients.get(&pk).unwrap().tcp();
+            ServerMessage::ClientMessage(token, msg) => {
+                let mut stream = match data.streams.get_mut(&token) {
+                    Some(s) => s,
+                    None => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "client message missing token",
+                        ));
+                    }
+                };
                 if msg.len() > 0 {
                     write_stream_data(&mut stream, &msg);
                 } else {
@@ -88,6 +121,8 @@ async fn event_listener(mut recv: Receiver<ServerMessage>) {
             }
         }
     }
+
+    Ok(())
 }
 
 fn open_socket() -> TcpListener {
