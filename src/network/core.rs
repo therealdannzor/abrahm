@@ -2,7 +2,6 @@
 
 use super::common::usize_to_ascii_decimal;
 use super::message::MessageWorker;
-use super::node_actor::{ActorMessage, NodeActor};
 use crate::consensus::messages_tp::{Commit, Prepare, Preprepare};
 use crate::consensus::request::Request;
 use std::io::ErrorKind;
@@ -14,38 +13,12 @@ use tokio::sync::mpsc as tokio_mpsc;
 pub struct Net {
     // Message IO
     pub message_worker: MessageWorker,
-    // Node communication IO
-    pub node: NodeActor,
 }
 
 impl Net {
-    pub fn new(
-        stream_cap: usize,
-        public_key: EcdsaPublicKey,
-        secret_key: EcdsaPrivateKey,
-        receiver: tokio_mpsc::Receiver<ActorMessage>,
-    ) -> Self {
+    pub fn new(stream_cap: usize, public_key: EcdsaPublicKey, secret_key: EcdsaPrivateKey) -> Self {
         Self {
             message_worker: MessageWorker::new(secret_key, public_key.clone()),
-            node: NodeActor::new(public_key, stream_cap, receiver),
-        }
-    }
-
-    pub fn broadcast_data(self, short_identifier: u8, message: Vec<u8>) -> std::io::Result<()> {
-        let res = self.node.send(message);
-        if res.is_err() {
-            return Err(res.err().unwrap());
-        }
-        Ok(())
-    }
-
-    // crunch_message consumes the oldest unprocessed message stored in the mailbox
-    pub fn crunch_message(self) -> Option<Vec<u8>> {
-        let res = self.node.get_next_message();
-        if res.is_none() {
-            return None;
-        } else {
-            res
         }
     }
 
