@@ -12,10 +12,15 @@ use std::{
     str::from_utf8,
 };
 use themis::keys::EcdsaPublicKey;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, error::SendError, Receiver, Sender};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-pub enum ServerMessage {
+// InboundMessage holds the different message types which are sent to the server.
+// This includes both events from clients connecting but also internal events.
+pub enum InboundMessage {
+    OpenPort { response: oneshot::Sender<u16> },
+
     NewClient(EcdsaPublicKey, TcpListener),
     ClientMessage(Token, Vec<u8>),
     ErrorMessage(std::io::Error),
@@ -40,12 +45,21 @@ impl ConnData {
 }
 
 pub struct ServerHandle {
-    tx: Sender<ServerMessage>,
+    tx: Sender<InboundMessage>,
 }
 
 impl ServerHandle {
-    pub fn new(tx: Sender<ServerMessage>) -> Self {
+    pub fn new(tx: Sender<InboundMessage>) -> Self {
         Self { tx }
+    }
+
+    pub async fn expose_port(&self) -> Option<u16> {
+        let (send, receive) = oneshot::channel();
+        let msg = InboundMessage::OpenPort { response: send };
+        if self.tx.send(msg).await.is_err() {
+            return None;
+        }
+        Some(receive.await.unwrap())
     }
 }
 
@@ -66,7 +80,7 @@ pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
 
 const PEER_TOKEN: Token = Token(0);
 
-async fn event_loop(mut recv: Receiver<ServerMessage>) -> Result<(), std::io::Error> {
+async fn event_loop(mut recv: Receiver<InboundMessage>) -> Result<(), std::io::Error> {
     let mut unique_token = Token(PEER_TOKEN.0 + 1);
     let mut data = ConnData::default();
     let mut poller = match Poll::new() {
@@ -74,10 +88,11 @@ async fn event_loop(mut recv: Receiver<ServerMessage>) -> Result<(), std::io::Er
         Err(e) => panic!("failed to create poll: {:?}", e),
     };
     let mut mailbox = VecDeque::new();
+    let mut listen_port: Option<u16> = None;
 
     while let Some(msg) = recv.recv().await {
         match msg {
-            ServerMessage::NewClient(pk, stream) => {
+            InboundMessage::NewClient(pk, stream) => {
                 info!("new peer encountered");
                 let (mut conn, addr) = match stream.accept() {
                     Ok((conn, addr)) => (conn, addr),
@@ -96,7 +111,7 @@ async fn event_loop(mut recv: Receiver<ServerMessage>) -> Result<(), std::io::Er
 
                 data.streams.insert(token, conn);
             }
-            ServerMessage::ClientMessage(token, msg) => {
+            InboundMessage::ClientMessage(token, msg) => {
                 let mut stream = match data.streams.get_mut(&token) {
                     Some(s) => s,
                     None => {
@@ -113,7 +128,20 @@ async fn event_loop(mut recv: Receiver<ServerMessage>) -> Result<(), std::io::Er
                     read_stream_data(&mut stream, &mut mailbox);
                 }
             }
-            ServerMessage::ErrorMessage(e) => {
+            InboundMessage::OpenPort { response } => {
+                // if we have already opened a port, return the existing listen port
+                if listen_port.is_some() {
+                    let _ = response.send(listen_port.unwrap());
+                    continue;
+                }
+
+                let listener = open_socket();
+                let port = listener.local_addr().unwrap().port();
+                listen_port = Some(port);
+
+                let _ = response.send(port);
+            }
+            InboundMessage::ErrorMessage(e) => {
                 log::info!("error: {:?}", e.into_inner());
             }
             _ => {
