@@ -7,6 +7,7 @@ use mio::{Events, Interest, Poll, Registry, Token};
 use std::{
     collections::{HashMap, VecDeque},
     default::Default,
+    io,
     io::prelude::*,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::from_utf8,
@@ -21,9 +22,9 @@ use tokio::task::JoinHandle;
 pub enum InboundMessage {
     OpenPort { response: oneshot::Sender<u16> },
 
-    NewClient(EcdsaPublicKey, TcpListener),
+    NewClient(EcdsaPublicKey, TcpListener, oneshot::Sender<Token>),
     ClientMessage(Token, Vec<u8>),
-    ErrorMessage(std::io::Error),
+    ErrorMessage(io::Error),
 }
 
 #[derive(Default, Debug)]
@@ -61,6 +62,22 @@ impl ServerHandle {
         }
         Some(receive.await.unwrap())
     }
+
+    pub async fn new_client(
+        &self,
+        key: EcdsaPublicKey,
+        listener: TcpListener,
+    ) -> Result<Token, io::Error> {
+        let (send, receive) = oneshot::channel();
+        let msg = InboundMessage::NewClient(key, listener, send);
+        if self.tx.send(msg).await.is_err() {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "new client send message field",
+            ));
+        }
+        Ok(receive.await.unwrap())
+    }
 }
 
 pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
@@ -80,7 +97,7 @@ pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
 
 const PEER_TOKEN: Token = Token(0);
 
-async fn event_loop(mut recv: Receiver<InboundMessage>) -> Result<(), std::io::Error> {
+async fn event_loop(mut recv: Receiver<InboundMessage>) -> Result<(), io::Error> {
     let mut unique_token = Token(PEER_TOKEN.0 + 1);
     let mut data = ConnData::default();
     let mut poller = match Poll::new() {
@@ -92,11 +109,11 @@ async fn event_loop(mut recv: Receiver<InboundMessage>) -> Result<(), std::io::E
 
     while let Some(msg) = recv.recv().await {
         match msg {
-            InboundMessage::NewClient(pk, stream) => {
+            InboundMessage::NewClient(pk, stream, response) => {
                 info!("new peer encountered");
                 let (mut conn, addr) = match stream.accept() {
                     Ok((conn, addr)) => (conn, addr),
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         break;
                     }
                     Err(e) => panic!("unexpected event error: {:?}", e),
@@ -110,13 +127,15 @@ async fn event_loop(mut recv: Receiver<InboundMessage>) -> Result<(), std::io::E
                 );
 
                 data.streams.insert(token, conn);
+
+                let _ = response.send(token);
             }
             InboundMessage::ClientMessage(token, msg) => {
                 let mut stream = match data.streams.get_mut(&token) {
                     Some(s) => s,
                     None => {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
+                        return Err(io::Error::new(
+                            io::ErrorKind::NotFound,
                             "client message missing token",
                         ));
                     }
@@ -191,18 +210,18 @@ fn check_bytes_read(mut amount: usize, recv: &mut Vec<u8>) -> Option<&[u8]> {
     }
 }
 
-fn write_stream_data(connection: &mut TcpStream, data: &[u8]) -> std::io::Result<bool> {
+fn write_stream_data(connection: &mut TcpStream, data: &[u8]) -> io::Result<bool> {
     match connection.write(data) {
-        Ok(n) if n < data.len() => return Err(std::io::ErrorKind::WriteZero.into()),
+        Ok(n) if n < data.len() => return Err(io::ErrorKind::WriteZero.into()),
         Ok(_) => {
             return Ok(true);
         }
         // We are not ready yet
-        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
             return Ok(false);
         }
         // We can work around this by trying again
-        Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {
+        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
             return write_stream_data(connection, data)
         }
         // Unexpected errors that are undesired
@@ -213,7 +232,7 @@ fn write_stream_data(connection: &mut TcpStream, data: &[u8]) -> std::io::Result
 fn read_stream_data(
     connection: &mut TcpStream,
     mailbox: &mut VecDeque<Vec<u8>>,
-) -> std::io::Result<bool> {
+) -> io::Result<bool> {
     let mut conn_closed = false;
     let mut rcv_dat = vec![0, 255];
     let mut bytes_read = 0;
@@ -230,8 +249,8 @@ fn read_stream_data(
                     rcv_dat.resize(rcv_dat.len() + 1024, 0);
                 }
             }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
         }
     }
