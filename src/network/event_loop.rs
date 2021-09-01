@@ -3,7 +3,7 @@
 use super::client_handle::ClientHandle;
 use log::info;
 use mio::net::{TcpListener, TcpStream};
-use mio::{Events, Interest, Poll, Registry, Token};
+use mio::{event::Event, Events, Interest, Poll, Registry, Token};
 use std::{
     collections::{HashMap, VecDeque},
     default::Default,
@@ -23,26 +23,8 @@ pub enum InboundMessage {
     OpenPort { response: oneshot::Sender<u16> },
 
     NewClient(EcdsaPublicKey, TcpListener, oneshot::Sender<Token>),
-    ClientMessage(Token, Vec<u8>),
+    ToClient(Token, Vec<u8>),
     ErrorMessage(io::Error),
-}
-
-#[derive(Default, Debug)]
-struct ConnData {
-    clients: HashMap<Token, ClientHandle>,
-    streams: HashMap<Token, TcpStream>,
-}
-
-impl ConnData {
-    fn new() -> Self {
-        Self {
-            clients: Default::default(),
-            streams: Default::default(),
-        }
-    }
-    fn insert_stream(mut self, token: Token, stream: TcpStream) {
-        self.streams.insert(token, stream);
-    }
 }
 
 pub struct ServerHandle {
@@ -78,93 +60,76 @@ impl ServerHandle {
         }
         Ok(receive.await.unwrap())
     }
-}
+    pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
+        let (send, recv) = channel(32);
+        let handle = ServerHandle::new(send);
+        let join = tokio::spawn(async move {
+            let res = match event_loop(recv).await {
+                Ok(()) => {}
+                Err(e) => {
+                    panic!("event loop failed: {:?}", e);
+                }
+            };
+        });
 
-pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
-    let (send, recv) = channel(32);
-    let handle = ServerHandle::new(send);
-    let join = tokio::spawn(async move {
-        let res = match event_loop(recv).await {
-            Ok(()) => {}
-            Err(e) => {
-                panic!("event loop failed: {:?}", e);
-            }
-        };
-    });
-
-    (handle, join)
+        (handle, join)
+    }
 }
 
 const PEER_TOKEN: Token = Token(0);
+const SERVER_TOKEN: Token = Token(1024);
+const ECDSA_PUB_KEY_SIZE_BITS: usize = 90;
+const MESSAGE_SIZE: usize = 256; // TODO: assert proper size
 
 async fn event_loop(mut recv: Receiver<InboundMessage>) -> Result<(), io::Error> {
     let mut unique_token = Token(PEER_TOKEN.0 + 1);
-    let mut data = ConnData::default();
-    let mut poller = match Poll::new() {
-        Ok(poll) => poll,
-        Err(e) => panic!("failed to create poll: {:?}", e),
-    };
-    let mut mailbox = VecDeque::new();
-    let mut listen_port: Option<u16> = None;
+    let mut connections: HashMap<Token, TcpStream> = HashMap::new();
+    let mut poller = Poll::new()?;
+    let mut events = Events::with_capacity(1024);
+    let mut identities: HashMap<Token, EcdsaPublicKey> = HashMap::new();
+    let mut mailbox: HashMap<Token, VecDeque<String>> = HashMap::new();
 
-    while let Some(msg) = recv.recv().await {
-        match msg {
-            InboundMessage::NewClient(pk, stream, response) => {
-                info!("new peer encountered");
-                let (mut conn, addr) = match stream.accept() {
-                    Ok((conn, addr)) => (conn, addr),
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        break;
-                    }
-                    Err(e) => panic!("unexpected event error: {:?}", e),
-                };
-                info!("socket accepted connection from: {}", addr);
-                let token = next_token(&mut unique_token);
-                poller.registry().register(
-                    &mut conn,
-                    token,
-                    Interest::READABLE.add(Interest::WRITABLE),
-                );
+    // create listening server and register it will poll to receive events
+    let mut server = open_socket();
+    let port = server.local_addr().unwrap().port();
+    poller
+        .registry()
+        .register(&mut server, SERVER_TOKEN, Interest::READABLE);
 
-                data.streams.insert(token, conn);
+    loop {
+        poller.poll(&mut events, /* no timeout */ None)?;
 
-                let _ = response.send(token);
-            }
-            InboundMessage::ClientMessage(token, msg) => {
-                let mut stream = match data.streams.get_mut(&token) {
-                    Some(s) => s,
-                    None => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::NotFound,
-                            "client message missing token",
-                        ));
-                    }
-                };
-                if msg.len() > 0 {
-                    write_stream_data(&mut stream, &msg);
-                } else {
-                    // we do not have a message, so we process received messages
-                    read_stream_data(&mut stream, &mut mailbox);
-                }
-            }
-            InboundMessage::OpenPort { response } => {
-                // if we have already opened a port, return the existing listen port
-                if listen_port.is_some() {
-                    let _ = response.send(listen_port.unwrap());
-                    continue;
-                }
+        for event in events.iter() {
+            match event.token() {
+                SERVER_TOKEN => loop {
+                    let (mut conn, address) = match server.accept() {
+                        Ok((conn, address)) => (conn, address),
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            // this is normal, try again
+                            break;
+                        }
+                        Err(e) => {
+                            // something went really wrong
+                            return Err(e);
+                        }
+                    };
 
-                let listener = open_socket();
-                let port = listener.local_addr().unwrap().port();
-                listen_port = Some(port);
-
-                let _ = response.send(port);
-            }
-            InboundMessage::ErrorMessage(e) => {
-                log::info!("error: {:?}", e.into_inner());
-            }
-            _ => {
-                log::info!("unreachable arm, this should not happen");
+                    let new_friend_token = next_token(&mut unique_token);
+                    poller
+                        .registry()
+                        .register(&mut conn, new_friend_token, Interest::WRITABLE);
+                    connections.insert(new_friend_token, conn);
+                },
+                client_token => loop {
+                    // maybe we have an event
+                    let done = if let Some(conn) = connections.get_mut(&client_token) {
+                        let resp = handle_client_event(poller.registry(), conn, event, None);
+                        true
+                    } else {
+                        // false alarm, no event, just ignore
+                        false
+                    };
+                },
             }
         }
     }
@@ -172,9 +137,27 @@ async fn event_loop(mut recv: Receiver<InboundMessage>) -> Result<(), io::Error>
     Ok(())
 }
 
+fn handle_client_event(
+    registry: &Registry,
+    connection: &mut TcpStream,
+    event: &Event,
+    payload: Option<&[u8]>,
+) -> io::Result<Vec<u8>> {
+    let mut result: Vec<u8> = Vec::new();
+
+    if event.is_writable() && payload.is_some() {
+        let data = payload.unwrap();
+        write_stream_data(connection, data);
+    } else if event.is_readable() {
+        result = read_stream_data(connection).unwrap();
+    }
+
+    Ok(result)
+}
+
 fn open_socket() -> TcpListener {
     let loopback = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-    let socket = SocketAddr::new(loopback, /* dynamically allocate */ 0);
+    let socket = SocketAddr::new(loopback, 1024);
 
     let mut srv = match TcpListener::bind(socket) {
         Ok(s) => s,
@@ -229,13 +212,11 @@ fn write_stream_data(connection: &mut TcpStream, data: &[u8]) -> io::Result<bool
     }
 }
 
-fn read_stream_data(
-    connection: &mut TcpStream,
-    mailbox: &mut VecDeque<Vec<u8>>,
-) -> io::Result<bool> {
+fn read_stream_data(connection: &mut TcpStream) -> io::Result<Vec<u8>> {
     let mut conn_closed = false;
     let mut rcv_dat = vec![0, 255];
     let mut bytes_read = 0;
+    let mut result: Vec<u8> = Vec::new();
 
     loop {
         match connection.read(&mut rcv_dat[bytes_read..]) {
@@ -257,13 +238,13 @@ fn read_stream_data(
 
     let octs = check_bytes_read(bytes_read, &mut rcv_dat);
     if octs.is_none() {
-        return Ok(false);
+        return Ok(result);
     } else {
-        mailbox.push_back(octs.unwrap().to_vec());
+        result = octs.unwrap().to_vec();
     }
 
     if conn_closed {
         info!("connection closed");
     }
-    Ok(true)
+    Ok(result)
 }
