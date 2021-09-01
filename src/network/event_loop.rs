@@ -17,49 +17,21 @@ use tokio::sync::mpsc::{channel, error::SendError, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-// InboundMessage holds the different message types which are sent to the server.
-// This includes both events from clients connecting but also internal events.
-pub enum InboundMessage {
-    OpenPort { response: oneshot::Sender<u16> },
-
-    NewClient(EcdsaPublicKey, TcpListener, oneshot::Sender<Token>),
-    ToClient(Token, Vec<u8>),
+// ToFriendPeer is used to denote messages the server sends to other connected peers.
+pub enum ToFriendPeer {
+    Message(Token, Vec<u8>),
     ErrorMessage(io::Error),
 }
 
 pub struct ServerHandle {
-    tx: Sender<InboundMessage>,
+    tx: Sender<ToFriendPeer>,
 }
 
 impl ServerHandle {
-    pub fn new(tx: Sender<InboundMessage>) -> Self {
+    pub fn new(tx: Sender<ToFriendPeer>) -> Self {
         Self { tx }
     }
 
-    pub async fn expose_port(&self) -> Option<u16> {
-        let (send, receive) = oneshot::channel();
-        let msg = InboundMessage::OpenPort { response: send };
-        if self.tx.send(msg).await.is_err() {
-            return None;
-        }
-        Some(receive.await.unwrap())
-    }
-
-    pub async fn new_client(
-        &self,
-        key: EcdsaPublicKey,
-        listener: TcpListener,
-    ) -> Result<Token, io::Error> {
-        let (send, receive) = oneshot::channel();
-        let msg = InboundMessage::NewClient(key, listener, send);
-        if self.tx.send(msg).await.is_err() {
-            return Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "new client send message field",
-            ));
-        }
-        Ok(receive.await.unwrap())
-    }
     pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
         let (send, recv) = channel(32);
         let handle = ServerHandle::new(send);
@@ -81,7 +53,7 @@ const SERVER_TOKEN: Token = Token(1024);
 const ECDSA_PUB_KEY_SIZE_BITS: usize = 90;
 const MESSAGE_SIZE: usize = 256; // TODO: assert proper size
 
-async fn event_loop(mut recv: Receiver<InboundMessage>) -> Result<(), io::Error> {
+async fn event_loop(mut recv: Receiver<ToFriendPeer>) -> Result<(), io::Error> {
     let mut unique_token = Token(PEER_TOKEN.0 + 1);
     let mut connections: HashMap<Token, TcpStream> = HashMap::new();
     let mut poller = Poll::new()?;
