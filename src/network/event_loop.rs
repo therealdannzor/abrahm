@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 use super::client_handle::ClientHandle;
+use super::FromServerToClient;
 use log::info;
 use mio::net::{TcpListener, TcpStream};
 use mio::{event::Event, Events, Interest, Poll, Registry, Token};
@@ -17,23 +18,18 @@ use tokio::sync::mpsc::{channel, error::SendError, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-// ToFriendPeer is used to denote messages the server sends to other connected peers.
-pub enum ToFriendPeer {
-    Message(Token, Vec<u8>),
-    ErrorMessage(io::Error),
-}
-
+#[derive(Clone)]
 pub struct ServerHandle {
-    tx: Sender<ToFriendPeer>,
+    tx: Sender<FromServerToClient>,
 }
 
 impl ServerHandle {
-    pub fn new(tx: Sender<ToFriendPeer>) -> Self {
+    pub fn new(tx: Sender<FromServerToClient>) -> Self {
         Self { tx }
     }
 
     pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
-        let (send, recv) = channel(32);
+        let (send, recv): (Sender<FromServerToClient>, Receiver<FromServerToClient>) = channel(32);
         let handle = ServerHandle::new(send);
         let join = tokio::spawn(async move {
             let res = match event_loop(recv).await {
@@ -46,6 +42,12 @@ impl ServerHandle {
 
         (handle, join)
     }
+
+    pub async fn send(&mut self, message: FromServerToClient) {
+        if self.tx.send(message).await.is_err() {
+            panic!("there is no event loop running!");
+        }
+    }
 }
 
 const PEER_TOKEN: Token = Token(0);
@@ -53,12 +55,12 @@ const SERVER_TOKEN: Token = Token(1024);
 const ECDSA_PUB_KEY_SIZE_BITS: usize = 90;
 const MESSAGE_SIZE: usize = 256; // TODO: assert proper size
 
-async fn event_loop(mut recv: Receiver<ToFriendPeer>) -> Result<(), io::Error> {
+async fn event_loop(mut recv: Receiver<FromServerToClient>) -> Result<(), io::Error> {
     let mut unique_token = Token(PEER_TOKEN.0 + 1);
     let mut connections: HashMap<Token, TcpStream> = HashMap::new();
     let mut poller = Poll::new()?;
     let mut events = Events::with_capacity(1024);
-    let mut identities: HashMap<Token, EcdsaPublicKey> = HashMap::new();
+    let mut client_handle: HashMap<Token, ClientHandle> = HashMap::new();
     let mut mailbox: HashMap<Token, VecDeque<String>> = HashMap::new();
 
     // create listening server and register it will poll to receive events
