@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use super::client_handle::ClientHandle;
-use super::FromServerToClient;
+use super::ToServerEvent;
 use log::info;
 use mio::net::{TcpListener, TcpStream};
 use mio::{event::Event, Events, Interest, Poll, Registry, Token};
@@ -20,34 +20,37 @@ use tokio::task::JoinHandle;
 
 #[derive(Clone)]
 pub struct ServerHandle {
-    tx: Sender<FromServerToClient>,
+    tx: Sender<ToServerEvent>,
 }
 
 impl ServerHandle {
-    pub fn new(tx: Sender<FromServerToClient>) -> Self {
+    pub fn new(tx: Sender<ToServerEvent>) -> Self {
         Self { tx }
     }
 
-    pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
-        let (send, recv): (Sender<FromServerToClient>, Receiver<FromServerToClient>) = channel(32);
-        let handle = ServerHandle::new(send);
-        let join = tokio::spawn(async move {
-            let res = match event_loop(recv).await {
-                Ok(()) => {}
-                Err(e) => {
-                    panic!("event loop failed: {:?}", e);
-                }
-            };
-        });
-
-        (handle, join)
-    }
-
-    pub async fn send(&mut self, message: FromServerToClient) {
+    // send is used to signal an alert the server of:
+    // (1) a new client connection; or
+    // (2) a message from a known client
+    pub async fn send(&mut self, message: ToServerEvent) {
         if self.tx.send(message).await.is_err() {
             panic!("there is no event loop running!");
         }
     }
+}
+
+pub fn spawn_event_listener() -> (ServerHandle, JoinHandle<()>) {
+    let (send, recv): (Sender<ToServerEvent>, Receiver<ToServerEvent>) = channel(32);
+    let handle = ServerHandle::new(send);
+    let join = tokio::spawn(async move {
+        let res = match event_loop(recv).await {
+            Ok(()) => {}
+            Err(e) => {
+                panic!("event loop failed: {:?}", e);
+            }
+        };
+    });
+
+    (handle, join)
 }
 
 const PEER_TOKEN: Token = Token(0);
@@ -55,7 +58,7 @@ const SERVER_TOKEN: Token = Token(1024);
 const ECDSA_PUB_KEY_SIZE_BITS: usize = 90;
 const MESSAGE_SIZE: usize = 256; // TODO: assert proper size
 
-async fn event_loop(mut recv: Receiver<FromServerToClient>) -> Result<(), io::Error> {
+async fn event_loop(mut recv: Receiver<ToServerEvent>) -> Result<(), io::Error> {
     let mut unique_token = Token(PEER_TOKEN.0 + 1);
     let mut connections: HashMap<Token, TcpStream> = HashMap::new();
     let mut poller = Poll::new()?;
