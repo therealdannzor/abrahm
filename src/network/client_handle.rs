@@ -3,6 +3,7 @@
 use super::event_loop::ServerHandle;
 use super::{FromServerEvent, ToServerEvent};
 use mio::net::{SocketAddr, TcpStream};
+use mio::{Events, Interest, Poll, Token};
 use std::default::Default;
 use themis::keys::EcdsaPublicKey;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -12,7 +13,7 @@ use tokio::task::JoinHandle;
 #[derive(Debug)]
 pub struct ClientHandle {
     id: EcdsaPublicKey,
-    ip: SocketAddr,
+    socket: SocketAddr,
     chan: Sender<FromServerEvent>,
     kill: JoinHandle<()>,
 }
@@ -21,11 +22,16 @@ pub struct ClientHandle {
 impl ClientHandle {
     pub fn new(
         id: EcdsaPublicKey,
-        ip: SocketAddr,
+        socket: SocketAddr,
         chan: Sender<FromServerEvent>,
         kill: JoinHandle<()>,
     ) -> Self {
-        Self { id, ip, chan, kill }
+        Self {
+            id,
+            socket,
+            chan,
+            kill,
+        }
     }
 
     // send a message to this client actor
@@ -65,11 +71,12 @@ pub fn spawn_client_actor(
     handle: ServerHandle,
     stream: TcpStream,
 ) {
-    let (send, recv): (Sender<FromServerEvent>, Receiver<FromServerEvent>) = mpsc::channel(32);
+    let (mpsc_tx, mpsc_rx): (Sender<FromServerEvent>, Receiver<FromServerEvent>) =
+        mpsc::channel(32);
     let cd = ClientData {
-        id,
+        id: id.clone(),
         handle: handle.clone(),
-        chan: recv,
+        chan: mpsc_rx,
         stream,
     };
 
@@ -77,7 +84,11 @@ pub fn spawn_client_actor(
         oneshot::Sender<ClientHandle>,
         oneshot::Receiver<ClientHandle>,
     ) = oneshot::channel();
-    let kill = 1;
+    let kill = tokio::spawn(client_actor(oneshot_rx, cd));
+
+    let handle = ClientHandle::new(id, socket, mpsc_tx, kill);
+
+    let _ = oneshot_tx.send(handle);
 }
 
 async fn client_actor(oneshot_rx: oneshot::Receiver<ClientHandle>, mut data: ClientData) {
@@ -85,5 +96,18 @@ async fn client_actor(oneshot_rx: oneshot::Receiver<ClientHandle>, mut data: Cli
         Ok(handle) => handle,
         Err(_) => return,
     };
-    data.handle.send(ToServerEvent::NewClient(oneshot_rx));
+
+    // send a receiver part to the server to receive events from the client
+    data.handle.send(ToServerEvent::NewClient(oneshot_rx)).await;
+
+    match client_worker(data).await {
+        Ok(()) => {}
+        Err(e) => eprintln!("this should not happen: {}", e),
+    }
+}
+
+async fn client_worker(mut data: ClientData) -> Result<(), std::io::Error> {
+    let mut poller = Poll::new()?;
+    let mut events = Events::with_capacity(256);
+    Ok(())
 }
