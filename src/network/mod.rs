@@ -4,11 +4,11 @@ pub mod core;
 pub mod event_loop;
 pub mod message;
 
-// FromServer is the message type sent from the server to clients
-pub struct FromServerToClient(Vec<u8>);
+// FromServerEvent is the event type emitted from the server
+pub struct FromServerEvent(Vec<u8>);
 
-// ToServer is the message type sent from clients to the server
-pub enum ToServerFromClient {
+// ToServerEvent is the event type the server reacts to (e.g., external messages)
+pub enum ToServerEvent {
     Message(themis::keys::EcdsaPublicKey, Vec<u8>),
     NewClient(crate::network::client_handle::ClientHandle),
 }

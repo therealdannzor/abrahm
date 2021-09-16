@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use super::event_loop::ServerHandle;
-use super::{FromServerToClient, ToServerFromClient};
+use super::{FromServerEvent, ToServerEvent};
 use mio::net::{SocketAddr, TcpStream};
 use std::default::Default;
 use themis::keys::EcdsaPublicKey;
@@ -13,22 +13,23 @@ use tokio::task::JoinHandle;
 pub struct ClientHandle {
     id: EcdsaPublicKey,
     ip: SocketAddr,
-    chan: Sender<FromServerToClient>,
+    chan: Sender<FromServerEvent>,
     kill: JoinHandle<()>,
 }
 
-// A handle used by the server to communicate with clients
+// A handle used by the server to communicate with the client
 impl ClientHandle {
     pub fn new(
         id: EcdsaPublicKey,
         ip: SocketAddr,
-        chan: Sender<FromServerToClient>,
+        chan: Sender<FromServerEvent>,
         kill: JoinHandle<()>,
     ) -> Self {
         Self { id, ip, chan, kill }
     }
 
-    pub fn send(&mut self, msg: FromServerToClient) -> Result<(), std::io::Error> {
+    // send a message to this client actor
+    pub fn send(&mut self, msg: FromServerEvent) -> Result<(), std::io::Error> {
         if self.chan.try_send(msg).is_err() {
             Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
@@ -50,11 +51,11 @@ impl Drop for ClientHandle {
     }
 }
 
-// ClientData contains all data needed to by this actor to communicate with one client
+// ClientData contains internal data needed to by this actor to communicate with a client
 struct ClientData {
     id: EcdsaPublicKey,
     handle: ServerHandle,
-    chan: Receiver<FromServerToClient>,
+    chan: Receiver<FromServerEvent>,
     stream: TcpStream,
 }
 
@@ -64,8 +65,7 @@ pub fn spawn_client_actor(
     handle: ServerHandle,
     stream: TcpStream,
 ) {
-    let (send, recv): (Sender<FromServerToClient>, Receiver<FromServerToClient>) =
-        mpsc::channel(32);
+    let (send, recv): (Sender<FromServerEvent>, Receiver<FromServerEvent>) = mpsc::channel(32);
     let cd = ClientData {
         id,
         handle: handle.clone(),
@@ -85,5 +85,5 @@ async fn client_actor(oneshot_rx: oneshot::Receiver<ClientHandle>, mut data: Cli
         Ok(handle) => handle,
         Err(_) => return,
     };
-    data.handle.send(ToServerFromClient::NewClient(oneshot_rx));
+    data.handle.send(ToServerEvent::NewClient(oneshot_rx));
 }
