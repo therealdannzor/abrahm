@@ -11,4 +11,5 @@ pub struct FromServerEvent(Vec<u8>);
 pub enum ToServerEvent {
     Message(themis::keys::EcdsaPublicKey, Vec<u8>),
     NewClient(crate::network::client_handle::ClientHandle),
+    FatalError(std::io::Error),
 }

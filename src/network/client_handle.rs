@@ -2,9 +2,11 @@
 
 use super::event_loop::ServerHandle;
 use super::{FromServerEvent, ToServerEvent};
-use mio::net::{SocketAddr, TcpStream};
+use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
 use std::default::Default;
+use std::io;
+use std::net::SocketAddr;
 use themis::keys::EcdsaPublicKey;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, oneshot};
@@ -12,7 +14,7 @@ use tokio::task::JoinHandle;
 
 #[derive(Debug)]
 pub struct ClientHandle {
-    id: EcdsaPublicKey,
+    id: Token,
     socket: SocketAddr,
     chan: Sender<FromServerEvent>,
     kill: JoinHandle<()>,
@@ -21,7 +23,7 @@ pub struct ClientHandle {
 // A handle used by the server to communicate with the client
 impl ClientHandle {
     pub fn new(
-        id: EcdsaPublicKey,
+        id: Token,
         socket: SocketAddr,
         chan: Sender<FromServerEvent>,
         kill: JoinHandle<()>,
@@ -59,18 +61,35 @@ impl Drop for ClientHandle {
 
 // ClientData contains internal data needed to by this actor to communicate with a client
 struct ClientData {
-    id: EcdsaPublicKey,
+    id: Token,
     handle: ServerHandle,
     chan: Receiver<FromServerEvent>,
     stream: TcpStream,
 }
 
-pub fn spawn_client_actor(
-    id: EcdsaPublicKey,
+pub async fn open_client_factory(id: Token, socket: SocketAddr, mut handle: ServerHandle) {
+    match client_factory_loop(id, socket, handle.clone()) {
+        Ok(()) => {}
+        Err(e) => {
+            handle.send(ToServerEvent::FatalError(e)).await;
+        }
+    }
+}
+
+fn client_factory_loop(
+    id: Token,
     socket: SocketAddr,
     handle: ServerHandle,
-    stream: TcpStream,
-) {
+) -> Result<(), io::Error> {
+    let listen = TcpListener::bind(socket)?;
+
+    loop {
+        let (tcp_connection, socket_addr) = listen.accept()?;
+        spawn_client_actor(id, socket_addr, handle.clone(), tcp_connection);
+    }
+}
+
+fn spawn_client_actor(id: Token, socket: SocketAddr, handle: ServerHandle, stream: TcpStream) {
     let (mpsc_tx, mpsc_rx): (Sender<FromServerEvent>, Receiver<FromServerEvent>) =
         mpsc::channel(32);
     let cd = ClientData {
