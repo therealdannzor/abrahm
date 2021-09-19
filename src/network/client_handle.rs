@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use super::event_loop::ServerHandle;
+use super::server_handle::ToServerHandle;
 use super::{FromServerEvent, ToServerEvent};
 use mio::net::{TcpListener, TcpStream};
 use mio::{Events, Interest, Poll, Token};
@@ -62,12 +62,12 @@ impl Drop for ClientHandle {
 // ClientData contains internal data needed to by this actor to communicate with a client
 struct ClientData {
     id: Token,
-    handle: ServerHandle,
+    handle: ToServerHandle,
     chan: Receiver<FromServerEvent>,
     stream: TcpStream,
 }
 
-pub async fn open_client_factory(id: Token, socket: SocketAddr, mut handle: ServerHandle) {
+pub async fn open_client_factory(id: Token, socket: SocketAddr, mut handle: ToServerHandle) {
     match client_factory_loop(id, socket, handle.clone()) {
         Ok(()) => {}
         Err(e) => {
@@ -79,7 +79,7 @@ pub async fn open_client_factory(id: Token, socket: SocketAddr, mut handle: Serv
 fn client_factory_loop(
     id: Token,
     socket: SocketAddr,
-    handle: ServerHandle,
+    handle: ToServerHandle,
 ) -> Result<(), io::Error> {
     let listen = TcpListener::bind(socket)?;
 
@@ -89,7 +89,7 @@ fn client_factory_loop(
     }
 }
 
-fn spawn_client_actor(id: Token, socket: SocketAddr, handle: ServerHandle, stream: TcpStream) {
+fn spawn_client_actor(id: Token, socket: SocketAddr, handle: ToServerHandle, stream: TcpStream) {
     let (mpsc_tx, mpsc_rx): (Sender<FromServerEvent>, Receiver<FromServerEvent>) =
         mpsc::channel(32);
     let cd = ClientData {
