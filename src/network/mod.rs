@@ -3,6 +3,7 @@ pub mod common;
 pub mod core;
 pub mod event_loop;
 pub mod message;
+pub mod tcp_utils;
 
 // FromServerEvent is the event type emitted from the server
 pub struct FromServerEvent(Vec<u8>);
