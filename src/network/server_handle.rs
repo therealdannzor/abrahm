@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use super::udp_utils::{next_token, open_socket};
-use super::FromServerEvent;
+use super::{FromServerEvent, PeerInfo};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
 use std::{
@@ -63,7 +63,7 @@ async fn event_loop(
 
     let _ = poller
         .registry()
-        .register(&mut socket, SOCKET_TOK, Interest::READABLE);
+        .register(&mut socket, SOCKET_TOK, INTERESTS);
 
     loop {
         poller.poll(&mut events, /* no timeout */ None)?;
@@ -93,10 +93,10 @@ async fn event_loop(
                                 log::warn!("peer not in whitelist");
                                 break;
                             }
-                            let mut socket = UdpSocket::bind(source_address)?;
                             let new_tok = next_token(&mut unique_token);
                             let _ = poller.registry().register(&mut socket, new_tok, INTERESTS);
-                            fs_tx.send(FromServerEvent::NewClient(new_tok, source_address));
+                            let peer_dat = PeerInfo(peer_key, new_tok, source_address);
+                            fs_tx.send(FromServerEvent::NewClient(peer_dat));
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             // this is normal, try again
