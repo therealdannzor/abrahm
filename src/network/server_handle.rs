@@ -1,8 +1,8 @@
 #![allow(unused)]
 
-use super::tcp_utils::{handle_client_event, next_token, open_socket};
-use super::{FromServerEvent, ToServerEvent};
-use mio::net::TcpStream;
+use super::udp_utils::{next_token, open_socket};
+use super::FromServerEvent;
+use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
 use std::{
     collections::{HashMap, VecDeque},
@@ -10,26 +10,6 @@ use std::{
 };
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-
-#[derive(Clone)]
-pub struct ToServerHandle {
-    tx: Sender<ToServerEvent>,
-}
-
-impl ToServerHandle {
-    pub fn new(tx: Sender<ToServerEvent>) -> Self {
-        Self { tx }
-    }
-
-    // server inbound message of:
-    // (1) a new client connection; or
-    // (2) an error message of a failed upstream
-    pub async fn send(&mut self, message: ToServerEvent) {
-        if self.tx.send(message).await.is_err() {
-            panic!("there is no event loop running!");
-        }
-    }
-}
 
 pub struct FromServerHandle {
     rx: Receiver<FromServerEvent>,
@@ -40,19 +20,19 @@ impl FromServerHandle {
         Self { rx }
     }
 
-    // server outbound messages (tuples) of `Token` (id) and `Vec<u8>` (payload)
+    // receive messages from the server, as a tuple of `Token` (id) and `SocketAddress`
     pub async fn receive(&mut self) -> FromServerEvent {
         self.rx.recv().await.unwrap()
     }
 }
 
-pub fn spawn_event_listener() -> (ToServerHandle, FromServerHandle, JoinHandle<()>) {
-    let (send_ts, recv_ts): (Sender<ToServerEvent>, Receiver<ToServerEvent>) = channel(32);
-    let (send_fs, recv_fs): (Sender<FromServerEvent>, Receiver<FromServerEvent>) = channel(32);
-    let ts_handle = ToServerHandle::new(send_ts);
-    let fs_handle = FromServerHandle::new(recv_fs);
+pub async fn spawn_event_listener(
+    validator_list: Vec<String>,
+) -> (FromServerHandle, JoinHandle<()>) {
+    let (fs_tx, fs_rx): (Sender<FromServerEvent>, Receiver<FromServerEvent>) = channel(32);
+    let fs_handle = FromServerHandle::new(fs_rx);
     let join = tokio::spawn(async move {
-        let res = match event_loop(recv_ts, send_fs).await {
+        let res = match event_loop(fs_tx, validator_list).await {
             Ok(()) => {}
             Err(e) => {
                 panic!("event loop failed: {:?}", e);
@@ -60,39 +40,64 @@ pub fn spawn_event_listener() -> (ToServerHandle, FromServerHandle, JoinHandle<(
         };
     });
 
-    (ts_handle, fs_handle, join)
+    (fs_handle, join)
 }
 
-const ECDSA_PUB_KEY_SIZE_BITS: usize = 90;
-const MESSAGE_SIZE: usize = 256; // TODO: assert proper size
 async fn event_loop(
-    recv: Receiver<ToServerEvent>,
-    tx: Sender<FromServerEvent>,
+    fs_tx: Sender<FromServerEvent>,
+    validator_list: Vec<String>,
 ) -> Result<(), io::Error> {
-    const PEER_TOKEN: Token = Token(0);
-    const SERVER_TOKEN: Token = Token(1024);
+    const PEER_TOK: Token = Token(0);
+    const SOCKET_TOK: Token = Token(1024); // token which represents the server
+    const INTERESTS: Interest = Interest::READABLE.add(Interest::WRITABLE);
+    const ECDSA_PUB_KEY_SIZE_BITS: usize = 90; // amount of characters the public key has (hexadecimal)
+    const PEER_MESSAGE_MAX_LEN: usize = 256;
 
-    let mut unique_token = Token(PEER_TOKEN.0 + 1);
-    let mut connections: HashMap<Token, TcpStream> = HashMap::new();
+    let mut unique_token = Token(PEER_TOK.0 + 1);
     let mut poller = Poll::new()?;
-    let mut events = Events::with_capacity(1024);
-    let mut mailbox: HashMap<Token, VecDeque<String>> = HashMap::new();
+    let mut events = Events::with_capacity(16); // events correspond to amount of validators (AFAIK)
+    let mut mailbox: HashMap<Token, VecDeque<Vec<u8>>> = HashMap::new();
 
     // create listening server and register it will poll to receive events
-    let mut server = open_socket();
-    let port = server.local_addr().unwrap().port();
+    let mut socket = open_socket();
+
     let _ = poller
         .registry()
-        .register(&mut server, SERVER_TOKEN, Interest::READABLE);
+        .register(&mut socket, SOCKET_TOK, Interest::READABLE);
 
     loop {
         poller.poll(&mut events, /* no timeout */ None)?;
 
         for event in events.iter() {
             match event.token() {
-                SERVER_TOKEN => loop {
-                    let (mut conn, _address) = match server.accept() {
-                        Ok((conn, _address)) => (conn, _address),
+                SOCKET_TOK => loop {
+                    let mut handshake_key_buf = [0; ECDSA_PUB_KEY_SIZE_BITS]; // max UDP size
+                    match socket.recv_from(&mut handshake_key_buf) {
+                        Ok((packet_size, source_address)) => {
+                            if packet_size != ECDSA_PUB_KEY_SIZE_BITS {
+                                log::warn!("handshake failed, does not contain public key of correct length");
+                                break;
+                            } else if std::str::from_utf8(
+                                &handshake_key_buf[..ECDSA_PUB_KEY_SIZE_BITS],
+                            )
+                            .is_err()
+                            {
+                                log::warn!("handshake received but incorrect key format");
+                                break;
+                            }
+                            let peer_key =
+                                std::str::from_utf8(&handshake_key_buf[..ECDSA_PUB_KEY_SIZE_BITS])
+                                    .unwrap()
+                                    .to_string();
+                            if !validator_list.contains(&peer_key) {
+                                log::warn!("peer not in whitelist");
+                                break;
+                            }
+                            let mut socket = UdpSocket::bind(source_address)?;
+                            let new_tok = next_token(&mut unique_token);
+                            let _ = poller.registry().register(&mut socket, new_tok, INTERESTS);
+                            fs_tx.send(FromServerEvent::NewClient(new_tok, source_address));
+                        }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             // this is normal, try again
                             break;
@@ -102,27 +107,26 @@ async fn event_loop(
                             return Err(e);
                         }
                     };
-
-                    let new_friend_token = next_token(&mut unique_token);
-                    let _ =
-                        poller
-                            .registry()
-                            .register(&mut conn, new_friend_token, Interest::WRITABLE);
-                    connections.insert(new_friend_token, conn);
                 },
                 client_token => loop {
-                    // maybe we have an event
-                    let _done = if let Some(conn) = connections.get_mut(&client_token) {
-                        let resp = handle_client_event(conn, event, None);
-                        if resp.is_ok() {
-                            tx.send(FromServerEvent::Message(client_token, resp.unwrap()));
+                    let mut message_buf = [0; PEER_MESSAGE_MAX_LEN];
+                    // message received from a known peer
+                    match socket.recv_from(&mut message_buf) {
+                        Ok((size, src)) => {
+                            mailbox
+                                .get_mut(&client_token)
+                                .unwrap()
+                                .push_front(message_buf[..size].to_vec());
                         }
-                        true
-                    } else {
-                        // false alarm, no event, just ignore
-                        false
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            break;
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
                     };
                 },
+                _ => unreachable!(),
             }
         }
     }
