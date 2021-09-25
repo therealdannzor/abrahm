@@ -10,16 +10,21 @@ pub struct PeerInfo(String, mio::Token, std::net::SocketAddr);
 
 // FromServerEvent is the event type emitted from the server when a new peer connects succesfully
 pub enum FromServerEvent {
+    HostSocket(std::net::SocketAddr),
     NewClient(PeerInfo),
 }
 
 // DialEvent is when the server attempts to reach out to a peer
 pub enum DialEvent {
-    AreYouThere {
-        id: mio::Token,
-        respond_to: tokio::sync::oneshot::Sender<bool>,
-    },
     Message {
+        send_to: mio::Token,
         payload: Vec<u8>,
+        response: tokio::sync::oneshot::Sender<usize>,
     },
+}
+
+// Messages sent between the backend loops
+pub enum InternalMessage {
+    FromServerEvent(FromServerEvent),
+    DialEvent(DialEvent),
 }

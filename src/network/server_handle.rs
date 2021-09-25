@@ -9,20 +9,21 @@ use std::{
     io,
 };
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 pub struct FromServerHandle {
-    rx: Receiver<FromServerEvent>,
+    events_rx: Receiver<FromServerEvent>,
 }
 
 impl FromServerHandle {
-    pub fn new(rx: Receiver<FromServerEvent>) -> Self {
-        Self { rx }
+    pub fn new(events_rx: Receiver<FromServerEvent>) -> Self {
+        Self { events_rx }
     }
 
     // receive messages from the server, as a tuple of `Token` (id) and `SocketAddress`
     pub async fn receive(&mut self) -> FromServerEvent {
-        self.rx.recv().await.unwrap()
+        self.events_rx.recv().await.unwrap()
     }
 }
 
@@ -59,7 +60,8 @@ async fn event_loop(
     let mut mailbox: HashMap<Token, VecDeque<Vec<u8>>> = HashMap::new();
 
     // create listening server and register it will poll to receive events
-    let mut socket = open_socket();
+    let (mut socket, sock_addr) = open_socket();
+    fs_tx.send(FromServerEvent::HostSocket(sock_addr));
 
     let _ = poller
         .registry()
