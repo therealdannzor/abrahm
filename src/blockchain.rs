@@ -2,7 +2,6 @@
 
 use crate::consensus::{common::ValidatorSet, core::ConsensusChain, engine::Engine};
 use crate::ledger::state_db::{KeyValueIO, StateDB};
-use crate::network::core::Net;
 use crate::types::{block::Block, pool::TxPool};
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 
