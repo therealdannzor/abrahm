@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use super::udp_utils::{next_token, open_socket};
-use super::{FromServerEvent, PeerInfo};
+use super::{FromServerEvent, InternalMessage, PeerInfo};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
 use std::{
@@ -13,16 +13,16 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 pub struct FromServerHandle {
-    events_rx: Receiver<FromServerEvent>,
+    events_rx: Receiver<InternalMessage>,
 }
 
 impl FromServerHandle {
-    fn new(events_rx: Receiver<FromServerEvent>) -> Self {
+    fn new(events_rx: Receiver<InternalMessage>) -> Self {
         Self { events_rx }
     }
 
     // receive messages from the server, as a tuple of `Token` (id) and `SocketAddress`
-    pub async fn receive(&mut self) -> FromServerEvent {
+    pub async fn receive(&mut self) -> InternalMessage {
         self.events_rx.recv().await.unwrap()
     }
 }
@@ -30,7 +30,7 @@ impl FromServerHandle {
 pub async fn spawn_event_listener(
     validator_list: Vec<String>,
 ) -> (FromServerHandle, JoinHandle<()>) {
-    let (fs_tx, fs_rx): (Sender<FromServerEvent>, Receiver<FromServerEvent>) = channel(32);
+    let (fs_tx, fs_rx): (Sender<InternalMessage>, Receiver<InternalMessage>) = channel(32);
     let fs_handle = FromServerHandle::new(fs_rx);
     let join = tokio::spawn(async move {
         let res = match event_loop(fs_tx, validator_list).await {
@@ -45,7 +45,7 @@ pub async fn spawn_event_listener(
 }
 
 async fn event_loop(
-    fs_tx: Sender<FromServerEvent>,
+    fs_tx: Sender<InternalMessage>,
     validator_list: Vec<String>,
 ) -> Result<(), io::Error> {
     const PEER_TOK: Token = Token(0);
@@ -61,7 +61,9 @@ async fn event_loop(
 
     // create listening server and register it will poll to receive events
     let (mut socket, sock_addr) = open_socket();
-    fs_tx.send(FromServerEvent::HostSocket(sock_addr));
+    let whoami_socket_message =
+        InternalMessage::FromServerEvent(FromServerEvent::HostSocket(sock_addr));
+    fs_tx.send(whoami_socket_message);
 
     let _ = poller
         .registry()
@@ -98,7 +100,10 @@ async fn event_loop(
                             let new_tok = next_token(&mut unique_token);
                             let _ = poller.registry().register(&mut socket, new_tok, INTERESTS);
                             let peer_dat = PeerInfo(peer_key, new_tok, source_address);
-                            fs_tx.send(FromServerEvent::NewClient(peer_dat));
+                            let new_client_message = InternalMessage::FromServerEvent(
+                                FromServerEvent::NewClient(peer_dat),
+                            );
+                            fs_tx.send(new_client_message);
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             // this is normal, try again
