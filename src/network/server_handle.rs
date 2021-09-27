@@ -17,7 +17,7 @@ pub struct FromServerHandle {
 }
 
 impl FromServerHandle {
-    pub fn new(events_rx: Receiver<FromServerEvent>) -> Self {
+    fn new(events_rx: Receiver<FromServerEvent>) -> Self {
         Self { events_rx }
     }
 
