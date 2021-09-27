@@ -5,15 +5,43 @@ use mio::net::UdpSocket;
 use mio::Token;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender};
+use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
+use tokio::task::JoinHandle;
 
-struct ToPeer {
-    server: UdpSocket,
-    dest: UdpSocket,
+pub struct MessagePeerHandle {
+    tx: UnboundedSender<InternalMessage>,
+}
+
+impl MessagePeerHandle {
+    fn new(tx: UnboundedSender<InternalMessage>) -> Self {
+        Self { tx }
+    }
+
+    pub fn send(&self, message: DialEvent) {
+        self.tx.send(InternalMessage::DialEvent(message));
+    }
+}
+
+pub async fn spawn_to_peer_loop_listener() -> (MessagePeerHandle, JoinHandle<()>) {
+    // channel-pair used by the server backend to send payloads to connected peers. This channel
+    // goes into the peer loop below since the server loop handles incoming connections, as opposed
+    // to the peer loop which deals with outbound messages.
+    let (from_backend_tx, from_backend_rx): (
+        UnboundedSender<InternalMessage>,
+        UnboundedReceiver<InternalMessage>,
+    ) = mpsc::unbounded_channel();
+
+    let handle = MessagePeerHandle::new(from_backend_tx);
+
+    let join = tokio::spawn(async move {
+        peer_loop(from_backend_rx);
+    });
+
+    (handle, join)
 }
 
 // peer_loop contains the operations that concern all the peers connected to the server.
-async fn peer_loop(mut rx: Receiver<InternalMessage>, mut internal_tx: Sender<InternalMessage>) {
+async fn peer_loop(mut rx: UnboundedReceiver<InternalMessage>) {
     let mut id_conns: HashMap<Token, SocketAddr> = HashMap::new();
     let mut stream_conns: HashMap<SocketAddr, UdpSocket> = HashMap::new();
 
