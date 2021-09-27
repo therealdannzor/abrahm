@@ -6,6 +6,7 @@ use mio::Token;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use tokio::sync::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 pub struct MessagePeerHandle {
@@ -17,8 +18,18 @@ impl MessagePeerHandle {
         Self { tx }
     }
 
-    pub fn send(&self, message: DialEvent) {
-        self.tx.send(InternalMessage::DialEvent(message));
+    // send sends a message to a recipient, identified by a Token (inner value usize).
+    // It returns a receive channel part which will include how many bytes were written.
+    // If the message was fully transmitted, this should be the same length as the payload.
+    pub fn send(&self, payload: Vec<u8>, send_to: Token) -> oneshot::Receiver<usize> {
+        let (send, recv): (oneshot::Sender<usize>, oneshot::Receiver<usize>) = oneshot::channel();
+        let dial_message = DialEvent::Message {
+            send_to,
+            payload,
+            response: send,
+        };
+        self.tx.send(InternalMessage::DialEvent(dial_message));
+        recv
     }
 }
 
