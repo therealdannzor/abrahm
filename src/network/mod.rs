@@ -13,6 +13,23 @@ pub enum FromServerEvent {
     NewClient(PeerInfo),
 }
 
+#[derive(Clone)]
+pub struct OrdPayload(Vec<u8>, u32);
+
+// PayloadEvent includes all invents concerning payload messages from peers
+pub enum PayloadEvent {
+    // Token: identifies the peer
+    // Vec<u8>: payload data
+    // u32: nonce
+    Message(mio::Token, OrdPayload),
+
+    // Get returns messages that have been sent by a certain peer, stored in the mailbox
+    Get {
+        peer: mio::Token,
+        response: tokio::sync::oneshot::Sender<Vec<OrdPayload>>,
+    },
+}
+
 // DialEvent is when the server attempts to reach out to a peer
 pub enum DialEvent {
     Message {

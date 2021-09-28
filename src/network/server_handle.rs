@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use super::udp_utils::{next_token, open_socket};
-use super::{FromServerEvent, InternalMessage, PeerInfo};
+use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, PeerInfo};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
 use std::{
@@ -12,28 +12,21 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-pub struct FromServerHandle {
-    events_rx: Receiver<InternalMessage>,
-}
-
-impl FromServerHandle {
-    fn new(events_rx: Receiver<InternalMessage>) -> Self {
-        Self { events_rx }
-    }
-
-    // receive messages from the server, as a tuple of `Token` (id) and `SocketAddress`
-    pub async fn receive(&mut self) -> InternalMessage {
-        self.events_rx.recv().await.unwrap()
-    }
-}
-
 pub async fn spawn_event_listener(
     validator_list: Vec<String>,
-) -> (FromServerHandle, JoinHandle<()>) {
+) -> (
+    Receiver<InternalMessage>,
+    Sender<InternalMessage>,
+    Receiver<PayloadEvent>,
+    JoinHandle<()>,
+) {
     let (fs_tx, fs_rx): (Sender<InternalMessage>, Receiver<InternalMessage>) = channel(32);
-    let fs_handle = FromServerHandle::new(fs_rx);
+    let fs_tx_2 = fs_tx.clone();
+    let (mailbox_tx, mailbox_rx): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = channel(32);
+
+    // receives from the event loop, should be plugged into the `peer_loop`
     let join = tokio::spawn(async move {
-        let res = match event_loop(fs_tx, validator_list).await {
+        let res = match event_loop(fs_tx, mailbox_tx, validator_list).await {
             Ok(()) => {}
             Err(e) => {
                 panic!("event loop failed: {:?}", e);
@@ -41,11 +34,12 @@ pub async fn spawn_event_listener(
         };
     });
 
-    (fs_handle, join)
+    (fs_rx, fs_tx_2, mailbox_rx, join)
 }
 
 async fn event_loop(
     fs_tx: Sender<InternalMessage>,
+    mailbox_tx: Sender<PayloadEvent>,
     validator_list: Vec<String>,
 ) -> Result<(), io::Error> {
     const PEER_TOK: Token = Token(0);
@@ -57,7 +51,6 @@ async fn event_loop(
     let mut unique_token = Token(PEER_TOK.0 + 1);
     let mut poller = Poll::new()?;
     let mut events = Events::with_capacity(16); // events correspond to amount of validators (AFAIK)
-    let mut mailbox: HashMap<Token, VecDeque<Vec<u8>>> = HashMap::new();
 
     // create listening server and register it will poll to receive events
     let (mut socket, sock_addr) = open_socket();
@@ -71,11 +64,12 @@ async fn event_loop(
 
     loop {
         poller.poll(&mut events, /* no timeout */ None)?;
+        let mut nonce: u32 = 0;
 
         for event in events.iter() {
             match event.token() {
                 SOCKET_TOK => loop {
-                    let mut handshake_key_buf = [0; ECDSA_PUB_KEY_SIZE_BITS]; // max UDP size
+                    let mut handshake_key_buf = [0; ECDSA_PUB_KEY_SIZE_BITS];
                     match socket.recv_from(&mut handshake_key_buf) {
                         Ok((packet_size, source_address)) => {
                             if packet_size != ECDSA_PUB_KEY_SIZE_BITS {
@@ -120,10 +114,11 @@ async fn event_loop(
                     // message received from a known peer
                     match socket.recv_from(&mut message_buf) {
                         Ok((size, src)) => {
-                            mailbox
-                                .get_mut(&client_token)
-                                .unwrap()
-                                .push_front(message_buf[..size].to_vec());
+                            nonce += 1;
+                            let message = message_buf[..size].to_vec();
+                            let ord_pay = OrdPayload(message, nonce);
+                            let new_message = PayloadEvent::Message(client_token, ord_pay);
+                            mailbox_tx.send(new_message);
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             break;
