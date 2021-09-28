@@ -55,21 +55,20 @@ impl MessagePeerHandle {
     }
 }
 
-pub async fn spawn_peer_listeners(
-    tx_outbound: Sender<InternalMessage>,
-    rx_outbound: Receiver<InternalMessage>,
-    tx_inbound: Sender<PayloadEvent>,
-    rx_inbound: Receiver<PayloadEvent>,
-) -> (MessagePeerHandle, JoinHandle<()>, JoinHandle<()>) {
+pub async fn spawn_peer_listeners() -> (MessagePeerHandle, JoinHandle<()>, JoinHandle<()>) {
+    // out channels correpond to communication outside the host, i.e. with other peers
+    let (tx_out, rx_out): (Sender<InternalMessage>, Receiver<InternalMessage>) = mpsc::channel(64);
+    // in channels correspond to communication within the host, i.e. deals with payloads received
+    let (tx_in, rx_in): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = mpsc::channel(64);
     // sends and retrieves messages of peers
-    let message_peer_handle = MessagePeerHandle::new(tx_outbound, tx_inbound);
+    let message_peer_handle = MessagePeerHandle::new(tx_out, tx_in);
 
     let join_outbound = tokio::spawn(async move {
-        peer_loop(rx_outbound);
+        peer_loop(rx_out);
     });
 
     let join_inbound = tokio::spawn(async move {
-        spawn_message_inbox_loop(rx_inbound);
+        spawn_message_inbox_loop(rx_in);
     });
 
     (message_peer_handle, join_outbound, join_inbound)
@@ -89,9 +88,11 @@ async fn spawn_message_inbox_loop(mut rx: Receiver<PayloadEvent>) {
                 drop(mailbox);
             }
             PayloadEvent::Get { peer, response } => {
-                let mailbox = mailbox_data.lock().unwrap();
+                let mut mailbox = mailbox_data.lock().unwrap();
                 let messages = mailbox.get(&peer).unwrap();
                 let _ = response.send(messages.to_vec());
+                let mut v = mailbox.get_mut(&peer).unwrap();
+                v.clear();
                 drop(mailbox);
             }
         }
