@@ -1,18 +1,11 @@
-#![allow(unused)]
-
 use super::udp_utils::{next_token, open_socket};
 use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, PeerInfo};
-use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
-use std::{
-    collections::{HashMap, VecDeque},
-    io,
-};
+use std::io;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-pub async fn spawn_event_listener(
+pub async fn spawn_server_accept_loop(
     validator_list: Vec<String>,
 ) -> (
     Receiver<InternalMessage>,
@@ -26,7 +19,7 @@ pub async fn spawn_event_listener(
 
     // receives from the event loop, should be plugged into the `peer_loop`
     let join = tokio::spawn(async move {
-        let res = match event_loop(fs_tx, mailbox_tx, validator_list).await {
+        match event_loop(fs_tx, mailbox_tx, validator_list).await {
             Ok(()) => {}
             Err(e) => {
                 panic!("event loop failed: {:?}", e);
@@ -56,7 +49,7 @@ async fn event_loop(
     let (mut socket, sock_addr) = open_socket();
     let whoami_socket_message =
         InternalMessage::FromServerEvent(FromServerEvent::HostSocket(sock_addr));
-    fs_tx.send(whoami_socket_message);
+    let _ = fs_tx.send(whoami_socket_message).await;
 
     let _ = poller
         .registry()
@@ -97,7 +90,7 @@ async fn event_loop(
                             let new_client_message = InternalMessage::FromServerEvent(
                                 FromServerEvent::NewClient(peer_dat),
                             );
-                            fs_tx.send(new_client_message);
+                            let _ = fs_tx.send(new_client_message);
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             // this is normal, try again
@@ -113,12 +106,12 @@ async fn event_loop(
                     let mut message_buf = [0; PEER_MESSAGE_MAX_LEN];
                     // message received from a known peer
                     match socket.recv_from(&mut message_buf) {
-                        Ok((size, src)) => {
+                        Ok((size, _)) => {
                             nonce += 1;
                             let message = message_buf[..size].to_vec();
                             let ord_pay = OrdPayload(message, nonce);
-                            let new_message = PayloadEvent::Message(client_token, ord_pay);
-                            mailbox_tx.send(new_message);
+                            let new_message = PayloadEvent::StoreMessage(client_token, ord_pay);
+                            let _ = mailbox_tx.send(new_message);
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                             break;
@@ -128,10 +121,7 @@ async fn event_loop(
                         }
                     };
                 },
-                _ => unreachable!(),
             }
         }
     }
-
-    Ok(())
 }

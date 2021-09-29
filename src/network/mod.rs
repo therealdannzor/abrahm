@@ -1,3 +1,4 @@
+pub mod api;
 pub mod client_handle;
 pub mod common;
 pub mod message;
@@ -18,25 +19,25 @@ pub struct OrdPayload(Vec<u8>, u32);
 
 // PayloadEvent includes all invents concerning payload messages from peers
 pub enum PayloadEvent {
+    // StoreMessage is the format in which other peers send messages to the host
     // Token: identifies the peer
     // Vec<u8>: payload data
     // u32: nonce
-    Message(mio::Token, OrdPayload),
+    StoreMessage(mio::Token, OrdPayload),
 
     // Get returns messages that have been sent by a certain peer, stored in the mailbox
-    Get {
-        peer: mio::Token,
-        response: tokio::sync::oneshot::Sender<Vec<OrdPayload>>,
-    },
+    // Token: peer identifier
+    // Sender: response channel
+    Get(mio::Token, tokio::sync::oneshot::Sender<Vec<OrdPayload>>),
 }
 
 // DialEvent is when the server attempts to reach out to a peer
 pub enum DialEvent {
-    Message {
-        send_to: mio::Token,
-        payload: Vec<u8>,
-        response: tokio::sync::oneshot::Sender<usize>,
-    },
+    // DispatchMessage is the format in which the host "dials" up another peer
+    // Token: identifies the peer
+    // Vec<u8>: data to send
+    // Sender: response channel
+    DispatchMessage(mio::Token, Vec<u8>, tokio::sync::oneshot::Sender<usize>),
 }
 
 // Messages sent between the backend loops
