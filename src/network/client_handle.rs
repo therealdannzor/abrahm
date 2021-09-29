@@ -4,7 +4,7 @@ use mio::Token;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -44,23 +44,24 @@ impl MessagePeerHandle {
     }
 }
 
-pub async fn spawn_peer_listeners() -> (MessagePeerHandle, JoinHandle<()>, JoinHandle<()>) {
-    // out channels correpond to communication outside the host, i.e. with other peers
-    let (tx_out, rx_out): (Sender<InternalMessage>, Receiver<InternalMessage>) = mpsc::channel(64);
-    // in channels correspond to communication within the host, i.e. deals with payloads received
-    let (tx_in, rx_in): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = mpsc::channel(64);
+pub async fn spawn_peer_listeners(
+    tx_out: Sender<InternalMessage>,
+    rx_out: Receiver<InternalMessage>,
+    tx_in: Sender<PayloadEvent>,
+    rx_in: Receiver<PayloadEvent>,
+) -> (MessagePeerHandle, JoinHandle<()>, JoinHandle<()>) {
     // sends and retrieves messages of peers
     let message_peer_handle = MessagePeerHandle::new(tx_out, tx_in);
 
-    let join_outbound = tokio::spawn(async move {
+    let join_peer_loop = tokio::spawn(async move {
         peer_loop(rx_out).await;
     });
 
-    let join_inbound = tokio::spawn(async move {
+    let join_inbox_loop = tokio::spawn(async move {
         spawn_message_inbox_loop(rx_in).await;
     });
 
-    (message_peer_handle, join_outbound, join_inbound)
+    (message_peer_handle, join_peer_loop, join_inbox_loop)
 }
 
 async fn spawn_message_inbox_loop(mut rx: Receiver<PayloadEvent>) {

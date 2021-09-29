@@ -2,24 +2,17 @@ use super::udp_utils::{next_token, open_socket};
 use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, PeerInfo};
 use mio::{Events, Interest, Poll, Token};
 use std::io;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 
 pub async fn spawn_server_accept_loop(
     validator_list: Vec<String>,
-) -> (
-    Receiver<InternalMessage>,
-    Sender<InternalMessage>,
-    Receiver<PayloadEvent>,
-    JoinHandle<()>,
-) {
-    let (fs_tx, fs_rx): (Sender<InternalMessage>, Receiver<InternalMessage>) = channel(32);
-    let fs_tx_2 = fs_tx.clone();
-    let (mailbox_tx, mailbox_rx): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = channel(32);
-
+    tx_out: Sender<InternalMessage>,
+    tx_in: Sender<PayloadEvent>,
+) -> JoinHandle<()> {
     // receives from the event loop, should be plugged into the `peer_loop`
     let join = tokio::spawn(async move {
-        match event_loop(fs_tx, mailbox_tx, validator_list).await {
+        match event_loop(tx_out, tx_in, validator_list).await {
             Ok(()) => {}
             Err(e) => {
                 panic!("event loop failed: {:?}", e);
@@ -27,7 +20,7 @@ pub async fn spawn_server_accept_loop(
         };
     });
 
-    (fs_rx, fs_tx_2, mailbox_rx, join)
+    join
 }
 
 async fn event_loop(
