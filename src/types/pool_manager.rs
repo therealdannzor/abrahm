@@ -86,11 +86,8 @@ fn update_mutex_timestamp(m: &Mutex<i64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::p2p::ws_routes::serve_routes;
     use crate::types::block::Block;
     use serde_json::Value;
-    use std::borrow::Borrow;
-    use tokio_test::assert_ok;
 
     fn setup() -> (Vec<Block>, PoolManager) {
         // instead of intializing the whole tx pool struct together with
@@ -117,6 +114,7 @@ mod tests {
         res
     }
 
+    #[allow(unused)]
     async fn curl_post(
         endpoint: &str,
         user_id: usize,
@@ -138,10 +136,12 @@ mod tests {
         Ok(echo_json)
     }
 
+    #[allow(unused)]
     async fn api_register(user_id: usize) -> Result<Value, reqwest::Error> {
         curl_post("/register", user_id, "", 0, 0).await
     }
 
+    #[allow(unused)]
     async fn api_publish(
         peer_id: usize,
         consensus_message: &str,
@@ -151,6 +151,7 @@ mod tests {
         curl_post("/publish", peer_id, consensus_message, view, round).await
     }
 
+    #[allow(unused)]
     async fn api_info(peer_id: usize, consensus_message: &str) -> Result<Value, reqwest::Error> {
         let mut uri: String = "http://127.0.0.1:8000/store/".to_owned();
         uri.push_str(consensus_message);
@@ -201,50 +202,5 @@ mod tests {
         assert_eq!(b2.previous_hash(), blocks_to_send[1].previous_hash());
         assert_eq!(b3.hash(), blocks_to_send[2].hash());
         assert_eq!(b3.previous_hash(), blocks_to_send[2].previous_hash());
-    }
-
-    use serde_json::json;
-    // tests that outbound external messages are received properly [pool manager task #3]
-    #[actix_rt::test]
-    async fn broadcasts_confirmed_txs_as_blocks_to_other_peers() {
-        let shutdown_channel = serve_routes().await;
-
-        // register a peer ID
-        let peer_no = 1;
-        let register_response = api_register(peer_no).await;
-        assert_ok!(register_response);
-
-        // publish 3 messages
-        let pub_resp = api_publish(peer_no, "preprepare", 0, 0).await;
-        assert_ok!(pub_resp);
-        let pub_resp = api_publish(peer_no, "prepare", 0, 1).await;
-        assert_ok!(pub_resp);
-        let pub_resp = api_publish(peer_no, "commit", 0, 2).await;
-        assert_ok!(pub_resp);
-
-        // retrieve Preprepare message
-        let get_message = api_info(peer_no, "preprepare").await;
-        assert_ok!(get_message.borrow());
-        // check if it contains valid json
-        let json_result = get_message.unwrap();
-        let expected = json!(["{\"user_id\":1,\"phase\":\"preprepare\",\"view\":0,\"round\":0}"]);
-        assert_eq!(json_result, expected);
-
-        // retrieve Prepare message
-        let get_message = api_info(peer_no, "prepare").await;
-        assert_ok!(get_message.borrow());
-        let json_result = get_message.unwrap();
-        let expected = json!(["{\"user_id\":1,\"phase\":\"prepare\",\"view\":0,\"round\":1}"]);
-        assert_eq!(json_result, expected);
-
-        // retrieve Commit message
-        let get_message = api_info(peer_no, "commit").await;
-        assert_ok!(get_message.borrow());
-        let json_result = get_message.unwrap();
-        let expected = json!(["{\"user_id\":1,\"phase\":\"commit\",\"view\":0,\"round\":2}"]);
-        assert_eq!(json_result, expected);
-
-        // teardown
-        let _ = shutdown_channel.send(true);
     }
 }
