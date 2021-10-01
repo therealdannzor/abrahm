@@ -117,15 +117,10 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>) {
                     log::warn!("trying to send message to unknown peer: {:?}", recipient);
                     continue;
                 }
-                let recipient = recipient.unwrap();
+                let recipient_sock_addr = recipient.unwrap();
                 let host_sock_addr = id_conns.get(&Token(1024)).unwrap();
                 let host_sock = stream_conns.get(host_sock_addr).unwrap();
-                let res = host_sock.connect(*recipient);
-                if res.is_err() {
-                    log::warn!("error establish connection: {:?}", res.err().unwrap());
-                    continue;
-                }
-                let attempt_send = host_sock.send(&payload);
+                let attempt_send = host_sock.send_to(&payload, *recipient_sock_addr);
                 if attempt_send.is_err() {
                     let _ = response.send(0);
                 } else {
