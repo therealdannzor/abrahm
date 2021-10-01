@@ -120,12 +120,24 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>) {
                 let recipient_sock_addr = recipient.unwrap();
                 let host_sock_addr = id_conns.get(&Token(1024)).unwrap();
                 let host_sock = stream_conns.get(host_sock_addr).unwrap();
-                let attempt_send = host_sock.send_to(&payload, *recipient_sock_addr);
-                if attempt_send.is_err() {
-                    let _ = response.send(0);
-                } else {
-                    let bytes_sent = attempt_send.unwrap();
-                    let _ = response.send(bytes_sent);
+                match host_sock.send_to(&payload, *recipient_sock_addr) {
+                    Ok(n) => {
+                        if n != payload.len() {
+                            log::error!(
+                                "failed to send full payload, sent: {}, full: {}",
+                                n,
+                                payload.len()
+                            );
+                            let _ = response.send(0);
+                        } else {
+                            // all good
+                            let _ = response.send(n);
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("error when trying to send payload: {:?}", e);
+                        let _ = response.send(0);
+                    }
                 }
             }
         }

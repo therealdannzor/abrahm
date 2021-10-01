@@ -36,7 +36,7 @@ pub enum DialEvent {
     // DispatchMessage is the format in which the host "dials" up another peer
     // Token: identifies the peer
     // Vec<u8>: data to send
-    // Sender: response channel
+    // Sender: response channel (0 if something went wrong)
     DispatchMessage(mio::Token, Vec<u8>, tokio::sync::oneshot::Sender<usize>),
 }
 
