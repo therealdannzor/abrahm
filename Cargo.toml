@@ -12,7 +12,7 @@ hex = "0.4.2"
 rocksdb = "0.15.0"
 rust-crypto = "^0.2"
 serial_test = "*"
-libp2p = "0.37.1"
+libp2p = "0.39.1"
 tokio = { version = "1.5.0", features = ["full"] }
 tokio-stream = "0.1.1"
 tokio-test = "0.4.1"

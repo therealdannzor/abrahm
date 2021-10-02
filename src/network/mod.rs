@@ -1,6 +1,7 @@
 pub mod api;
 pub mod client_handle;
 pub mod common;
+pub mod mdns;
 pub mod message;
 pub mod server_handle;
 pub mod udp_utils;
