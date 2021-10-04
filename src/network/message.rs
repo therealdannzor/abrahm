@@ -1,4 +1,5 @@
 #![allow(unused)]
+use crate::swiss_knife::helper::sign_message_digest;
 use std::boxed::Box;
 use std::collections::HashMap;
 use std::fmt;
@@ -29,16 +30,6 @@ impl MessageWorker {
             secret_key,
             peer_shortnames: HashMap::new(),
         }
-    }
-
-    pub fn sign_message_digest(&self, message: &str) -> Vec<u8> {
-        let m_d = hashed!(message);
-        let sec_message = SecureSign::new(self.secret_key.clone());
-        let sign_m_d = match sec_message.sign(&m_d) {
-            Ok(m) => m,
-            Err(e) => panic!("failed to sign message: {:?}", e),
-        };
-        sign_m_d
     }
 
     pub fn insert_peer(&mut self, key: u8, value: EcdsaPublicKey) {
@@ -174,7 +165,7 @@ impl MessageWorker {
             let ser_len = usize_to_ascii_decimal(ser.len());
             msg.extend(ser_len);
             msg.extend(ser.as_bytes().to_vec());
-            let signed = self.sign_message_digest(&ser.clone());
+            let signed = sign_message_digest(self.secret_key.clone(), &ser.clone());
             msg.extend(signed);
         } else if preprepare.is_some() {
             msg.push(49);
@@ -186,7 +177,7 @@ impl MessageWorker {
             let ser_len = usize_to_ascii_decimal(ser.len());
             msg.extend(ser_len);
             msg.extend(ser.as_bytes().to_vec());
-            let signed = self.sign_message_digest(&ser.clone());
+            let signed = sign_message_digest(self.secret_key.clone(), &ser.clone());
             msg.extend(signed);
         } else if prepare.is_some() {
             msg.push(50);
@@ -198,7 +189,7 @@ impl MessageWorker {
             let ser_len = usize_to_ascii_decimal(ser.len());
             msg.extend(ser_len);
             msg.extend(ser.as_bytes().to_vec());
-            let signed = self.sign_message_digest(&ser.clone());
+            let signed = sign_message_digest(self.secret_key.clone(), &ser.clone());
             msg.extend(signed);
         } else if commit.is_some() {
             msg.push(51);
@@ -210,7 +201,7 @@ impl MessageWorker {
             let ser_len = usize_to_ascii_decimal(ser.len());
             msg.extend(ser_len);
             msg.extend(ser.as_bytes().to_vec());
-            let signed = self.sign_message_digest(&ser.clone());
+            let signed = sign_message_digest(self.secret_key.clone(), &ser.clone());
             msg.extend(signed);
         } else {
             return Err(std::io::Error::new(
@@ -280,7 +271,7 @@ mod tests {
     #[test]
     fn outgoing_message_serialize_request_struct_and_verify_authenticity() {
         let (sk, pk) = keygen::gen_ec_key_pair().split();
-        let mut mw = MessageWorker::new(sk, pk.clone());
+        let mut mw = MessageWorker::new(sk.clone(), pk.clone());
         mw.insert_peer(49 /* corresponds to 1 */, pk.clone());
         let bob_pk = &generate_keys(1)[0];
         mw.insert_peer(2, bob_pk.clone());
@@ -304,7 +295,7 @@ mod tests {
         let message_length = usize_to_ascii_decimal(serialized.len());
 
         // prepare to sign the request
-        let signed_request = mw.sign_message_digest(&serialized);
+        let signed_request = sign_message_digest(sk.clone(), &serialized);
 
         // add all components to a complete message
         let mut full_message = Vec::new();
@@ -396,11 +387,11 @@ mod tests {
         // Setup the client signation and known information about a supposed foreign peer
         // (in this case we use the client's public key as the foreign peer's identity for brevity)
         let (sk, pk) = keygen::gen_ec_key_pair().split();
-        let mut mw = MessageWorker::new(sk, pk.clone());
+        let mut mw = MessageWorker::new(sk.clone(), pk.clone());
         mw.insert_peer(1, pk.clone());
 
         // Sign a secret message with shortest possible length
-        let signed = mw.sign_message_digest(&String::from("1"));
+        let signed = sign_message_digest(sk.clone(), &String::from("1"));
         let sign_len = usize_to_ascii_decimal(signed.len());
         // Construct the complete message as passed over TCP:
         // Index 0:        Consensus phase
