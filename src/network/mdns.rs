@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use crate::hashed;
-use crate::swiss_knife::helper::{generate_hash_from_input, sign_message_digest};
+use crate::swiss_knife::helper::{hash_from_vec_u8_input, sign_message_digest};
 use futures::StreamExt;
 use libp2p::{
     identity,
@@ -44,8 +44,8 @@ pub async fn peer_discovery_loop(
                         loop {
                             let two_sec = std::time::Duration::from_secs(2);
                             std::thread::sleep(two_sec);
-                            let amt = socket
-                                .send_to(broadcast_disc_msg.as_bytes(), recipient_addr.clone())
+                            let _ = socket
+                                .send_to(&broadcast_disc_msg, recipient_addr.clone())
                                 .await;
                             println!("Dispatched message to {}", recipient_addr);
                         }
@@ -64,7 +64,7 @@ pub async fn peer_discovery_loop(
                     let socket = UdpSocket::bind(&socket_addr).await?;
                     let serv = Server {
                         socket,
-                        buf: vec![0; 64],
+                        buf: vec![0; 128],
                         to_send: None,
                     };
                     tokio::spawn(async move {
@@ -104,7 +104,6 @@ impl Server {
                 "Nothing to send, receiving messages at {}",
                 socket.local_addr().unwrap()
             );
-            //to_send = Some(socket.recv_from(&mut buf).await?);
             to_send = Some(socket.recv(&mut buf).await?);
         }
     }
@@ -133,40 +132,19 @@ fn create_discv_handshake(
     public_key: EcdsaPublicKey,
     secret_key: EcdsaPrivateKey,
     port_string: String,
-) -> String {
-    let pk = public_key.as_ref().to_vec(); // this contains non ASCII characters
-    let pk: Vec<u16> = pk
-        .chunks_exact(2)
-        .into_iter()
-        .map(|x| u16::from_ne_bytes([x[0], x[1]]))
-        .collect();
+) -> Vec<u8> {
+    // First half is PUBLIC_KEY | PORT (in bytes)
+    let mut first_half = public_key.as_ref().to_vec(); // this contains non ASCII characters
+    let port_bytes = port_string.as_bytes().to_vec();
+    first_half.extend(port_bytes);
 
-    let pk: &[u16] = pk.as_slice();
-    let public_key = match String::from_utf16(pk) {
-        Ok(s) => s,
-        Err(e) => {
-            panic!("invalid public key format, this should not happen: {:?}", e);
-        }
-    };
-
-    // First half is PUBLIC_KEY | PORT
-    let mut fir_half_pk_port = "".to_string();
-    fir_half_pk_port.push_str(&public_key);
-    fir_half_pk_port.push_str(&port_string);
-
-    // Second half is H(PUBLIC_KEY | PORT)_C
-    let pk_port_hashed = hashed!(&fir_half_pk_port);
+    // Second half is H(PUBLIC_KEY | PORT)_C (in bytes)
+    let pk_port_hashed = hash_from_vec_u8_input(first_half.clone());
     let sec_half_hash_signed = sign_message_digest(secret_key, pk_port_hashed.as_ref());
-    let sec_half_sign_str = match std::str::from_utf8(&sec_half_hash_signed) {
-        Ok(s) => s,
-        Err(e) => {
-            panic!("invalid hash format, this should not happen: {:?}", e);
-        }
-    };
 
-    let mut result = "".to_string();
-    result.push_str(&fir_half_pk_port);
-    result.push_str(sec_half_sign_str);
+    let mut result = Vec::new();
+    result.extend(&first_half);
+    result.extend(sec_half_hash_signed);
 
     result
 }

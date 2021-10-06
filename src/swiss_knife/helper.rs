@@ -89,6 +89,12 @@ pub fn generate_hash_from_input(inp: &str) -> String {
     hash_out
 }
 
+pub fn hash_from_vec_u8_input(inp: Vec<u8>) -> String {
+    let mut hasher = Sha256::new();
+    hasher.input(&inp);
+    hasher.result_str()
+}
+
 pub fn new_timestamp() -> i64 {
     Utc::now().timestamp_millis()
 }
