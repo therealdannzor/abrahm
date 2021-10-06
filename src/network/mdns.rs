@@ -42,8 +42,8 @@ pub async fn peer_discovery_loop(
                         create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
                     tokio::spawn(async move {
                         loop {
-                            let two_sec = std::time::Duration::from_secs(2);
-                            std::thread::sleep(two_sec);
+                            let three_sec = std::time::Duration::from_secs(3);
+                            std::thread::sleep(three_sec);
                             let _ = socket
                                 .send_to(&broadcast_disc_msg, recipient_addr.clone())
                                 .await;
@@ -64,13 +64,12 @@ pub async fn peer_discovery_loop(
                     let socket = UdpSocket::bind(&socket_addr).await?;
                     let serv = Server {
                         socket,
-                        buf: vec![0; 128],
+                        buf: vec![0; 256],
                         to_send: None,
                     };
                     tokio::spawn(async move {
                         serv.run().await;
                     });
-                    println!("Server spawn complete.");
                 } else {
                     *counter += 1;
                 }
@@ -94,9 +93,9 @@ impl Server {
             mut to_send,
         } = self;
 
-        println!("Server started!");
-
         loop {
+            let two_sec = std::time::Duration::from_secs(2);
+            std::thread::sleep(two_sec);
             if let Some(size) = to_send {
                 println!("Received {} bytes and message {:?}", size, buf);
             }
