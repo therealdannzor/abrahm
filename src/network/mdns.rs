@@ -18,7 +18,7 @@ use tokio::net::UdpSocket;
 pub async fn peer_discovery_loop(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
-    server_port: String,
+    serv_port: String,
 ) -> Result<(), Box<dyn Error>> {
     let keys_id = identity::Keypair::generate_ed25519();
     let peer_id = PeerId::from(keys_id.public());
@@ -38,12 +38,14 @@ pub async fn peer_discovery_loop(
                 for (_, addr) in peers {
                     let recipient_addr = multi_to_socket_addr(addr);
                     let socket = UdpSocket::bind("127.0.0.1:0").await?;
+                    let broadcast_disc_msg =
+                        create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
                     tokio::spawn(async move {
                         loop {
                             let two_sec = std::time::Duration::from_secs(2);
                             std::thread::sleep(two_sec);
                             let amt = socket
-                                .send_to(b"Hello from me", recipient_addr.clone())
+                                .send_to(broadcast_disc_msg.as_bytes(), recipient_addr.clone())
                                 .await;
                             println!("Dispatched message to {}", recipient_addr);
                         }
@@ -126,15 +128,45 @@ fn multi_to_socket_addr(multi_address: libp2p::Multiaddr) -> String {
 // More formally, a message looks like so
 // { PUBLIC_KEY | PORT | H(PUBLIC_KEY | PORT)_C }
 // where '|' denotes append and H(x)_C a client C signing a hash of a message {x}
+//
 fn create_discv_handshake(
     public_key: EcdsaPublicKey,
     secret_key: EcdsaPrivateKey,
     port_string: String,
-) -> Vec<u8> {
-    let mut k = public_key.as_ref().to_vec();
-    k.extend(port_string.as_bytes().to_vec());
-    let key_and_port_hashed = hashed!(&String::from_utf8_lossy(&k));
-    let signed = sign_message_digest(secret_key, key_and_port_hashed.as_ref());
-    k.extend(signed); // add the signed hash to the buffer
-    k
+) -> String {
+    let pk = public_key.as_ref().to_vec(); // this contains non ASCII characters
+    let pk: Vec<u16> = pk
+        .chunks_exact(2)
+        .into_iter()
+        .map(|x| u16::from_ne_bytes([x[0], x[1]]))
+        .collect();
+
+    let pk: &[u16] = pk.as_slice();
+    let public_key = match String::from_utf16(pk) {
+        Ok(s) => s,
+        Err(e) => {
+            panic!("invalid public key format, this should not happen: {:?}", e);
+        }
+    };
+
+    // First half is PUBLIC_KEY | PORT
+    let mut fir_half_pk_port = "".to_string();
+    fir_half_pk_port.push_str(&public_key);
+    fir_half_pk_port.push_str(&port_string);
+
+    // Second half is H(PUBLIC_KEY | PORT)_C
+    let pk_port_hashed = hashed!(&fir_half_pk_port);
+    let sec_half_hash_signed = sign_message_digest(secret_key, pk_port_hashed.as_ref());
+    let sec_half_sign_str = match std::str::from_utf8(&sec_half_hash_signed) {
+        Ok(s) => s,
+        Err(e) => {
+            panic!("invalid hash format, this should not happen: {:?}", e);
+        }
+    };
+
+    let mut result = "".to_string();
+    result.push_str(&fir_half_pk_port);
+    result.push_str(sec_half_sign_str);
+
+    result
 }
