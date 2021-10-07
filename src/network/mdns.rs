@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use super::common::cmp_message_with_signed_digest;
 use crate::hashed;
 use crate::swiss_knife::helper::{hash_from_vec_u8_input, sign_message_digest};
 use futures::StreamExt;
@@ -64,7 +65,7 @@ pub async fn peer_discovery_loop(
                     let socket = UdpSocket::bind(&socket_addr).await?;
                     let serv = Server {
                         socket,
-                        buf: vec![0; 256],
+                        buf: vec![0; 198],
                         to_send: None,
                     };
                     tokio::spawn(async move {
@@ -97,7 +98,11 @@ impl Server {
             let two_sec = std::time::Duration::from_secs(2);
             std::thread::sleep(two_sec);
             if let Some(size) = to_send {
-                println!("Received {} bytes and message {:?}", size, buf);
+                println!("Size of message: {}", buf.len());
+                println!(
+                    "Is valid handshake message: {}",
+                    verify_discv_handshake(buf.clone())
+                );
             }
             println!(
                 "Nothing to send, receiving messages at {}",
@@ -130,20 +135,51 @@ fn multi_to_socket_addr(multi_address: libp2p::Multiaddr) -> String {
 fn create_discv_handshake(
     public_key: EcdsaPublicKey,
     secret_key: EcdsaPrivateKey,
-    port_string: String,
+    port: String,
 ) -> Vec<u8> {
     // First half is PUBLIC_KEY | PORT (in bytes)
-    let mut first_half = public_key.as_ref().to_vec(); // this contains non ASCII characters
-    let port_bytes = port_string.as_bytes().to_vec();
-    first_half.extend(port_bytes);
+    let mut first_half = public_key_and_port_to_vec(public_key, port);
 
     // Second half is H(PUBLIC_KEY | PORT)_C (in bytes)
-    let pk_port_hashed = hash_from_vec_u8_input(first_half.clone());
-    let sec_half_hash_signed = sign_message_digest(secret_key, pk_port_hashed.as_ref());
+    let second_half = hash_and_sign(first_half.clone(), secret_key);
 
     let mut result = Vec::new();
     result.extend(&first_half);
-    result.extend(sec_half_hash_signed);
+    result.extend(second_half);
 
     result
+}
+
+fn public_key_and_port_to_vec(key: EcdsaPublicKey, port: String) -> Vec<u8> {
+    let mut res = key.as_ref().to_vec(); // this contains non ASCII characters
+    res.extend(port.as_bytes().to_vec());
+    res
+}
+
+fn hash_and_sign(input: Vec<u8>, secret_key: EcdsaPrivateKey) -> Vec<u8> {
+    let hashed = hash_from_vec_u8_input(input.clone());
+    let signed_hash = sign_message_digest(secret_key, hashed.as_ref());
+    signed_hash
+}
+
+fn verify_discv_handshake(message: Vec<u8>) -> bool {
+    // messages are between length 196 and 198
+    if message.len() > 198 {
+        panic!("incorrect size of handshake message: {}", message.len());
+    }
+    const PUB_KEY_LEN: usize = 45;
+    const SRV_PORT_LEN: usize = 5;
+    let public_key: &[u8] = &message[..PUB_KEY_LEN];
+    let port: &[u8] = &message[PUB_KEY_LEN..PUB_KEY_LEN + SRV_PORT_LEN];
+    let mut plain_message = Vec::new();
+    plain_message.extend_from_slice(public_key);
+    plain_message.extend_from_slice(port);
+    let signed_message = message[PUB_KEY_LEN + SRV_PORT_LEN..].to_vec();
+
+    let public_key = match EcdsaPublicKey::try_from_slice(public_key) {
+        Ok(k) => k,
+        Err(_) => return false,
+    };
+
+    cmp_message_with_signed_digest(public_key, plain_message, signed_message)
 }
