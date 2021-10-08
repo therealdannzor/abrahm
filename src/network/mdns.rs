@@ -16,11 +16,13 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc::Sender;
 
 pub async fn peer_discovery_loop(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     serv_port: String,
+    tx: Sender<ValidatedPeer>,
 ) -> Result<(), Box<dyn Error>> {
     let keys_id = identity::Keypair::generate_ed25519();
     let peer_id = PeerId::from(keys_id.public());
@@ -35,6 +37,7 @@ pub async fn peer_discovery_loop(
     let counter_1: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
 
     loop {
+        let tx = tx.clone();
         match swarm.select_next_some().await {
             SwarmEvent::Behaviour(MdnsEvent::Discovered(peers)) => {
                 for (_, addr) in peers {
@@ -66,10 +69,10 @@ pub async fn peer_discovery_loop(
                     let serv = Server {
                         socket,
                         buf: vec![0; 198],
-                        to_send: None,
+                        stream_size: None,
                     };
                     tokio::spawn(async move {
-                        serv.run().await;
+                        serv.run(tx).await;
                     });
                 } else {
                     *counter += 1;
@@ -80,28 +83,39 @@ pub async fn peer_discovery_loop(
     }
 }
 
+pub struct ValidatedPeer {
+    port: Vec<u8>,
+    public_key: Vec<u8>,
+}
+
 pub struct Server {
     socket: UdpSocket,
     buf: Vec<u8>,
-    to_send: Option<usize>,
+    stream_size: Option<usize>,
 }
 
 impl Server {
-    async fn run(self) -> Result<(), std::io::Error> {
+    async fn run(self, tx: Sender<ValidatedPeer>) -> Result<(), std::io::Error> {
         let Server {
             socket,
             mut buf,
-            mut to_send,
+            mut stream_size,
         } = self;
 
         loop {
             let two_sec = std::time::Duration::from_secs(2);
             std::thread::sleep(two_sec);
-            if let Some(size) = to_send {
-                log::info!("valid handshake? {}", verify_discv_handshake(buf.clone()));
-                buf = vec![0; 198];
+            if let Some(size) = stream_size {
+                if verify_discv_handshake(buf.clone()) {
+                    log::info!("handshake verified!");
+                    let port = extract_port_addr_field(buf.clone());
+                    let public_key = extract_pub_key_field(buf.clone());
+                    let validated = ValidatedPeer { port, public_key };
+                    let _ = tx.send(validated).await;
+                    buf = vec![0; 198];
+                }
             }
-            to_send = Some(socket.recv(&mut buf).await?);
+            stream_size = Some(socket.recv(&mut buf).await?);
         }
     }
 }
@@ -147,13 +161,11 @@ fn verify_discv_handshake(message: Vec<u8>) -> bool {
         log::error!("message length not between 196 and 198");
         return false;
     }
-    const PUB_KEY_LEN: usize = 45;
-    const SRV_PORT_LEN: usize = 5;
-    let public_key: &[u8] = &message[..PUB_KEY_LEN];
-    let port: &[u8] = &message[PUB_KEY_LEN..PUB_KEY_LEN + SRV_PORT_LEN];
+    let public_key = extract_pub_key_field(message.clone());
+    let port = extract_port_addr_field(message.clone());
     let mut plain_message = Vec::new();
-    plain_message.extend_from_slice(public_key);
-    plain_message.extend_from_slice(port);
+    plain_message.extend(public_key.clone());
+    plain_message.extend(port);
 
     // a hack to make sure that the signed message does not include
     // zeros that the peer never intended to be part of the message
@@ -170,6 +182,16 @@ fn verify_discv_handshake(message: Vec<u8>) -> bool {
     };
 
     cmp_message_with_signed_digest(public_key, plain_message, signed_message)
+}
+
+const PUB_KEY_LEN: usize = 45;
+const SRV_PORT_LEN: usize = 5;
+fn extract_pub_key_field(v: Vec<u8>) -> Vec<u8> {
+    v[..PUB_KEY_LEN].to_vec()
+}
+
+fn extract_port_addr_field(v: Vec<u8>) -> Vec<u8> {
+    v[PUB_KEY_LEN..PUB_KEY_LEN + SRV_PORT_LEN].to_vec()
 }
 
 fn check_zeros(v: Vec<u8>) -> usize {
