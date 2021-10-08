@@ -1,5 +1,5 @@
 #![allow(unused)]
-use crate::swiss_knife::helper::sign_message_digest;
+use crate::swiss_knife::helper::hash_and_sign_message_digest;
 use std::boxed::Box;
 use std::collections::HashMap;
 use std::fmt;
@@ -165,7 +165,8 @@ impl MessageWorker {
             let ser_len = usize_to_ascii_decimal(ser.len());
             msg.extend(ser_len);
             msg.extend(ser.as_bytes().to_vec());
-            let signed = sign_message_digest(self.secret_key.clone(), &ser.clone());
+            let signed =
+                hash_and_sign_message_digest(self.secret_key.clone(), ser.as_bytes().to_vec());
             msg.extend(signed);
         } else if preprepare.is_some() {
             msg.push(49);
@@ -177,7 +178,8 @@ impl MessageWorker {
             let ser_len = usize_to_ascii_decimal(ser.len());
             msg.extend(ser_len);
             msg.extend(ser.as_bytes().to_vec());
-            let signed = sign_message_digest(self.secret_key.clone(), &ser.clone());
+            let signed =
+                hash_and_sign_message_digest(self.secret_key.clone(), ser.as_bytes().to_vec());
             msg.extend(signed);
         } else if prepare.is_some() {
             msg.push(50);
@@ -189,7 +191,8 @@ impl MessageWorker {
             let ser_len = usize_to_ascii_decimal(ser.len());
             msg.extend(ser_len);
             msg.extend(ser.as_bytes().to_vec());
-            let signed = sign_message_digest(self.secret_key.clone(), &ser.clone());
+            let signed =
+                hash_and_sign_message_digest(self.secret_key.clone(), ser.as_bytes().to_vec());
             msg.extend(signed);
         } else if commit.is_some() {
             msg.push(51);
@@ -201,7 +204,8 @@ impl MessageWorker {
             let ser_len = usize_to_ascii_decimal(ser.len());
             msg.extend(ser_len);
             msg.extend(ser.as_bytes().to_vec());
-            let signed = sign_message_digest(self.secret_key.clone(), &ser.clone());
+            let signed =
+                hash_and_sign_message_digest(self.secret_key.clone(), ser.as_bytes().to_vec());
             msg.extend(signed);
         } else {
             return Err(std::io::Error::new(
@@ -295,7 +299,8 @@ mod tests {
         let message_length = usize_to_ascii_decimal(serialized.len());
 
         // prepare to sign the request
-        let signed_request = sign_message_digest(sk.clone(), &serialized);
+        let signed_request =
+            hash_and_sign_message_digest(sk.clone(), serialized.as_bytes().to_vec());
 
         // add all components to a complete message
         let mut full_message = Vec::new();
@@ -391,7 +396,7 @@ mod tests {
         mw.insert_peer(1, pk.clone());
 
         // Sign a secret message with shortest possible length
-        let signed = sign_message_digest(sk.clone(), &String::from("1"));
+        let signed = hash_and_sign_message_digest(sk.clone(), vec![49]);
         let sign_len = usize_to_ascii_decimal(signed.len());
         // Construct the complete message as passed over TCP:
         // Index 0:        Consensus phase
