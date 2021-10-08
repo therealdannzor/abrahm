@@ -1,5 +1,5 @@
-use crate::swiss_knife::helper::{hash_from_vec_u8_input, sign_message_digest};
-use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
+use crate::swiss_knife::helper::hash_from_vec_u8_input;
+use themis::keys::EcdsaPublicKey;
 use themis::secure_message::SecureVerify;
 
 pub enum Messages {
@@ -33,7 +33,7 @@ pub fn cmp_message_with_signed_digest(
     signed_message: Vec<u8>,
 ) -> bool {
     let secure_b = SecureVerify::new(public_key);
-    let signed_msg = match secure_b.verify(signed_message) {
+    let recovered_message = match secure_b.verify(signed_message) {
         Ok(m) => m,
         Err(e) => {
             log::error!("could not verify message: {:?}", e);
@@ -41,8 +41,9 @@ pub fn cmp_message_with_signed_digest(
         }
     };
 
-    let hashed_msg = hash_from_vec_u8_input(plain_message).as_bytes().to_vec();
-    signed_msg == hashed_msg
+    let hashed_message = hash_from_vec_u8_input(plain_message).as_bytes().to_vec();
+
+    recovered_message == hashed_message
 }
 
 pub fn u8_to_ascii_decimal(input: u8) -> Vec<u8> {
@@ -72,13 +73,6 @@ pub fn vec_u8_ascii_decimal_to_u8(input: Vec<u8>) -> u8 {
         acc += n;
     }
     acc
-}
-
-pub fn hash_and_sign(input: Vec<u8>, secret_key: EcdsaPrivateKey) -> Vec<u8> {
-    let hashed = hash_from_vec_u8_input(input.clone());
-    let signed_hash = sign_message_digest(secret_key, hashed.as_ref());
-    println!("[hash_and_sign] signed_hash len: {}", signed_hash.len());
-    signed_hash
 }
 
 pub fn public_key_and_port_to_vec(key: EcdsaPublicKey, port: String) -> Vec<u8> {
