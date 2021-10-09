@@ -17,8 +17,27 @@ use std::sync::{Arc, Mutex};
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
 
-pub async fn peer_discovery_loop(
+pub async fn spawn_peer_discovery_loop(
+    pk: EcdsaPublicKey,
+    sk: EcdsaPrivateKey,
+    serv_port: String,
+    tx: Sender<ValidatedPeer>,
+) -> JoinHandle<()> {
+    let join = tokio::spawn(async move {
+        match peer_discovery_loop(pk, sk, serv_port, tx).await {
+            Ok(()) => {}
+            Err(e) => {
+                panic!("discovery loop failed: {:?}", e);
+            }
+        };
+    });
+
+    join
+}
+
+async fn peer_discovery_loop(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     serv_port: String,
@@ -32,9 +51,6 @@ pub async fn peer_discovery_loop(
     let mut swarm = Swarm::new(transport, behaviour, peer_id);
     let assign_multi_addr = "/ip4/0.0.0.0/tcp/0".parse::<libp2p::Multiaddr>()?;
     swarm.listen_on(assign_multi_addr.clone());
-
-    // create a counter to avoid spawning to servers
-    let counter_1: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
 
     loop {
         let tx = tx.clone();
@@ -60,10 +76,8 @@ pub async fn peer_discovery_loop(
                 listener_id,
                 address,
             } => {
-                let mut counter = counter_1.lock().unwrap();
-                // since we have two network interfaces we only want to spawn a listening server
-                // for one of them (they have both the same port)
-                if *counter == 1 {
+                let hostname = multi_to_host_addr(address.clone());
+                if hostname == "127.0.0.1" {
                     let socket_addr = multi_to_socket_addr(address);
                     let socket = UdpSocket::bind(&socket_addr).await?;
                     let serv = Server {
@@ -74,8 +88,6 @@ pub async fn peer_discovery_loop(
                     tokio::spawn(async move {
                         serv.run(tx).await;
                     });
-                } else {
-                    *counter += 1;
                 }
             }
             _ => {}
@@ -83,6 +95,7 @@ pub async fn peer_discovery_loop(
     }
 }
 
+#[derive(Debug)]
 pub struct ValidatedPeer {
     port: Vec<u8>,
     public_key: Vec<u8>,
@@ -128,6 +141,14 @@ fn multi_to_socket_addr(multi_address: libp2p::Multiaddr) -> String {
     let mut socket_addr = "127.0.0.1:".to_string();
     socket_addr.push_str(&port);
     socket_addr
+}
+
+fn multi_to_host_addr(multi_address: libp2p::Multiaddr) -> String {
+    let multistr = multi_address.to_string();
+    let sep: Vec<&str> = multistr.split("/").collect();
+    let host_ind = 2;
+    let hostname = sep[host_ind].to_string();
+    hostname
 }
 
 // create_discv_handshake creates a discovery handshake message containing the:
