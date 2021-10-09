@@ -1,8 +1,10 @@
 #![allow(unused)]
 
 use super::client_handle::{spawn_peer_listeners, MessagePeerHandle};
+use super::mdns::{spawn_peer_discovery_loop, ValidatedPeer};
 use super::server_handle::spawn_server_accept_loop;
 use super::{InternalMessage, OrdPayload, PayloadEvent};
+use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::oneshot::{self, error::TryRecvError};
 use tokio::task::JoinHandle;
@@ -56,4 +58,17 @@ pub async fn spawn_network_io_listeners(
         spawn_peer_listeners(tx_out, rx_out, tx_in, rx_in).await;
 
     (message_peer_handle, join_server, join_peer, join_inbox)
+}
+
+pub async fn spawn_peer_discovery_listener(
+    pk: EcdsaPublicKey,
+    sk: EcdsaPrivateKey,
+    server_port: String,
+) -> (Receiver<ValidatedPeer>, JoinHandle<()>) {
+    let (tx_peer_discv, rx_peer_discv): (Sender<ValidatedPeer>, Receiver<ValidatedPeer>) =
+        mpsc::channel(8);
+
+    let join = spawn_peer_discovery_loop(pk, sk, server_port, tx_peer_discv).await;
+
+    (rx_peer_discv, join)
 }
