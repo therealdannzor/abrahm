@@ -13,6 +13,7 @@ pub use super::state::{State, M};
 use super::view::{CheckPoint, ViewChangeMessage};
 use themis::keys::EcdsaPublicKey;
 
+#[derive(Clone)]
 // Engine is the second highest abstraction of the consensus engine (after ConsensusChain) which contains
 // all the neccessary information for a validator to participate in a the replication process.
 //

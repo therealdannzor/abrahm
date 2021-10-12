@@ -5,6 +5,7 @@ use super::state::State;
 use std::vec::Vec;
 use themis::keys::EcdsaPublicKey;
 
+#[derive(Clone)]
 /// Leader Election Process
 
 // ValidatorProcess assigns and and manages the primary (leader) in the replication process.

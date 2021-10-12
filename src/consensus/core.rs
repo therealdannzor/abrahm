@@ -5,6 +5,7 @@ use crate::types::block::Block;
 use std::sync::mpsc;
 use themis::keys::EcdsaPublicKey;
 
+#[derive(Clone)]
 // ConsensusChain represents the blockchain replication process to order and finalize state,
 // what is considered the 'truth'. We call this continuous activity state negotiation.
 //
@@ -54,7 +55,7 @@ impl ConsensusChain {
         self.head_block
     }
 
-    pub fn engine(mut self) -> Engine {
+    pub fn engine(self) -> Engine {
         self.engine
     }
 }
