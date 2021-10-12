@@ -1,7 +1,4 @@
-#![allow(unused)]
-
 use super::common::cmp_message_with_signed_digest;
-use crate::hashed;
 use crate::network::common::public_key_and_port_to_vec;
 use crate::swiss_knife::helper::hash_and_sign_message_digest;
 use futures::StreamExt;
@@ -12,8 +9,6 @@ use libp2p::{
     PeerId,
 };
 use std::error::Error;
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Sender;
@@ -50,7 +45,7 @@ async fn peer_discovery_loop(
 
     let mut swarm = Swarm::new(transport, behaviour, peer_id);
     let assign_multi_addr = "/ip4/0.0.0.0/tcp/0".parse::<libp2p::Multiaddr>()?;
-    swarm.listen_on(assign_multi_addr.clone());
+    let _ = swarm.listen_on(assign_multi_addr.clone());
 
     loop {
         let tx = tx.clone();
@@ -73,7 +68,7 @@ async fn peer_discovery_loop(
                 }
             }
             SwarmEvent::NewListenAddr {
-                listener_id,
+                listener_id: _,
                 address,
             } => {
                 let hostname = multi_to_host_addr(address.clone());
@@ -86,7 +81,7 @@ async fn peer_discovery_loop(
                         stream_size: None,
                     };
                     tokio::spawn(async move {
-                        serv.run(tx).await;
+                        let _ = serv.run(tx).await;
                     });
                 }
             }
@@ -118,7 +113,7 @@ impl Server {
         loop {
             let two_sec = std::time::Duration::from_secs(2);
             std::thread::sleep(two_sec);
-            if let Some(size) = stream_size {
+            if let Some(_) = stream_size {
                 if verify_discv_handshake(buf.clone()) {
                     log::info!("handshake verified!");
                     let port = extract_port_addr_field(buf.clone());
