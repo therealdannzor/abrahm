@@ -1,5 +1,5 @@
 #![allow(unused)]
-use super::keystore::KeyFile;
+use super::keystore::{KeyFile, KeyStore};
 use crate::swiss_knife::helper::{is_string_valid_ecdsa, read_file_by_lines};
 use std::convert::TryFrom;
 use themis::keys::EcdsaPublicKey;
@@ -7,14 +7,14 @@ use themis::keys::EcdsaPublicKey;
 pub struct BootStrap {
     init: bool,
     peers: Vec<EcdsaPublicKey>,
-    whoami: KeyFile,
+    local_dat: KeyStore,
 }
 impl BootStrap {
     pub fn new() -> Self {
         Self {
             init: false,
             peers: Vec::new(),
-            whoami: KeyFile::new(String::from(""), String::from("")),
+            local_dat: KeyStore::new(),
         }
     }
 
@@ -35,8 +35,8 @@ impl BootStrap {
         // either pass the validators as a vector of strings directly
         if vals.is_some() {
             let vals = vals.unwrap();
-            if vals.len() < 4 {
-                panic!("provided less than four validators");
+            if vals.len() < 3 {
+                panic!("provided less than three other validators");
             }
             for v in vals.iter() {
                 let key = is_string_valid_ecdsa(v.to_string());
@@ -61,21 +61,35 @@ impl BootStrap {
     }
 
     fn load_keypair(&mut self) {
+        if self.local_dat.key_pair.is_filled() {
+            log::info!("key pair already exists");
+            return;
+        }
+
         let path: String = std::env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
         let key_path = "/keyfile.dat";
         let mut path = path.clone();
         path.push_str(key_path);
-        let data = std::fs::read_to_string(&path);
-        if data.is_err() {
-            panic!("could not read key file");
-        }
-        let data = data.unwrap();
+        let data = match std::fs::read_to_string(&path) {
+            Ok(dat) => dat,
+            Err(e) => {
+                panic!("could not read key file");
+            }
+        };
 
         let parsed_json = serde_json::from_str(&data);
         if parsed_json.is_err() {
             panic!("could not parse data as json");
         }
         let key_pair: KeyFile = parsed_json.unwrap();
-        self.whoami = key_pair;
+        self.local_dat.key_pair = key_pair;
+    }
+
+    pub fn get_peers(&self) -> Vec<EcdsaPublicKey> {
+        self.peers.clone()
+    }
+
+    pub fn amount_peers(&self) -> usize {
+        self.peers.len() - 1 // we do not count ourself
     }
 }
