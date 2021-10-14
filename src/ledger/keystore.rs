@@ -64,4 +64,12 @@ impl KeyStore {
             tx_count: 0,
         }
     }
+
+    pub fn get_public(&self) -> String {
+        self.key_pair.public.clone()
+    }
+
+    pub fn get_secret(&self) -> String {
+        self.key_pair.secret.clone()
+    }
 }

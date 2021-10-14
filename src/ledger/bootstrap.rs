@@ -92,4 +92,12 @@ impl BootStrap {
     pub fn amount_peers(&self) -> usize {
         self.peers.len() - 1 // we do not count ourself
     }
+
+    pub fn get_public(&self) -> String {
+        self.local_dat.get_public()
+    }
+
+    pub fn get_secret(&self) -> String {
+        self.local_dat.get_secret()
+    }
 }
