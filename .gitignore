@@ -4,5 +4,8 @@
 # tmp test folder
 /test
 
+# state database
+/database
+
 # key pair
 keyfile.dat
