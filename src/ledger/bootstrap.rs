@@ -89,6 +89,16 @@ impl BootStrap {
         self.peers.clone()
     }
 
+    pub fn get_peers_str(&self) -> Vec<String> {
+        let peers = self.get_peers();
+        let mut result: Vec<String> = Vec::new();
+        for i in 0..peers.len() {
+            let public_hex: String = hex::encode(peers[i]);
+            result.push(public_hex);
+        }
+        result
+    }
+
     pub fn amount_peers(&self) -> usize {
         self.peers.len() - 1 // we do not count ourself
     }
