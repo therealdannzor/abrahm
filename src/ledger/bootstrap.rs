@@ -2,7 +2,7 @@
 use super::keystore::{KeyFile, KeyStore};
 use crate::swiss_knife::helper::{is_string_valid_ecdsa, read_file_by_lines};
 use std::convert::TryFrom;
-use themis::keys::EcdsaPublicKey;
+use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 
 pub struct BootStrap {
     init: bool,
@@ -61,7 +61,7 @@ impl BootStrap {
     }
 
     fn load_keypair(&mut self) {
-        if self.local_dat.key_pair.is_filled() {
+        if self.local_dat.key_pair_hex.is_filled() {
             log::info!("key pair already exists");
             return;
         }
@@ -82,7 +82,7 @@ impl BootStrap {
             panic!("could not parse data as json");
         }
         let key_pair: KeyFile = parsed_json.unwrap();
-        self.local_dat.key_pair = key_pair;
+        self.local_dat.key_pair_hex = key_pair;
     }
 
     pub fn get_peers(&self) -> Vec<EcdsaPublicKey> {
@@ -103,11 +103,19 @@ impl BootStrap {
         self.peers.len() - 1 // we do not count ourself
     }
 
-    pub fn get_public(&self) -> String {
-        self.local_dat.get_public()
+    pub fn get_public_hex(&self) -> String {
+        self.local_dat.get_public_hex()
     }
 
-    pub fn get_secret(&self) -> String {
-        self.local_dat.get_secret()
+    pub fn get_secret_hex(&self) -> String {
+        self.local_dat.get_secret_hex()
+    }
+
+    pub fn get_public_as_type(&self) -> EcdsaPublicKey {
+        self.local_dat.get_public_as_type()
+    }
+
+    pub fn get_secret_as_type(&self) -> EcdsaPrivateKey {
+        self.local_dat.get_secret_as_type()
     }
 }
