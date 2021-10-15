@@ -6,7 +6,7 @@ use super::server_handle::spawn_server_accept_loop;
 use super::{InternalMessage, OrdPayload, PayloadEvent};
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::sync::oneshot::{self, error::TryRecvError};
+use tokio::sync::oneshot::error::TryRecvError;
 use tokio::task::JoinHandle;
 
 pub struct Networking(MessagePeerHandle);

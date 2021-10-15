@@ -42,6 +42,17 @@ impl MessagePeerHandle {
         let _ = self.1.send(get_message).await;
         recv
     }
+
+    pub async fn get_host_port(&self) -> String {
+        let (send, recv): (oneshot::Sender<String>, oneshot::Receiver<String>) = oneshot::channel();
+        let _ = self
+            .0
+            .send(InternalMessage::FromServerEvent(
+                FromServerEvent::GetHostPort(send),
+            ))
+            .await;
+        recv.await.unwrap()
+    }
 }
 
 pub async fn spawn_peer_listeners(
@@ -98,7 +109,14 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>) {
         match msg {
             InternalMessage::FromServerEvent(FromServerEvent::HostSocket(addr)) => {
                 let sock = UdpSocket::bind(addr).unwrap();
+                id_conns.insert(Token(1024), addr.clone());
                 stream_conns.insert(addr, sock);
+            }
+            InternalMessage::FromServerEvent(FromServerEvent::GetHostPort(sender)) => {
+                let _ = match id_conns.get(&Token(1024)) {
+                    Some(port) => sender.send(port.port().to_string()),
+                    None => sender.send("0".to_string()),
+                };
             }
             InternalMessage::FromServerEvent(FromServerEvent::NewClient(msg)) => {
                 let op = id_conns.insert(msg.1, msg.2);
