@@ -64,11 +64,12 @@ pub async fn spawn_peer_discovery_listener(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     server_port: String,
+    validator_list: Vec<String>,
 ) -> (Receiver<ValidatedPeer>, JoinHandle<()>) {
     let (tx_peer_discv, rx_peer_discv): (Sender<ValidatedPeer>, Receiver<ValidatedPeer>) =
         mpsc::channel(8);
 
-    let join = spawn_peer_discovery_loop(pk, sk, server_port, tx_peer_discv).await;
+    let join = spawn_peer_discovery_loop(pk, sk, server_port, tx_peer_discv, validator_list).await;
 
     (rx_peer_discv, join)
 }

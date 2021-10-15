@@ -19,9 +19,10 @@ pub async fn spawn_peer_discovery_loop(
     sk: EcdsaPrivateKey,
     serv_port: String,
     tx: Sender<ValidatedPeer>,
+    to_discover: Vec<String>,
 ) -> JoinHandle<()> {
     let join = tokio::spawn(async move {
-        match peer_discovery_loop(pk, sk, serv_port, tx).await {
+        match peer_discovery_loop(pk, sk, serv_port, tx, to_discover).await {
             Ok(()) => {}
             Err(e) => {
                 panic!("discovery loop failed: {:?}", e);
@@ -37,6 +38,7 @@ async fn peer_discovery_loop(
     sk: EcdsaPrivateKey,
     serv_port: String,
     tx: Sender<ValidatedPeer>,
+    to_discover: Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
     let keys_id = identity::Keypair::generate_ed25519();
     let peer_id = PeerId::from(keys_id.public());
@@ -80,8 +82,9 @@ async fn peer_discovery_loop(
                         buf: vec![0; 198],
                         stream_size: None,
                     };
+                    let list_peers = to_discover.clone();
                     tokio::spawn(async move {
-                        let _ = serv.run(tx).await;
+                        let _ = serv.run(tx, list_peers).await;
                     });
                 }
             }
@@ -103,12 +106,19 @@ pub struct Server {
 }
 
 impl Server {
-    async fn run(self, tx: Sender<ValidatedPeer>) -> Result<(), std::io::Error> {
+    async fn run(
+        self,
+        tx: Sender<ValidatedPeer>,
+        to_find: Vec<String>,
+    ) -> Result<(), std::io::Error> {
         let Server {
             socket,
             mut buf,
             mut stream_size,
         } = self;
+
+        let mut num_found: usize = 0;
+        let mut peers = to_find.clone();
 
         loop {
             let two_sec = std::time::Duration::from_secs(2);
@@ -117,10 +127,37 @@ impl Server {
                 if verify_discv_handshake(buf.clone()) {
                     log::info!("handshake verified!");
                     let port = extract_port_addr_field(buf.clone());
-                    let public_key = extract_pub_key_field(buf.clone());
-                    let validated = ValidatedPeer { port, public_key };
+                    let public_key_vec: Vec<u8> = extract_pub_key_field(buf.clone());
+                    let public_key: EcdsaPublicKey =
+                        match EcdsaPublicKey::try_from_slice(public_key_vec.clone()) {
+                            Ok(k) => k,
+                            Err(e) => {
+                                log::error!("could not validate public key in message: {:?}", e);
+                                continue;
+                            }
+                        };
+                    let public_hex: String = hex::encode(public_key);
+                    if peers.contains(&public_hex) {
+                        num_found += 1;
+                        // remove the peer already found in vector
+                        if let Some(pos) = peers.iter().position(|x| *x == public_hex) {
+                            // to make sure we don't count the same peer more than once
+                            peers.remove(pos);
+                        }
+                    } else {
+                        continue;
+                    }
+                    let validated = ValidatedPeer {
+                        port,
+                        public_key: public_key_vec,
+                    };
                     let _ = tx.send(validated).await;
                     buf = vec![0; 198];
+
+                    // if we have found all peers we are looking for, bail out
+                    if num_found == to_find.len() {
+                        return Ok(());
+                    }
                 }
             }
             stream_size = Some(socket.recv(&mut buf).await?);
