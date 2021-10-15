@@ -93,7 +93,7 @@ impl BootStrap {
         let peers = self.get_peers();
         let mut result: Vec<String> = Vec::new();
         for i in 0..peers.len() {
-            let public_hex: String = hex::encode(peers[i]);
+            let public_hex: String = hex::encode(peers[i].clone());
             result.push(public_hex);
         }
         result
