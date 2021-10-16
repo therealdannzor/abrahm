@@ -9,3 +9,6 @@
 
 # key pair
 keyfile.dat
+
+# line separated list of validator nodes/peers
+validators.txt
