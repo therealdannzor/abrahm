@@ -37,7 +37,7 @@ impl MessageWorker {
     }
 
     pub fn public_key(&self) -> &[u8] {
-        self.public_key.as_ref().clone()
+        self.public_key.as_ref()
     }
 
     // The message structure is as follows:
@@ -260,7 +260,6 @@ fn check_id_length(short_identifier: u8) -> Result<(), std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::testcommons::generate_keys;
     use crate::hashed;
     use crate::network::common::usize_to_ascii_decimal;
     use crate::swiss_knife::helper::generate_hash_from_input;
@@ -268,7 +267,6 @@ mod tests {
     use crypto::sha2::Sha256;
     use std::convert::TryFrom;
     use themis::keygen;
-    use themis::keys::EcdsaPublicKey;
     use themis::secure_message::{SecureSign, SecureVerify};
     use tokio_test::{assert_err, assert_ok};
 
@@ -277,7 +275,7 @@ mod tests {
         let (sk, pk) = keygen::gen_ec_key_pair().split();
         let mut mw = MessageWorker::new(sk.clone(), pk.clone());
         mw.insert_peer(49 /* corresponds to 1 */, pk.clone());
-        let bob_pk = &generate_keys(1)[0];
+        let (_, bob_pk) = keygen::gen_ec_key_pair().split();
         mw.insert_peer(2, bob_pk.clone());
 
         let request = create_request_type("0x", 1, 2, 1);

@@ -18,7 +18,7 @@ use themis::keys::EcdsaPublicKey;
 // periodically in a consistent manner.
 pub struct ValidatorProcess {
     // Replica ID
-    id: EcdsaPublicKey,
+    id: String,
 
     // The latest view as far as this replica is concerned.
     view: View,
@@ -31,13 +31,13 @@ pub struct ValidatorProcess {
     // request but assigns a sequence number to it and signs it. The other replicas will, in
     // accordance to the leader election protocol, recognize the replica's authority and respond
     // to it (assumed it is honest and responsive).
-    primary: EcdsaPublicKey,
+    primary: String,
 
     // Contains the set of validators that can participate in the validation and
     // proposal of requests. This set must be identical for all validators or else there will
     // be a discrepancy in choice of leaders. We assume it is ordered somehow and identitcal
     // to all replicas.
-    set: Vec<EcdsaPublicKey>,
+    set: Vec<String>,
 
     // The current phase of the algorithm: ACCEPT REQUESTS, PREPREPARE, PREPARE, COMMIT,
     // VIEW-CHANGE, and NEW-VIEW.
@@ -58,7 +58,7 @@ impl ValidatorProcess {
     }
 
     // Retrieve the primary at a view
-    pub fn get_primary_at_view(&self, v: View) -> EcdsaPublicKey {
+    pub fn get_primary_at_view(&self, v: View) -> String {
         let size = self.set.len();
         let v = v as usize;
         self.set[v % size].clone()
@@ -93,7 +93,7 @@ impl ValidatorProcess {
         (((2f64) / (3f64)) * self.big_n() as f64).ceil() as usize
     }
 
-    pub fn set(&self) -> Vec<EcdsaPublicKey> {
+    pub fn set(&self) -> Vec<String> {
         self.set.clone()
     }
 
@@ -101,11 +101,11 @@ impl ValidatorProcess {
         self.phase.clone()
     }
 
-    pub fn primary(&self) -> EcdsaPublicKey {
+    pub fn primary(&self) -> String {
         self.primary.clone()
     }
 
-    pub fn id(&self) -> EcdsaPublicKey {
+    pub fn id(&self) -> String {
         self.id.clone()
     }
 
@@ -122,9 +122,9 @@ impl ValidatorProcess {
         self.sequence_number.clone()
     }
 
-    pub fn new(id: EcdsaPublicKey, set: Vec<EcdsaPublicKey>) -> Self {
-        if set.len() < 4 {
-            panic!("need at least 4 validators");
+    pub fn new(id: String, set: Vec<String>) -> Self {
+        if set.len() < 3 {
+            panic!("need at least 3 other validators");
         }
 
         Self {
@@ -143,13 +143,13 @@ impl ValidatorProcess {
 mod tests {
     use super::*;
     use crate::consensus::state::State;
-    use crate::consensus::testcommons::generate_keys;
+    use crate::consensus::testcommons::generate_keys_as_str;
     use std::iter::Iterator;
     use themis::keygen;
 
     #[test]
     fn leader_rotation() {
-        let set = generate_keys(4);
+        let set = generate_keys_as_str(4);
 
         // Go through a full cycle of validators with changing phase at each new view
         let mut vp = ValidatorProcess::new(set[0].clone(), set.clone());
@@ -211,8 +211,8 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn less_than_four_validators() {
-        let vals = generate_keys(3);
+    fn less_than_three_other_validators() {
+        let vals = generate_keys_as_str(2);
         let local_id = vals[0].clone();
         ValidatorProcess::new(local_id, vals);
     }

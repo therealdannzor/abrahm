@@ -1,7 +1,6 @@
 use crate::consensus::transition::Transact;
 use crate::ledger::controller::calculate_fee;
 use std::collections::HashMap;
-use themis::keys::EcdsaPublicKey;
 
 #[derive(Clone)]
 // Replay replays a proposed transition on the ledger to verify its validitiy
@@ -10,7 +9,7 @@ pub struct Replay {
 }
 
 #[derive(Clone, Debug)]
-pub struct Peer(EcdsaPublicKey, /* balance */ u32);
+pub struct Peer(String, /* balance */ u32);
 
 impl Replay {
     pub fn new() -> Self {
@@ -168,12 +167,12 @@ fn cache_balance(account: u8, cache: HashMap<u8, Peer>) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::testcommons::generate_keys;
+    use crate::consensus::testcommons::generate_keys_as_str;
     use serial_test::serial;
     use tokio_test::{assert_err, assert_ok};
 
     fn setup(amount_keys: u8) -> Replay {
-        let keys = generate_keys(amount_keys);
+        let keys = generate_keys_as_str(amount_keys);
         let mut rep = Replay::new();
         for i in 0..keys.len() {
             let p = Peer(keys[i].clone(), 0);

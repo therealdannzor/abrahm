@@ -399,10 +399,6 @@ impl Engine {
                         return Err(is_valid.err().unwrap());
                     }
                     let pk = self.val_engine.id().clone();
-                    // public key type is always valid utf-8
-                    let pk = std::str::from_utf8(&pk.as_ref().to_vec())
-                        .unwrap()
-                        .to_string();
                     let curr_state = self.val_engine.phase();
                     let seq_number = self.val_engine.n();
                     let digest: String = self
@@ -578,7 +574,7 @@ impl Engine {
         }
     }
 
-    pub fn new(id: EcdsaPublicKey, validators: Vec<EcdsaPublicKey>) -> Self {
+    pub fn new(id: String, validators: Vec<String>) -> Self {
         let mut message_log: HashMap<u64, AckMessagesView> = HashMap::new();
         message_log.insert(0, AckMessagesView::new(None, None, None, None));
         Self {
@@ -616,7 +612,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::testcommons::generate_keys;
+    use crate::consensus::testcommons::generate_keys_as_str;
     use crate::consensus::transition::{Transact, Transition};
     use themis::keys::EcdsaPublicKey;
     use tokio_test::{assert_err, assert_ok};
@@ -646,7 +642,7 @@ mod tests {
     }
 
     fn setup() -> Engine {
-        let keys = generate_keys(4);
+        let keys = generate_keys_as_str(4);
         Engine::new(keys[0].clone(), keys)
     }
 
