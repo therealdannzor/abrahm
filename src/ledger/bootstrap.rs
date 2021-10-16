@@ -74,6 +74,17 @@ impl BootStrap {
         }
         let key_pair: KeyFile = parsed_json.unwrap();
         self.local_dat.key_pair_hex = key_pair;
+
+        let pub_key = self.get_public_hex();
+        match hex::decode(pub_key) {
+            Ok(_) => {}
+            Err(e) => {
+                panic!(
+                    "public key provided through key file is not a hex string: {:?}",
+                    e
+                );
+            }
+        }
     }
 
     pub fn get_peers(&self) -> Vec<EcdsaPublicKey> {
