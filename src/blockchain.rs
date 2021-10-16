@@ -1,12 +1,15 @@
 #![allow(unused)]
 
 use crate::consensus::{common::ValidatorSet, core::ConsensusChain, engine::Engine};
+use crate::ledger::bootstrap::BootStrap;
 use crate::ledger::state_db::{KeyValueIO, StateDB};
+use crate::network::api::{spawn_network_io_listeners, spawn_peer_discovery_listener};
+use crate::network::client_handle::MessagePeerHandle;
+use crate::network::mdns::ValidatedPeer;
 use crate::types::{block::Block, pool::TxPool};
-use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
-
-use std::sync::mpsc;
 use std::vec::Vec;
+use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
+use tokio::sync::mpsc::{self, Receiver};
 
 pub struct Blockchain {
     // contiguous link of blocks
@@ -17,6 +20,9 @@ pub struct Blockchain {
 
     // account states
     account_db: StateDB,
+
+    // kickstart keys and connect permissioned peers
+    bootstrap: BootStrap,
 
     // consensus backend
     consensus: ConsensusChain,
@@ -34,30 +40,63 @@ impl Blockchain {
     // `genesis_block`: the first block in the chain
     // `db_path`: the folder where the state db is stored (relative to working tree)
     pub fn new(
-        genesis_block: Block,
-        db_path: &str,
         stream_cap: usize,
-        public_key: EcdsaPublicKey,
-        secret_key: EcdsaPrivateKey,
-        validators: Vec<EcdsaPublicKey>,
+        validators: Option<Vec<String>>,
         blockchain_channel: mpsc::Sender<Block>,
     ) -> Self {
+        let mut bootstrap = BootStrap::new();
+        if validators.is_none() {
+            bootstrap.setup(None);
+        } else {
+            bootstrap.setup(validators);
+        }
+
+        let genesis_block = Block::genesis("0x");
+        let db_path = "/database";
+        let pub_key_hex = bootstrap.get_public_hex();
+        let pub_key_type = bootstrap.get_public_as_type();
+        let validator_peers = bootstrap.get_peers_str();
+
         Self {
             chain: vec![genesis_block.clone()],
             pool: TxPool::new(),
             account_db: account_db_setup(db_path),
+            bootstrap,
             consensus: ConsensusChain::new(
-                Engine::new(validators[0].clone(), validators.clone()),
+                Engine::new(pub_key_hex.clone(), validator_peers),
                 genesis_block,
-                public_key,
-                validators[0].clone(),
+                pub_key_type.clone(), // local id
+                pub_key_type,         // set local id as initial proposer
                 blockchain_channel,
             ),
         }
     }
 
-    pub fn start(self) {
-        let mut result = self.consensus.engine().process_consensus();
+    pub async fn id_and_peer_setup(&mut self) -> (MessagePeerHandle, Receiver<ValidatedPeer>) {
+        let second = std::time::Duration::from_secs(1);
+
+        let validator_peers = self.bootstrap.get_peers_str();
+        let (message_peer_handle, join_server, join_peer, join_inbox) =
+            spawn_network_io_listeners(validator_peers.clone()).await;
+
+        std::thread::sleep(2 * second);
+        let port_serv = message_peer_handle.get_host_port().await;
+        std::thread::sleep(second);
+
+        let (recv_peer_discv, join_discv) = spawn_peer_discovery_listener(
+            self.bootstrap.get_public_as_type(),
+            self.bootstrap.get_secret_as_type(),
+            port_serv,
+            validator_peers,
+        )
+        .await;
+
+        join_server.await.unwrap();
+        join_peer.await.unwrap();
+        join_inbox.await.unwrap();
+        join_discv.await.unwrap();
+
+        (message_peer_handle, recv_peer_discv)
     }
 
     // append_block appends a block `b` which is assumed to have:
@@ -91,7 +130,7 @@ fn account_db_setup(db_path: &str) -> StateDB {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::testcommons::generate_keys;
+    use crate::consensus::testcommons::generate_keys_as_str;
     use crate::swiss_knife::helper;
     use serial_test::serial;
     use std::convert::TryFrom;
@@ -105,11 +144,10 @@ mod tests {
     #[test]
     #[serial]
     fn block_init_and_insertion() {
-        let keys = generate_keys(4);
-        let genesis = Block::genesis("0x");
+        let keys = generate_keys_as_str(4);
         let (sk, pk) = themis::keygen::gen_ec_key_pair().split();
-        let (send, recv): (mpsc::Sender<Block>, mpsc::Receiver<Block>) = mpsc::channel();
-        let mut bc = Blockchain::new(genesis, "/test", 10, pk, sk, keys, send);
+        let (send, recv): (mpsc::Sender<Block>, mpsc::Receiver<Block>) = mpsc::channel(4);
+        let mut bc = Blockchain::new(10, Some(keys), send);
 
         let exp_len = 1;
         let exp_hash = hashed!("0x");
@@ -127,6 +165,7 @@ mod tests {
         assert_eq!(bc.chain.len(), exp_len);
         assert_eq!(bc.latest_block().hash(), exp_hash);
 
-        let _rmdir = std::fs::remove_dir_all("/test");
+        let mut _rmdir = std::fs::remove_dir_all("/test");
+        let _rmdir = std::fs::remove_dir_all("/database");
     }
 }
