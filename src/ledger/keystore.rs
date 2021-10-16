@@ -85,10 +85,6 @@ impl KeyStore {
         self.key_pair_hex.public_hex.clone()
     }
 
-    pub fn get_secret_hex(&self) -> String {
-        self.key_pair_hex.secret_hex.clone()
-    }
-
     pub fn get_public_as_type(&self) -> EcdsaPublicKey {
         self.key_pair_as_type.public.clone()
     }

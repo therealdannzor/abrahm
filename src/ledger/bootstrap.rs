@@ -1,18 +1,14 @@
-#![allow(unused)]
 use super::keystore::{KeyFile, KeyStore};
 use crate::swiss_knife::helper::{is_string_valid_ecdsa, read_file_by_lines};
-use std::convert::TryFrom;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 
 pub struct BootStrap {
-    init: bool,
     peers: Vec<EcdsaPublicKey>,
     local_dat: KeyStore,
 }
 impl BootStrap {
     pub fn new() -> Self {
         Self {
-            init: false,
             peers: Vec::new(),
             local_dat: KeyStore::new(),
         }
@@ -21,11 +17,6 @@ impl BootStrap {
     pub fn setup(&mut self, vals: Option<Vec<String>>) {
         self.load_validators(vals);
         self.load_keypair();
-        self.init = true;
-    }
-
-    pub fn setup_done(&self) -> bool {
-        self.init
     }
 
     fn load_validators(&mut self, vals: Option<Vec<String>>) {
@@ -73,7 +64,7 @@ impl BootStrap {
         let data = match std::fs::read_to_string(&path) {
             Ok(dat) => dat,
             Err(e) => {
-                panic!("could not read key file");
+                panic!("could not read key file: {:?}", e);
             }
         };
 
@@ -99,16 +90,8 @@ impl BootStrap {
         result
     }
 
-    pub fn amount_peers(&self) -> usize {
-        self.peers.len() - 1 // we do not count ourself
-    }
-
     pub fn get_public_hex(&self) -> String {
         self.local_dat.get_public_hex()
-    }
-
-    pub fn get_secret_hex(&self) -> String {
-        self.local_dat.get_secret_hex()
     }
 
     pub fn get_public_as_type(&self) -> EcdsaPublicKey {
