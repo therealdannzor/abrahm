@@ -43,11 +43,13 @@ impl BootStrap {
             let validator_path = "/validators.txt";
             let mut path = path.clone();
             path.push_str(validator_path);
-            let keys = read_file_by_lines(&path);
-            if keys.is_err() {
-                panic!("{}", keys.err().unwrap());
-            }
-            self.peers = keys.unwrap();
+            let keys = match read_file_by_lines(&path) {
+                Ok(k) => k,
+                Err(e) => {
+                    panic!("validator public key not valid: {:?}", e);
+                }
+            };
+            self.peers = keys;
         }
     }
 

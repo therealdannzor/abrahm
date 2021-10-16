@@ -53,7 +53,13 @@ where
 }
 
 pub fn is_string_valid_ecdsa(key: String) -> Result<EcdsaPublicKey, std::io::Error> {
-    let key: &[u8] = key.as_ref();
+    let key = match hex::decode(key) {
+        Ok(k) => k,
+        Err(e) => {
+            panic!("could not decode key: {:?}", e);
+        }
+    };
+
     match themis::keys::EcdsaPublicKey::try_from_slice(key) {
         Ok(k) => Ok(k),
         Err(_) => {
