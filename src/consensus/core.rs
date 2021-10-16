@@ -2,8 +2,8 @@
 use super::engine::Engine;
 use crate::ledger::state_db::StateDB;
 use crate::types::block::Block;
-use std::sync::mpsc;
 use themis::keys::EcdsaPublicKey;
+use tokio::sync::mpsc;
 
 #[derive(Clone)]
 // ConsensusChain represents the blockchain replication process to order and finalize state,
