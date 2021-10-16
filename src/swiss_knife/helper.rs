@@ -29,7 +29,7 @@ pub fn read_file_by_lines(path: &str) -> Result<Vec<EcdsaPublicKey>, std::io::Er
             let key = key.unwrap();
             keys.push(key);
         }
-        if keys.len() < 4 {
+        if keys.len() < 3 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "found less than four validators",
@@ -54,14 +54,15 @@ where
 
 pub fn is_string_valid_ecdsa(key: String) -> Result<EcdsaPublicKey, std::io::Error> {
     let key: &[u8] = key.as_ref();
-    let maybe_valid = themis::keys::EcdsaPublicKey::try_from_slice(key);
-    if maybe_valid.is_err() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "string is not a valid EcdsaPublicKey",
-        ));
+    match themis::keys::EcdsaPublicKey::try_from_slice(key) {
+        Ok(k) => Ok(k),
+        Err(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "string is not a valid EcdsaPublicKey: {:?}",
+            ));
+        }
     }
-    Ok(maybe_valid.unwrap())
 }
 
 pub fn remove_suffix<'a>(s: &'a &str, p: &str) -> &'a str {
