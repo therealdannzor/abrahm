@@ -52,7 +52,6 @@ impl Blockchain {
         }
 
         let genesis_block = Block::genesis("0x");
-        let db_path = "/database";
         let pub_key_hex = bootstrap.get_public_hex();
         let pub_key_type = bootstrap.get_public_as_type();
         let validator_peers = bootstrap.get_peers_str();
@@ -60,7 +59,7 @@ impl Blockchain {
         Self {
             chain: vec![genesis_block.clone()],
             pool: TxPool::new(),
-            account_db: account_db_setup(db_path),
+            account_db: create_db_folder(),
             bootstrap,
             consensus: ConsensusChain::new(
                 Engine::new(pub_key_hex.clone(), validator_peers),
@@ -120,11 +119,27 @@ impl Blockchain {
     }
 }
 
-fn account_db_setup(db_path: &str) -> StateDB {
+fn create_db_folder() -> StateDB {
     let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
-    path.push_str(db_path);
-    let _crd = std::fs::create_dir(&path);
-    StateDB::new(&path)
+    path.push_str("/database/client");
+    // assumes maximum of 8 (local) validator peers, so 8 different folders
+    for i in 0..8 {
+        // suppose a potential path for the database
+        let mut copy_path = path.clone();
+        let digit = std::char::from_digit(i, 10).unwrap();
+        copy_path.push(digit);
+        // gather metadata anout this potential path
+        let _ = match std::fs::metadata(copy_path.clone()) {
+            // if it is already occupied (i.e., used by another local peer), skip it
+            Ok(x) => continue,
+            Err(e) => {
+                // set up new state database at available path
+                let _ = std::fs::create_dir(&copy_path);
+                return StateDB::new(&copy_path);
+            }
+        };
+    }
+    panic!("this should not happen");
 }
 
 #[cfg(test)]
