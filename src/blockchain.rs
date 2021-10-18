@@ -10,6 +10,7 @@ use crate::types::{block::Block, pool::TxPool};
 use std::vec::Vec;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::sync::mpsc::{self, Receiver};
+use tokio::task::JoinHandle;
 
 pub struct Blockchain {
     // contiguous link of blocks
@@ -41,14 +42,15 @@ impl Blockchain {
     // `db_path`: the folder where the state db is stored (relative to working tree)
     pub fn new(
         stream_cap: usize,
-        validators: Option<Vec<String>>,
+        validators_id: Option<Vec<String>>,
+        node_id: Option<String>,
         blockchain_channel: mpsc::Sender<Block>,
     ) -> Self {
         let mut bootstrap = BootStrap::new();
-        if validators.is_none() {
+        if validators_id.is_none() {
             bootstrap.setup(None);
         } else {
-            bootstrap.setup(validators);
+            bootstrap.setup(validators_id);
         }
 
         let genesis_block = Block::genesis("0x");
@@ -71,33 +73,6 @@ impl Blockchain {
         }
     }
 
-    pub async fn id_and_peer_setup(&mut self) -> (MessagePeerHandle, Receiver<ValidatedPeer>) {
-        let second = std::time::Duration::from_secs(1);
-
-        let validator_peers = self.bootstrap.get_peers_str();
-        let (message_peer_handle, join_server, join_peer, join_inbox) =
-            spawn_network_io_listeners(validator_peers.clone()).await;
-
-        std::thread::sleep(2 * second);
-        let port_serv = message_peer_handle.get_host_port().await;
-        std::thread::sleep(second);
-
-        let (recv_peer_discv, join_discv) = spawn_peer_discovery_listener(
-            self.bootstrap.get_public_as_type(),
-            self.bootstrap.get_secret_as_type(),
-            port_serv,
-            validator_peers,
-        )
-        .await;
-
-        join_server.await.unwrap();
-        join_peer.await.unwrap();
-        join_inbox.await.unwrap();
-        join_discv.await.unwrap();
-
-        (message_peer_handle, recv_peer_discv)
-    }
-
     // append_block appends a block `b` which is assumed to have:
     // (1) a block hash `this_hash`,
     // (2) a local creation timestamp,
@@ -117,6 +92,50 @@ impl Blockchain {
         // because the chain will always contains >= 1 block due to the genesis.
         return self.chain.last().unwrap().clone();
     }
+
+    pub fn public_type(&self) -> EcdsaPublicKey {
+        self.bootstrap.get_public_as_type()
+    }
+
+    pub fn secret_type(&self) -> EcdsaPrivateKey {
+        self.bootstrap.get_secret_as_type()
+    }
+
+    pub fn peers_str(&self) -> Vec<String> {
+        self.bootstrap.get_peers_str()
+    }
+}
+
+pub async fn id_and_peer_setup(
+    validator_peers: Vec<String>,
+    public: EcdsaPublicKey,
+    secret: EcdsaPrivateKey,
+) -> (
+    JoinHandle<()>,
+    JoinHandle<()>,
+    JoinHandle<()>,
+    JoinHandle<()>,
+    MessagePeerHandle,
+    Receiver<ValidatedPeer>,
+) {
+    let second = std::time::Duration::from_secs(1);
+
+    let (message_peer_handle, join_server, join_peer, join_inbox) =
+        spawn_network_io_listeners(validator_peers.clone()).await;
+
+    let port_serv = message_peer_handle.get_host_port().await;
+
+    let (recv_peer_discv, join_discv) =
+        spawn_peer_discovery_listener(public, secret, port_serv, validator_peers).await;
+
+    (
+        join_server,
+        join_peer,
+        join_inbox,
+        join_discv,
+        message_peer_handle,
+        recv_peer_discv,
+    )
 }
 
 fn create_db_folder() -> StateDB {
