@@ -1,6 +1,5 @@
 use crate::swiss_knife::helper;
 use serde::{Deserialize, Serialize};
-use std::env;
 use themis::keygen::gen_ec_key_pair;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 
@@ -39,44 +38,70 @@ pub struct KeyPairAsType {
 }
 
 impl KeyStore {
-    pub fn new() -> Self {
-        // get path to the root of the project (location of cargo manifest)
-        let cargo_path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
+    pub fn new(index: u32) -> Self {
+        let mut local_pub_key = "".to_string();
+        let mut local_sec_key = "".to_string();
+        let mut local_pub_type: EcdsaPublicKey;
+        let mut local_sec_type: EcdsaPrivateKey;
+        let mut local_key_path = "".to_string();
 
-        // decide relative path of key pair
-        let key_path = "/keyfile.dat";
+        let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
+        path.push_str("/keys/node");
 
-        // apppend key path to cargo path
-        let mut secret_path = cargo_path.clone();
-        secret_path.push_str(key_path);
+        for i in 0..4 {
+            let mut copy_path = path.clone();
+            let digit = std::char::from_digit(i, 10).unwrap();
+            copy_path.push(digit);
+            let _ = match std::fs::metadata(copy_path.clone()) {
+                Ok(x) => continue,
+                Err(e) => {
+                    let _ = std::fs::create_dir(&copy_path);
+                    // generate public-private key pair
+                    let (secret_key, public_key) = gen_ec_key_pair().split();
 
-        // generate public-private key pair
-        let (secret_key, public_key) = gen_ec_key_pair().split();
-        let key_native_type = KeyPairAsType {
-            public: public_key.clone(),
-            secret: secret_key.clone(),
-        };
+                    // convert public key to hexadecimal string as a more readable ID
+                    let public_hex: String = hex::encode(public_key);
+                    let secret_hex: String = hex::encode(secret_key);
+                    // based on cli arg, we set one of the keypairs as the local node/peers ID
+                    if i == index {
+                        local_pub_key = public_hex;
+                        local_sec_key = secret_hex;
+                        local_pub_type = public_key;
+                        local_sec_type = secret_key;
+                        local_key_path = copy_path;
+                    }
 
-        // convert public key to hexadecimal string as a more readable ID
-        let public_hex: String = hex::encode(public_key);
-        let secret_hex: String = hex::encode(secret_key);
-        let key_pair_hex = KeyFile::new(public_hex, secret_hex);
-        let key_json = match serde_json::to_string(&key_pair_hex) {
-            Ok(json) => json,
-            Err(e) => {
-                panic!("failed to parse fmt key pair: {:?}", e)
-            }
-        };
+                    let key_pair_hex = KeyFile::new(public_hex, secret_hex);
+                    let key_json = match serde_json::to_string(&key_pair_hex) {
+                        Ok(json) => json,
+                        Err(e) => {
+                            panic!("failed to parse fmt key pair: {:?}", e)
+                        }
+                    };
 
-        match helper::write_file(&key_json, &secret_path) {
-            Ok(_) => (),
-            Err(e) => eprintln! {"failed to create secret key at: {}, error: {}", secret_path, e},
+                    match helper::write_file(&key_json, &copy_path) {
+                        Ok(_) => (),
+                        Err(e) => {
+                            eprintln! {"failed to create secret key at: {}, error: {}", copy_path, e}
+                        }
+                    }
+                }
+            };
         }
+
+        let key_pair_hex = KeyFile {
+            public_hex: local_pub_key,
+            secret_hex: local_sec_key,
+        };
+        let key_pair_as_type = KeyPairAsType {
+            public: local_pub_type,
+            secret: local_sec_type,
+        };
 
         Self {
             key_pair_hex,
-            key_pair_as_type: key_native_type,
-            key_path: secret_path,
+            key_pair_as_type,
+            key_path: local_key_path,
             tx_count: 0,
         }
     }
@@ -93,3 +118,5 @@ impl KeyStore {
         self.key_pair_as_type.secret.clone()
     }
 }
+
+fn create_keypair_folder() {}
