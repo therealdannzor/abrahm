@@ -7,10 +7,10 @@ pub struct BootStrap {
     local_dat: KeyStore,
 }
 impl BootStrap {
-    pub fn new() -> Self {
+    pub fn new(node_index: u32) -> Self {
         Self {
             peers: Vec::new(),
-            local_dat: KeyStore::new(),
+            local_dat: KeyStore::new(node_index),
         }
     }
 
