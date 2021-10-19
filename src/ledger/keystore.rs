@@ -55,7 +55,7 @@ impl KeyStore {
             let _ = match std::fs::metadata(copy_path.clone()) {
                 Ok(_) => continue,
                 Err(_) => {
-                    let _ = std::fs::create_dir(&copy_path);
+                    let _ = std::fs::create_dir_all(&copy_path);
                     // generate public-private key pair
                     let (secret_key, public_key) = gen_ec_key_pair().split();
 
@@ -79,6 +79,7 @@ impl KeyStore {
                         }
                     };
 
+                    copy_path.push_str("/keyfile.dat");
                     match helper::write_file(&key_json, &copy_path) {
                         Ok(_) => (),
                         Err(e) => {
