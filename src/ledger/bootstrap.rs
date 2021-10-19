@@ -5,12 +5,14 @@ use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 pub struct BootStrap {
     peers: Vec<EcdsaPublicKey>,
     local_dat: KeyStore,
+    node_index: u32,
 }
 impl BootStrap {
     pub fn new(node_index: u32) -> Self {
         Self {
             peers: Vec::new(),
             local_dat: KeyStore::new(node_index),
+            node_index,
         }
     }
 
@@ -54,15 +56,19 @@ impl BootStrap {
     }
 
     fn load_keypair(&mut self) {
+        let node_id = self.node_index.clone();
         if self.local_dat.key_pair_hex.is_filled() {
             log::info!("key pair already exists");
             return;
         }
 
         let path: String = std::env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
-        let key_path = "/keyfile.dat";
+        let key_path = format!(
+            "/keys/node{}/keyfile.dat",
+            std::char::from_digit(node_id, 10).unwrap()
+        );
         let mut path = path.clone();
-        path.push_str(key_path);
+        path.push_str(&key_path);
         let data = match std::fs::read_to_string(&path) {
             Ok(dat) => dat,
             Err(e) => {
