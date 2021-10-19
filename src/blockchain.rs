@@ -43,10 +43,10 @@ impl Blockchain {
     pub fn new(
         stream_cap: usize,
         validators_id: Option<Vec<String>>,
-        node_id: Option<String>,
+        node_id_index: u32,
         blockchain_channel: mpsc::Sender<Block>,
     ) -> Self {
-        let mut bootstrap = BootStrap::new();
+        let mut bootstrap = BootStrap::new(node_id_index);
         if validators_id.is_none() {
             bootstrap.setup(None);
         } else {
@@ -61,7 +61,7 @@ impl Blockchain {
         Self {
             chain: vec![genesis_block.clone()],
             pool: TxPool::new(),
-            account_db: create_db_folder(),
+            account_db: create_db_folder(node_id_index),
             bootstrap,
             consensus: ConsensusChain::new(
                 Engine::new(pub_key_hex.clone(), validator_peers),
@@ -138,11 +138,11 @@ pub async fn id_and_peer_setup(
     )
 }
 
-fn create_db_folder() -> StateDB {
+fn create_db_folder(node_id_index: u32) -> StateDB {
     let mut path: String = env!("CARGO_MANIFEST_DIR", "missing cargo manifest").to_string();
     path.push_str("/database/client");
     // assumes maximum of 8 (local) validator peers, so 8 different folders
-    for i in 0..8 {
+    for i in 0..4 {
         // suppose a potential path for the database
         let mut copy_path = path.clone();
         let digit = std::char::from_digit(i, 10).unwrap();
@@ -150,15 +150,16 @@ fn create_db_folder() -> StateDB {
         // gather metadata anout this potential path
         let _ = match std::fs::metadata(copy_path.clone()) {
             // if it is already occupied (i.e., used by another local peer), skip it
-            Ok(x) => continue,
-            Err(e) => {
+            Ok(_) => continue,
+            Err(_) => {
                 // set up new state database at available path
                 let _ = std::fs::create_dir(&copy_path);
-                return StateDB::new(&copy_path);
             }
         };
     }
-    panic!("this should not happen");
+    let node_id = std::char::from_digit(node_id_index, 10).unwrap();
+    path.push(node_id);
+    return StateDB::new(&path);
 }
 
 #[cfg(test)]
