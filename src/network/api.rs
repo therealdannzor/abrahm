@@ -36,14 +36,29 @@ impl Networking {
     }
 }
 
-pub async fn spawn_network_io_listeners(
-    validator_list: Vec<String>,
-) -> (
-    MessagePeerHandle,
-    JoinHandle<()>,
-    JoinHandle<()>,
-    JoinHandle<()>,
-) {
+pub struct NetworkIoHandlers {
+    message_handle: MessagePeerHandle,
+    peer_join: JoinHandle<()>,
+    inbox_join: JoinHandle<()>,
+    server_join: JoinHandle<()>,
+}
+
+impl NetworkIoHandlers {
+    pub async fn get_port(&self) -> String {
+        self.message_handle.get_host_port().await
+    }
+    pub fn get_peer_join_handle(self) -> JoinHandle<()> {
+        self.peer_join
+    }
+    pub fn get_inbox_join_handle(self) -> JoinHandle<()> {
+        self.inbox_join
+    }
+    pub fn get_server_join_handle(self) -> JoinHandle<()> {
+        self.server_join
+    }
+}
+
+pub async fn spawn_network_io_listeners(validator_list: Vec<String>) -> NetworkIoHandlers {
     // out channels correpond to communication outside the host, i.e. with other peers
     let (tx_out, rx_out): (Sender<InternalMessage>, Receiver<InternalMessage>) = mpsc::channel(64);
     let tx_out_2 = tx_out.clone();
@@ -52,12 +67,17 @@ pub async fn spawn_network_io_listeners(
     let (tx_in, rx_in): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = mpsc::channel(64);
     let tx_in_2 = tx_in.clone();
 
-    let join_server = spawn_server_accept_loop(validator_list, tx_out_2, tx_in_2).await;
-
-    let (message_peer_handle, join_peer, join_inbox) =
+    let (message_handle, peer_join, inbox_join) =
         spawn_peer_listeners(tx_out, rx_out, tx_in, rx_in).await;
 
-    (message_peer_handle, join_server, join_peer, join_inbox)
+    let server_join = spawn_server_accept_loop(validator_list, tx_out_2, tx_in_2).await;
+
+    NetworkIoHandlers {
+        message_handle,
+        peer_join,
+        inbox_join,
+        server_join,
+    }
 }
 
 pub async fn spawn_peer_discovery_listener(
