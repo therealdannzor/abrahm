@@ -4,8 +4,10 @@ use mio::Token;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::oneshot;
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    oneshot,
+};
 use tokio::task::JoinHandle;
 
 pub struct MessagePeerHandle(
@@ -45,13 +47,25 @@ impl MessagePeerHandle {
 
     pub async fn get_host_port(&self) -> String {
         let (send, recv): (oneshot::Sender<String>, oneshot::Receiver<String>) = oneshot::channel();
-        let _ = self
+        match self
             .0
             .send(InternalMessage::FromServerEvent(
                 FromServerEvent::GetHostPort(send),
             ))
-            .await;
-        recv.await.unwrap()
+            .await
+        {
+            Ok(_) => (),
+            Err(_) => {
+                panic!("the receiver has already been closed");
+            }
+        };
+        let res = match recv.await {
+            Ok(v) => v,
+            Err(_) => {
+                panic!("the sender dropped");
+            }
+        };
+        res
     }
 }
 
@@ -102,24 +116,39 @@ async fn spawn_message_inbox_loop(mut rx: Receiver<PayloadEvent>) {
 
 // peer_loop contains the operations that concern all the peers connected to the server.
 async fn peer_loop(mut rx: Receiver<InternalMessage>) {
-    let mut id_conns: HashMap<Token, SocketAddr> = HashMap::new();
+    let id_conns: HashMap<Token, SocketAddr> = HashMap::new();
+    let id_conns = Mutex::new(id_conns);
+    let id_conns = Arc::new(id_conns);
     let mut stream_conns: HashMap<SocketAddr, UdpSocket> = HashMap::new();
+    let server_token = Token(1024);
 
     while let Some(msg) = rx.recv().await {
         match msg {
             InternalMessage::FromServerEvent(FromServerEvent::HostSocket(addr)) => {
-                let sock = UdpSocket::bind(addr).unwrap();
-                id_conns.insert(Token(1024), addr.clone());
+                let arc = id_conns.clone();
+                let mut idc = arc.lock().unwrap();
+                let sock = UdpSocket::bind(addr.clone()).unwrap();
+                idc.insert(server_token, addr.clone());
                 stream_conns.insert(addr, sock);
+                drop(idc);
             }
             InternalMessage::FromServerEvent(FromServerEvent::GetHostPort(sender)) => {
-                let _ = match id_conns.get(&Token(1024)) {
-                    Some(port) => sender.send(port.port().to_string()),
-                    None => sender.send("0".to_string()),
+                let arc = id_conns.clone();
+                let idc = arc.lock().unwrap();
+                let _ = match idc.get(&server_token) {
+                    Some(port) => {
+                        let _ = sender.send(port.port().to_string());
+                    }
+                    None => {
+                        panic!("server backend not initialized, abort");
+                    }
                 };
+                drop(idc);
             }
             InternalMessage::FromServerEvent(FromServerEvent::NewClient(msg)) => {
-                let op = id_conns.insert(msg.1, msg.2);
+                let arc = id_conns.clone();
+                let mut idc = arc.lock().unwrap();
+                let op = idc.insert(msg.1, msg.2);
                 if op.is_some() {
                     log::warn!(
                         "updated socket address for token {:?}, old={:?}, new={:?}",
@@ -130,13 +159,15 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>) {
                 }
             }
             InternalMessage::DialEvent(DialEvent::DispatchMessage(send_to, payload, response)) => {
-                let recipient = id_conns.get(&send_to);
+                let arc = id_conns.clone();
+                let idc = arc.lock().unwrap();
+                let recipient = idc.get(&send_to);
                 if recipient.is_none() {
                     log::warn!("trying to send message to unknown peer: {:?}", recipient);
                     continue;
                 }
                 let recipient_sock_addr = recipient.unwrap();
-                let host_sock_addr = id_conns.get(&Token(1024)).unwrap();
+                let host_sock_addr = idc.get(&server_token).unwrap();
                 let host_sock = stream_conns.get(host_sock_addr).unwrap();
                 match host_sock.send_to(&payload, *recipient_sock_addr) {
                     Ok(n) => {
