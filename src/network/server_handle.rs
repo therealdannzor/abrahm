@@ -1,8 +1,10 @@
-use super::udp_utils::{next_token, open_socket};
+use super::udp_utils::{net_open, next_token};
 use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, PeerInfo};
+use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
+use std::borrow::Borrow;
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 
@@ -23,42 +25,39 @@ async fn event_loop(
     tx_in: Sender<PayloadEvent>,
     validator_list: Vec<String>,
 ) {
-    const PEER_TOK: Token = Token(0);
-    const SOCKET_TOK: Token = Token(1024); // token which represents the server
-    const INTERESTS: Interest = Interest::READABLE.add(Interest::WRITABLE);
     const ECDSA_PUB_KEY_SIZE_BITS: usize = 90; // amount of characters the public key has (hexadecimal)
     const PEER_MESSAGE_MAX_LEN: usize = 256;
+    const PEER_TOK: Token = Token(0);
+    const INTERESTS: Interest = Interest::READABLE.add(Interest::WRITABLE);
 
     let mut unique_token = Token(PEER_TOK.0 + 1);
-    let mut poller = Poll::new().unwrap();
     let mut events = Events::with_capacity(16); // events correspond to amount of validators (AFAIK)
 
     // create listening server and register it will poll to receive events
-    let (mut socket, sock_addr) = open_socket();
-    let whoami_socket_message =
-        InternalMessage::FromServerEvent(FromServerEvent::HostSocket(sock_addr, socket.clone()));
-    // inform the peer loop about where the server backend listens to
-    let _ = tx_out.send(whoami_socket_message).await;
-
-    let socket_copy = socket.clone();
-
-    let _ = poller.registry().register(
-        &mut Arc::try_unwrap(socket_copy).unwrap(),
-        SOCKET_TOK,
-        INTERESTS,
-    );
+    let (mut poller, mut socket, sock_addr) = net_open();
+    let payload = socket.clone();
+    let sender = tx_out.clone();
+    // spawn thread to not make Arc become mad
+    tokio::spawn(async move {
+        let whoami_socket_message =
+            InternalMessage::FromServerEvent(FromServerEvent::HostSocket(sock_addr, payload));
+        // inform the peer loop about where the server backend listens to
+        let _ = sender.send(whoami_socket_message).await;
+    });
 
     tokio::spawn(async move {
+        let tmp = socket.clone();
+        let mut sok1 = tmp.lock().await;
+
         loop {
             poller.poll(&mut events, /* no timeout */ None).unwrap();
             let mut nonce: u32 = 0;
 
             for event in events.iter() {
                 match event.token() {
-                    SOCKET_TOK => loop {
+                    socket_token => loop {
                         let mut handshake_key_buf = [0; ECDSA_PUB_KEY_SIZE_BITS];
-                        let socket_task_copy = socket.clone();
-                        match socket.recv_from(&mut handshake_key_buf) {
+                        match sok1.recv_from(&mut handshake_key_buf) {
                             Ok((packet_size, source_address)) => {
                                 if packet_size != ECDSA_PUB_KEY_SIZE_BITS {
                                     log::warn!("handshake failed, does not contain public key of correct length");
@@ -81,8 +80,10 @@ async fn event_loop(
                                     break;
                                 }
                                 let new_tok = next_token(&mut unique_token);
-                                let mut sok = Arc::try_unwrap(socket_task_copy).unwrap();
-                                let _ = poller.registry().register(&mut sok, new_tok, INTERESTS);
+                                //let s = Arc::try_unwrap(socket_task_2.into_inner())
+                                //.unwrap()
+                                //.into_inner();
+                                let _ = poller.registry().register(&mut *sok1, new_tok, INTERESTS);
                                 let peer_dat = PeerInfo(peer_key, new_tok, source_address);
                                 let new_client_message = InternalMessage::FromServerEvent(
                                     FromServerEvent::NewClient(peer_dat),
@@ -102,7 +103,7 @@ async fn event_loop(
                     client_token => loop {
                         let mut message_buf = [0; PEER_MESSAGE_MAX_LEN];
                         // message received from a known peer
-                        match socket.recv_from(&mut message_buf) {
+                        match sok1.recv_from(&mut message_buf) {
                             Ok((size, _)) => {
                                 nonce += 1;
                                 let message = message_buf[..size].to_vec();
