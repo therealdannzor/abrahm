@@ -11,7 +11,10 @@ pub struct PeerInfo(String, mio::Token, std::net::SocketAddr);
 
 // FromServerEvent is the event type emitted from the server when a new peer connects succesfully
 pub enum FromServerEvent {
-    HostSocket(std::net::SocketAddr, std::sync::Arc<mio::net::UdpSocket>),
+    HostSocket(
+        std::net::SocketAddr,
+        std::sync::Arc<tokio::sync::Mutex<mio::net::UdpSocket>>,
+    ),
     GetHostPort(tokio::sync::oneshot::Sender<String>),
     NewClient(PeerInfo),
 }
