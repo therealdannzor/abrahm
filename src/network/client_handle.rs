@@ -3,11 +3,11 @@ use mio::net::UdpSocket;
 use mio::Token;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::Notify;
 use tokio::sync::{
     mpsc::{Receiver, Sender},
-    oneshot,
+    oneshot, Mutex,
 };
 use tokio::task::JoinHandle;
 
@@ -65,20 +65,20 @@ impl MessagePeerHandle {
     }
 }
 
-pub async fn spawn_peer_listeners(rx: Receiver<InternalMessage>) {
+pub async fn spawn_peer_listeners(rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
     let join_peer = tokio::spawn(async move {
-        peer_loop(rx).await;
+        peer_loop(rx, notify).await;
     });
 
-    join_peer.await.unwrap();
+    join_peer.await;
 }
 
 // peer_loop contains the operations that concern all the peers connected to the server.
-async fn peer_loop(mut rx: Receiver<InternalMessage>) {
+async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
     let token_to_sock: HashMap<Token, SocketAddr> = HashMap::new();
     let token_to_sock = Arc::new(Mutex::new(token_to_sock));
     let server_token = Token(1024);
-    let mut server_udp: Option<Arc<UdpSocket>> = None;
+    let mut server_udp: Option<Arc<Mutex<UdpSocket>>> = None;
     loop {
         while let Some(msg) = rx.recv().await {
             println!("Receiving messages in peer loop");
@@ -86,21 +86,25 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>) {
                 InternalMessage::FromServerEvent(FromServerEvent::HostSocket(addr, sock)) => {
                     println!("FromServerEvent: HostSocket(addr)");
                     let arc = token_to_sock.clone();
-                    let mut idc = arc.lock().unwrap();
+                    let mut idc = arc.lock().await;
                     idc.insert(server_token, addr);
+                    // signals readiness to request for host port
+                    notify.notify_one();
+
                     server_udp = Some(sock);
                     drop(idc);
                 }
                 InternalMessage::FromServerEvent(FromServerEvent::GetHostPort(sender)) => {
                     println!("FromServerEvent: GetHostPort(sender)");
                     let arc = token_to_sock.clone();
-                    let idc = arc.lock().unwrap();
+                    let idc = arc.lock().await;
+
                     let _ = match idc.get(&server_token) {
                         Some(port) => {
                             let _ = sender.send(port.port().to_string());
                         }
                         None => {
-                            panic!("server backend not initialized, abort");
+                            panic!("server backend not initialized, abort (unexpected error)");
                         }
                     };
                     drop(idc);
@@ -108,7 +112,7 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>) {
                 InternalMessage::FromServerEvent(FromServerEvent::NewClient(msg)) => {
                     println!("FromServerEvent: New Client");
                     let arc = token_to_sock.clone();
-                    let mut idc = arc.lock().unwrap();
+                    let mut idc = arc.lock().await;
                     let op = idc.insert(msg.1, msg.2);
                     if op.is_some() {
                         log::warn!(
@@ -125,23 +129,25 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>) {
                     response,
                 )) => {
                     let arc = token_to_sock.clone();
-                    let idc = arc.lock().unwrap();
-                    let recipient = idc.get(&send_to);
-                    if recipient.is_none() {
-                        log::warn!("trying to send message to unknown peer: {:?}", recipient);
-                        continue;
-                    }
-                    let recipient_sock_addr = recipient.unwrap();
-                    if server_udp.is_none() {
+                    let idc = arc.lock().await;
+                    let recipient_sock_addr = match idc.get(&send_to) {
+                        Some(v) => v,
+                        None => {
+                            log::warn!(
+                                "trying to send message to unknown peer token: {:?}",
+                                send_to.clone()
+                            );
+                            continue;
+                        }
+                    };
+                    if server_udp.clone().is_none() {
                         log::warn!("server UDP server has not started yet");
                         continue;
                     }
-                    match server_udp
-                        .clone()
+                    let srv = Arc::try_unwrap(server_udp.clone().unwrap())
                         .unwrap()
-                        .clone()
-                        .send_to(&payload, *recipient_sock_addr)
-                    {
+                        .into_inner();
+                    match srv.send_to(&payload, *recipient_sock_addr) {
                         Ok(n) => {
                             if n != payload.len() {
                                 log::error!(
