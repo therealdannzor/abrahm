@@ -59,13 +59,11 @@ async fn peer_discovery_loop(
                     let broadcast_disc_msg =
                         create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
                     tokio::spawn(async move {
-                        loop {
-                            let three_sec = std::time::Duration::from_secs(3);
-                            std::thread::sleep(three_sec);
-                            let _ = socket
-                                .send_to(&broadcast_disc_msg, recipient_addr.clone())
-                                .await;
-                        }
+                        let three_sec = std::time::Duration::from_secs(3);
+                        std::thread::sleep(three_sec);
+                        let _ = socket
+                            .send_to(&broadcast_disc_msg, recipient_addr.clone())
+                            .await;
                     });
                 }
             }
@@ -119,11 +117,13 @@ impl Server {
 
         let mut num_found: usize = 0;
         let mut peers = to_find.clone();
+        let wait_time = std::time::Duration::from_secs(2);
+        let notif = tokio::sync::Notify::new();
 
         loop {
-            let two_sec = std::time::Duration::from_secs(2);
-            std::thread::sleep(two_sec);
             if let Some(_) = stream_size {
+                let start = std::time::Instant::now();
+
                 if verify_discv_handshake(buf.clone()) {
                     log::info!("handshake verified!");
                     let port = extract_port_addr_field(buf.clone());
@@ -143,25 +143,27 @@ impl Server {
                         if let Some(pos) = peers.iter().position(|x| *x == public_hex) {
                             // to make sure we don't count the same peer more than once
                             peers.remove(pos);
+                            // if we have found all peers we are looking for, bail out
+                            if peers.len() == 0 {
+                                return Ok(());
+                            }
                         }
-                    } else {
-                        continue;
+                        let validated = ValidatedPeer {
+                            port,
+                            public_key: public_key_vec,
+                        };
+                        let _ = tx.send(validated).await;
+                        buf = vec![0; 198];
                     }
-                    let validated = ValidatedPeer {
-                        port,
-                        public_key: public_key_vec,
-                    };
-                    let _ = tx.send(validated).await;
-                    buf = vec![0; 198];
-
-                    // if we have found all peers we are looking for, bail out
-                    if num_found == to_find.len() {
-                        return Ok(());
-                    }
+                }
+                let elapsed_time = start.elapsed();
+                if let Some(time) = wait_time.checked_sub(elapsed_time) {
+                    tokio::time::sleep(time).await;
                 }
             }
             stream_size = Some(socket.recv(&mut buf).await?);
         }
+        Ok(())
     }
 }
 
