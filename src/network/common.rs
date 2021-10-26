@@ -76,7 +76,14 @@ pub fn vec_u8_ascii_decimal_to_u8(input: Vec<u8>) -> u8 {
 }
 
 pub fn public_key_and_port_to_vec(key: EcdsaPublicKey, port: String) -> Vec<u8> {
-    let mut res = key.as_ref().to_vec(); // this contains non ASCII characters
-    res.extend(port.as_bytes().to_vec());
-    res
+    let mut bytes = [0_u8; 90]; // has to be exactly the right size
+    match hex::encode_to_slice(key, &mut bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("this should not happen, upstream lib error: {}", e);
+        }
+    };
+    let mut result = bytes.to_vec();
+    result.append(&mut port.as_bytes().to_vec());
+    result
 }
