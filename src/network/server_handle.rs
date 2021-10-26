@@ -80,9 +80,6 @@ async fn event_loop(
                                     break;
                                 }
                                 let new_tok = next_token(&mut unique_token);
-                                //let s = Arc::try_unwrap(socket_task_2.into_inner())
-                                //.unwrap()
-                                //.into_inner();
                                 let _ = poller.registry().register(&mut *sok1, new_tok, INTERESTS);
                                 let peer_dat = PeerInfo(peer_key, new_tok, source_address);
                                 let new_client_message = InternalMessage::FromServerEvent(

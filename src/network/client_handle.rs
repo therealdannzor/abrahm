@@ -81,10 +81,8 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
     let mut server_udp: Option<Arc<Mutex<UdpSocket>>> = None;
     loop {
         while let Some(msg) = rx.recv().await {
-            println!("Receiving messages in peer loop");
             match msg {
                 InternalMessage::FromServerEvent(FromServerEvent::HostSocket(addr, sock)) => {
-                    println!("FromServerEvent: HostSocket(addr)");
                     let arc = token_to_sock.clone();
                     let mut idc = arc.lock().await;
                     idc.insert(server_token, addr);
@@ -95,7 +93,6 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
                     drop(idc);
                 }
                 InternalMessage::FromServerEvent(FromServerEvent::GetHostPort(sender)) => {
-                    println!("FromServerEvent: GetHostPort(sender)");
                     let arc = token_to_sock.clone();
                     let idc = arc.lock().await;
 
