@@ -59,11 +59,13 @@ async fn peer_discovery_loop(
                     let broadcast_disc_msg =
                         create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
                     tokio::spawn(async move {
-                        let three_sec = std::time::Duration::from_secs(3);
-                        std::thread::sleep(three_sec);
-                        let _ = socket
-                            .send_to(&broadcast_disc_msg, recipient_addr.clone())
-                            .await;
+                        for _ in 0..9 {
+                            let to_address = recipient_addr.clone();
+                            let payload = broadcast_disc_msg.clone();
+                            let three_sec = std::time::Duration::from_secs(3);
+                            std::thread::sleep(three_sec);
+                            let _ = socket.send_to(&payload, to_address).await;
+                        }
                     });
                 }
             }
@@ -77,7 +79,7 @@ async fn peer_discovery_loop(
                     let socket = UdpSocket::bind(&socket_addr).await?;
                     let serv = Server {
                         socket,
-                        buf: vec![0; 198],
+                        buf: vec![0; 243],
                         stream_size: None,
                     };
                     let list_peers = to_discover.clone();
@@ -115,7 +117,6 @@ impl Server {
             mut stream_size,
         } = self;
 
-        let mut num_found: usize = 0;
         let mut peers = to_find.clone();
         let wait_time = std::time::Duration::from_secs(2);
         let notif = tokio::sync::Notify::new();
@@ -124,21 +125,14 @@ impl Server {
             if let Some(_) = stream_size {
                 let start = std::time::Instant::now();
 
-                if verify_discv_handshake(buf.clone()) {
+                notif.notified().await;
+                let (is_verified, public_key) = verify_discv_handshake(buf.clone());
+                if is_verified {
                     log::info!("handshake verified!");
+                    let public_hex = hex::encode(public_key.clone());
+                    let public_key_vec = public_key.as_ref().to_vec();
                     let port = extract_port_addr_field(buf.clone());
-                    let public_key_vec: Vec<u8> = extract_pub_key_field(buf.clone());
-                    let public_key: EcdsaPublicKey =
-                        match EcdsaPublicKey::try_from_slice(public_key_vec.clone()) {
-                            Ok(k) => k,
-                            Err(e) => {
-                                log::error!("could not validate public key in message: {:?}", e);
-                                continue;
-                            }
-                        };
-                    let public_hex: String = hex::encode(public_key);
                     if peers.contains(&public_hex) {
-                        num_found += 1;
                         // remove the peer already found in vector
                         if let Some(pos) = peers.iter().position(|x| *x == public_hex) {
                             // to make sure we don't count the same peer more than once
@@ -153,15 +147,21 @@ impl Server {
                             public_key: public_key_vec,
                         };
                         let _ = tx.send(validated).await;
-                        buf = vec![0; 198];
+                    } else {
+                        log::info!("unknown peer");
                     }
+                } else {
+                    log::info!("peer verification failed");
                 }
                 let elapsed_time = start.elapsed();
                 if let Some(time) = wait_time.checked_sub(elapsed_time) {
                     tokio::time::sleep(time).await;
                 }
             }
+            buf.clear();
+            buf = vec![0; 243];
             stream_size = Some(socket.recv(&mut buf).await?);
+            notif.notify_one();
         }
         Ok(())
     }
@@ -199,24 +199,33 @@ fn create_discv_handshake(
     secret_key: EcdsaPrivateKey,
     port: String,
 ) -> Vec<u8> {
-    // First half is PUBLIC_KEY | PORT (in bytes)
-    let mut result = public_key_and_port_to_vec(public_key, port);
+    let mut result = Vec::new();
 
+    // First half is PUBLIC_KEY | PORT (in bytes)
+    let first_half = public_key_and_port_to_vec(public_key, port);
     // Second half is H(PUBLIC_KEY | PORT)_C (in bytes)
     let second_half = hash_and_sign_message_digest(secret_key, result.clone());
 
+    result.extend(first_half);
     result.extend(second_half);
+
     result
 }
 
-fn verify_discv_handshake(message: Vec<u8>) -> bool {
+fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
+    let (_, dummy_pk) = themis::keygen::gen_ec_key_pair().split();
     let full_length = message.len();
-    // messages are between length 196 and 198
-    if full_length > 198 || full_length < 196 {
-        log::error!("message length not between 196 and 198");
-        return false;
+    if full_length > 243 || full_length < 241 {
+        log::error!("message length not between 241 or 243");
+        return (false, dummy_pk);
     }
-    let public_key = extract_pub_key_field(message.clone());
+    let public_key = match extract_pub_key_field(message.clone()) {
+        Ok(k) => k,
+        Err(e) => {
+            log::error!("key extraction failed: {}", e);
+            return (false, dummy_pk);
+        }
+    };
     let port = extract_port_addr_field(message.clone());
     let mut plain_message = Vec::new();
     plain_message.extend(public_key.clone());
@@ -230,19 +239,23 @@ fn verify_discv_handshake(message: Vec<u8>) -> bool {
 
     let public_key = match EcdsaPublicKey::try_from_slice(public_key) {
         Ok(k) => k,
-        Err(_) => {
+        Err(e) => {
             log::error!("could not restore public key from slice");
-            return false;
+            return (false, dummy_pk);
         }
     };
 
-    cmp_message_with_signed_digest(public_key, plain_message, signed_message)
+    (
+        cmp_message_with_signed_digest(public_key.clone(), plain_message, signed_message),
+        public_key,
+    )
 }
 
-const PUB_KEY_LEN: usize = 45;
+const PUB_KEY_LEN: usize = 90;
 const SRV_PORT_LEN: usize = 5;
-fn extract_pub_key_field(v: Vec<u8>) -> Vec<u8> {
-    v[..PUB_KEY_LEN].to_vec()
+fn extract_pub_key_field(v: Vec<u8>) -> Result<Vec<u8>, hex::FromHexError> {
+    let v = v[..PUB_KEY_LEN].to_vec();
+    Ok(hex::decode(v)?)
 }
 
 fn extract_port_addr_field(v: Vec<u8>) -> Vec<u8> {
