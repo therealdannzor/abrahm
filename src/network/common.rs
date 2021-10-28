@@ -36,13 +36,12 @@ pub fn cmp_message_with_signed_digest(
     let recovered_message = match secure_b.verify(signed_message) {
         Ok(m) => m,
         Err(e) => {
-            log::error!("could not verify message: {:?}", e);
+            log::debug!("secure crypto verification failed: {:?}", e);
             return false;
         }
     };
 
     let hashed_message = hash_from_vec_u8_input(plain_message).as_bytes().to_vec();
-
     recovered_message == hashed_message
 }
 

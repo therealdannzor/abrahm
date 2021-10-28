@@ -58,6 +58,7 @@ async fn peer_discovery_loop(
                     let socket = UdpSocket::bind("127.0.0.1:0").await?;
                     let broadcast_disc_msg =
                         create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
+                    log::debug!("create the discv message, start broadcast");
                     tokio::spawn(async move {
                         for _ in 0..9 {
                             let to_address = recipient_addr.clone();
@@ -83,6 +84,7 @@ async fn peer_discovery_loop(
                         stream_size: None,
                     };
                     let list_peers = to_discover.clone();
+                    log::debug!("start server buffer to receive other discv messages");
                     tokio::spawn(async move {
                         let _ = serv.run(tx, list_peers).await;
                     });
@@ -128,7 +130,7 @@ impl Server {
                 notif.notified().await;
                 let (is_verified, public_key) = verify_discv_handshake(buf.clone());
                 if is_verified {
-                    log::info!("handshake verified!");
+                    log::debug!("successful authentication of discv message read from buffer");
                     let public_hex = hex::encode(public_key.clone());
                     let public_key_vec = public_key.as_ref().to_vec();
                     let port = extract_port_addr_field(buf.clone());
@@ -139,6 +141,7 @@ impl Server {
                             peers.remove(pos);
                             // if we have found all peers we are looking for, bail out
                             if peers.len() == 0 {
+                                log::info!("found and verified all peers, discovery done");
                                 return Ok(());
                             }
                         }
@@ -148,10 +151,10 @@ impl Server {
                         };
                         let _ = tx.send(validated).await;
                     } else {
-                        log::info!("unknown peer");
+                        log::debug!("public hex not found in validator list");
                     }
                 } else {
-                    log::info!("peer verification failed");
+                    log::debug!("could not authenticate buffered message, discarding");
                 }
                 let elapsed_time = start.elapsed();
                 if let Some(time) = wait_time.checked_sub(elapsed_time) {
@@ -160,6 +163,7 @@ impl Server {
             }
             buf.clear();
             buf = vec![0; 243];
+            log::debug!("fetch new discovery messages");
             stream_size = Some(socket.recv(&mut buf).await?);
             notif.notify_one();
         }
@@ -213,10 +217,11 @@ fn create_discv_handshake(
 }
 
 fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
+    log::debug!("begin verification process of discv message");
     let (_, dummy_pk) = themis::keygen::gen_ec_key_pair().split();
     let full_length = message.len();
     if full_length > 243 || full_length < 241 {
-        log::error!("message length not between 241 or 243");
+        log::error!("message length not between 241 and 243");
         return (false, dummy_pk);
     }
     let public_key = match extract_pub_key_field(message.clone()) {
@@ -245,10 +250,9 @@ fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
         }
     };
 
-    (
-        cmp_message_with_signed_digest(public_key.clone(), plain_message, signed_message),
-        public_key,
-    )
+    let auth_ok = cmp_message_with_signed_digest(public_key.clone(), plain_message, signed_message);
+    log::debug!("message is signed by presumed peer: {}", auth_ok);
+    (auth_ok, public_key)
 }
 
 const PUB_KEY_LEN: usize = 90;
