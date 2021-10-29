@@ -208,7 +208,7 @@ fn create_discv_handshake(
     // First half is PUBLIC_KEY | PORT (in bytes)
     let first_half = public_key_and_port_to_vec(public_key, port);
     // Second half is H(PUBLIC_KEY | PORT)_C (in bytes)
-    let second_half = hash_and_sign_message_digest(secret_key, result.clone());
+    let second_half = hash_and_sign_message_digest(secret_key, first_half.clone());
 
     result.extend(first_half);
     result.extend(second_half);
@@ -231,16 +231,6 @@ fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
             return (false, dummy_pk);
         }
     };
-    let port = extract_port_addr_field(message.clone());
-    let mut plain_message = Vec::new();
-    plain_message.extend(public_key.clone());
-    plain_message.extend(port);
-
-    // a hack to make sure that the signed message does not include
-    // zeros that the peer never intended to be part of the message
-    let last_three_elements = message[full_length - 3..].to_vec();
-    let trailing_zeros = check_zeros(last_three_elements);
-    let signed_message = message[PUB_KEY_LEN + SRV_PORT_LEN..full_length - trailing_zeros].to_vec();
 
     let public_key = match EcdsaPublicKey::try_from_slice(public_key) {
         Ok(k) => k,
@@ -249,6 +239,23 @@ fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
             return (false, dummy_pk);
         }
     };
+
+    let port = extract_port_addr_field(message.clone());
+    let port_str = match std::str::from_utf8(&port.clone()) {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            log::error!("failure to convert port utf-8 to string: {}", e);
+            return (false, dummy_pk);
+        }
+    };
+    //  Important to encode to hex again to mimic the process of how the sender
+    //  created this message. If not, the public key will only be 45 character as
+    //  opposed to the 90 characters it is in hex form.
+    let pk_and_port_vec = public_key_and_port_to_vec(public_key.clone(), port_str);
+    let mut plain_message = Vec::new();
+    plain_message.extend(pk_and_port_vec);
+
+    let signed_message = extract_signed_message(message);
 
     let auth_ok = cmp_message_with_signed_digest(public_key.clone(), plain_message, signed_message);
     log::debug!("message is signed by presumed peer: {}", auth_ok);
@@ -264,6 +271,16 @@ fn extract_pub_key_field(v: Vec<u8>) -> Result<Vec<u8>, hex::FromHexError> {
 
 fn extract_port_addr_field(v: Vec<u8>) -> Vec<u8> {
     v[PUB_KEY_LEN..PUB_KEY_LEN + SRV_PORT_LEN].to_vec()
+}
+
+fn extract_signed_message(v: Vec<u8>) -> Vec<u8> {
+    let size = v.len();
+    // a hack to make sure that the signed message does not include
+    // zeros that the peer never intended to be part of the message
+    let last_three_elements = v[size - 3..].to_vec();
+    let trailing_zeros = check_zeros(last_three_elements);
+    log::debug!("trailing zeros: {}", trailing_zeros);
+    v[PUB_KEY_LEN + SRV_PORT_LEN..size - trailing_zeros].to_vec()
 }
 
 fn check_zeros(v: Vec<u8>) -> usize {
