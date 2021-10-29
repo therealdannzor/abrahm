@@ -32,17 +32,16 @@ pub fn cmp_message_with_signed_digest(
     plain_message: Vec<u8>,
     signed_message: Vec<u8>,
 ) -> bool {
-    let secure_b = SecureVerify::new(public_key);
-    let recovered_message = match secure_b.verify(signed_message) {
+    let sv = SecureVerify::new(public_key);
+    let decrypted = match sv.verify(signed_message) {
         Ok(m) => m,
         Err(e) => {
             log::debug!("secure crypto verification failed: {:?}", e);
             return false;
         }
     };
-
-    let hashed_message = hash_from_vec_u8_input(plain_message).as_bytes().to_vec();
-    recovered_message == hashed_message
+    let plain_hashed = hash_from_vec_u8_input(plain_message).as_bytes().to_vec();
+    decrypted == plain_hashed
 }
 
 pub fn u8_to_ascii_decimal(input: u8) -> Vec<u8> {

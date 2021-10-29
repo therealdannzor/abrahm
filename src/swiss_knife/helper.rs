@@ -111,12 +111,12 @@ pub fn hash_and_sign_message_digest(
     message: Vec<u8>,
 ) -> Vec<u8> {
     let m_d = hash_from_vec_u8_input(message);
-    let sec_message = themis::secure_message::SecureSign::new(secret_key.clone());
-    let sign_m_d = match sec_message.sign(&m_d) {
+    let ss = themis::secure_message::SecureSign::new(secret_key.clone());
+    let sig_m_d = match ss.sign(&m_d) {
         Ok(m) => m,
         Err(e) => panic!("failed to sign message: {:?}", e),
     };
-    sign_m_d
+    sig_m_d
 }
 
 #[macro_export]
