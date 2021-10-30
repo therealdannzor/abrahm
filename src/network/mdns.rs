@@ -119,7 +119,7 @@ impl Server {
             mut stream_size,
         } = self;
 
-        let mut peers = to_find.clone();
+        let mut peers_confirmed = Vec::new();
         let wait_time = std::time::Duration::from_secs(2);
         let notif = tokio::sync::Notify::new();
 
@@ -131,16 +131,19 @@ impl Server {
                 let (is_verified, public_key) = verify_discv_handshake(buf.clone());
                 if is_verified {
                     log::debug!("successful authentication of discv message read from buffer");
-                    let public_hex = hex::encode(public_key.clone());
+                    let public_hex = hex::encode(public_key.clone()).to_string();
+                    // to make sure we don't count the same peer more than once
+                    if peers_confirmed.contains(&public_hex) {
+                        log::debug!("peer already confirmed, skip it");
+                    }
                     let public_key_vec = public_key.as_ref().to_vec();
                     let port = extract_port_addr_field(buf.clone());
-                    if peers.contains(&public_hex) {
+                    if to_find.clone().contains(&public_hex) {
                         // remove the peer already found in vector
-                        if let Some(pos) = peers.iter().position(|x| *x == public_hex) {
-                            // to make sure we don't count the same peer more than once
-                            peers.remove(pos);
+                        if let Some(pos) = to_find.clone().iter().position(|x| *x == public_hex) {
+                            peers_confirmed.push(public_hex);
                             // if we have found all peers we are looking for, bail out
-                            if peers.len() == 0 {
+                            if peers_confirmed.len() == to_find.len() {
                                 log::info!("found and verified all peers, discovery done");
                                 return Ok(());
                             }
@@ -244,7 +247,7 @@ fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
     let port_str = match std::str::from_utf8(&port.clone()) {
         Ok(s) => s.to_string(),
         Err(e) => {
-            log::error!("failure to convert port utf-8 to string: {}", e);
+            log::error!("failure to convert port from utf-8 to string: {}", e);
             return (false, dummy_pk);
         }
     };
@@ -279,7 +282,6 @@ fn extract_signed_message(v: Vec<u8>) -> Vec<u8> {
     // zeros that the peer never intended to be part of the message
     let last_three_elements = v[size - 3..].to_vec();
     let trailing_zeros = check_zeros(last_three_elements);
-    log::debug!("trailing zeros: {}", trailing_zeros);
     v[PUB_KEY_LEN + SRV_PORT_LEN..size - trailing_zeros].to_vec()
 }
 
