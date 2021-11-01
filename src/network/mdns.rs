@@ -8,6 +8,11 @@ use libp2p::{
     swarm::{Swarm, SwarmEvent},
     PeerId,
 };
+use rand::{
+    distributions::{Distribution, Uniform},
+    thread_rng,
+};
+use std::convert::TryInto;
 use std::error::Error;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::net::UdpSocket;
@@ -58,13 +63,15 @@ async fn peer_discovery_loop(
                     let socket = UdpSocket::bind("127.0.0.1:0").await?;
                     let broadcast_disc_msg =
                         create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
-                    log::debug!("create the discv message, start broadcast");
+                    log::debug!("broadcast discv message");
                     tokio::spawn(async move {
                         for _ in 0..9 {
                             let to_address = recipient_addr.clone();
                             let payload = broadcast_disc_msg.clone();
-                            let three_sec = std::time::Duration::from_secs(3);
-                            std::thread::sleep(three_sec);
+                            // let us pick a number [1, 5] to mitigate congestion
+                            let one_to_five = create_rnd_number().try_into().unwrap();
+                            let duration = tokio::time::Duration::from_secs(one_to_five);
+                            tokio::time::sleep(duration);
                             let _ = socket.send_to(&payload, to_address).await;
                         }
                     });
@@ -135,26 +142,28 @@ impl Server {
                     // to make sure we don't count the same peer more than once
                     if peers_confirmed.contains(&public_hex) {
                         log::debug!("peer already confirmed, skip it");
-                    }
-                    let public_key_vec = public_key.as_ref().to_vec();
-                    let port = extract_port_addr_field(buf.clone());
-                    if to_find.clone().contains(&public_hex) {
-                        // remove the peer already found in vector
-                        if let Some(pos) = to_find.clone().iter().position(|x| *x == public_hex) {
-                            peers_confirmed.push(public_hex);
-                            // if we have found all peers we are looking for, bail out
-                            if peers_confirmed.len() == to_find.len() {
-                                log::info!("found and verified all peers, discovery done");
-                                return Ok(());
-                            }
-                        }
-                        let validated = ValidatedPeer {
-                            port,
-                            public_key: public_key_vec,
-                        };
-                        let _ = tx.send(validated).await;
                     } else {
-                        log::debug!("public hex not found in validator list");
+                        let public_key_vec = public_key.as_ref().to_vec();
+                        let port = extract_port_addr_field(buf.clone());
+                        if to_find.clone().contains(&public_hex) {
+                            // remove the peer already found in vector
+                            if let Some(pos) = to_find.clone().iter().position(|x| *x == public_hex)
+                            {
+                                peers_confirmed.push(public_hex);
+                                // if we have found all peers we are looking for, bail out
+                                if peers_confirmed.len() == to_find.len() {
+                                    log::info!("found and verified all peers, discovery done");
+                                    return Ok(());
+                                }
+                            }
+                            let validated = ValidatedPeer {
+                                port,
+                                public_key: public_key_vec,
+                            };
+                            let _ = tx.send(validated).await;
+                        } else {
+                            log::debug!("public hex not found in validator list");
+                        }
                     }
                 } else {
                     log::debug!("could not authenticate buffered message, discarding");
@@ -293,4 +302,10 @@ fn check_zeros(v: Vec<u8>) -> usize {
         }
     }
     result
+}
+
+fn create_rnd_number() -> usize {
+    let mut rng = thread_rng();
+    let one_to_five = Uniform::new_inclusive(1, 5);
+    one_to_five.sample(&mut rng)
 }
