@@ -1,8 +1,9 @@
 #![allow(unused)]
 
-use super::client_handle::MessagePeerHandle;
 use super::mdns::{spawn_peer_discovery_loop, ValidatedPeer};
-use super::{InternalMessage, OrdPayload, PayloadEvent};
+use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent};
+use crate::network::client_handle::{spawn_peer_listeners, MessagePeerHandle};
+use crate::network::server_handle::spawn_server_accept_loop;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::sync::{
@@ -45,6 +46,9 @@ pub struct NetworkIoHandlers {
     pub server_join: JoinHandle<()>,
 }
 
+// spawn_peer_discovery_listener finds the other peers on the same network.
+// It needs to know the host server loop to tell other peers to speak with it there.
+// This port is received through calling `spawn_io_listeners` successfully.
 pub async fn spawn_peer_discovery_listener(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
@@ -61,4 +65,47 @@ pub async fn spawn_peer_discovery_listener(
     join.await;
 
     rx_peer_discv
+}
+
+pub async fn spawn_io_listeners(val_set: Vec<String>) -> String {
+    // out channels correpond to communication outside the host, i.e. with other peers
+    let (tx_out, rx_out): (Sender<InternalMessage>, Receiver<InternalMessage>) = mpsc::channel(128);
+    let tx_out_2 = tx_out.clone();
+    // in channels correspond to communication within the host, i.e. deals with payloads received
+    let (tx_in, rx_in): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = mpsc::channel(64);
+    let tx_in_2 = tx_in.clone();
+    // sempahores
+    let notif = Arc::new(Notify::new());
+    let notif2 = notif.clone();
+
+    // peer loop
+    tokio::spawn(async move {
+        // semaphore moved to loop to make setup is completed before giving green light
+        spawn_peer_listeners(rx_out, notif2).await;
+    });
+    // new connections loop
+    tokio::spawn(async move {
+        spawn_server_accept_loop(tx_out, tx_in, val_set).await;
+    });
+    // prepare internal request
+    let (snd, rcv) = tokio::sync::oneshot::channel();
+    let message = InternalMessage::FromServerEvent(FromServerEvent::GetHostPort(snd));
+    // stop sign, wait for green light
+    notif.notified().await;
+    match tx_out_2.send(message).await {
+        Ok(_) => {}
+        Err(e) => {
+            panic!("failed to send, internal error: {}", e);
+        }
+    };
+
+    // receive answer from backend on which port the new conn loop listens to
+    let port = match rcv.await {
+        Ok(n) => n,
+        Err(e) => {
+            panic!("failed to receive listener port, internal error: {}", e);
+        }
+    };
+
+    port
 }
