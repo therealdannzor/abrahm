@@ -32,3 +32,4 @@ uuid = { version = "0.4", features = ["serde", "v4"] }
 reqwest = { version = "0.11.3", features = ["json"] }
 actix-rt = "2.2.0"
 mio = { version = "0.7", features = ["os-poll", "net"] }
+rand = "0.8.0"
