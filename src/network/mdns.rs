@@ -104,27 +104,31 @@ async fn peer_discovery_loop(
 
 #[derive(Debug)]
 pub struct ValidatedPeer {
-    port: Vec<u8>,
-    public_key: Vec<u8>,
+    port: String,
+    key: EcdsaPublicKey,
 }
 impl ValidatedPeer {
-    pub fn port_as_str(&self) -> String {
-        let port = match std::str::from_utf8(&self.port) {
-            Ok(s) => s,
+    fn new(port: Vec<u8>, public_key: Vec<u8>) -> Self {
+        let port = match std::str::from_utf8(&port) {
+            Ok(s) => s.to_string(),
             Err(e) => {
                 panic!("this should not happen: {}", e);
             }
         };
-        port.to_string()
-    }
-
-    pub fn key_as_type(&self) -> EcdsaPublicKey {
-        match EcdsaPublicKey::try_from_slice(self.public_key.clone()) {
+        let key = match EcdsaPublicKey::try_from_slice(public_key) {
             Ok(k) => k,
             Err(e) => {
                 panic!("this should not happen: {}", e);
             }
-        }
+        };
+        Self { port, key }
+    }
+    pub fn port(&self) -> String {
+        self.port.clone()
+    }
+
+    pub fn key(&self) -> EcdsaPublicKey {
+        self.key.clone()
     }
 }
 
@@ -176,10 +180,7 @@ impl Server {
                                     return Ok(());
                                 }
                             }
-                            let validated = ValidatedPeer {
-                                port,
-                                public_key: public_key_vec,
-                            };
+                            let validated = ValidatedPeer::new(port, public_key_vec);
                             let _ = tx.send(validated).await;
                         } else {
                             log::debug!("public hex not found in validator list");
