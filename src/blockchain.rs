@@ -1,16 +1,14 @@
 #![allow(unused)]
 
-use crate::consensus::{common::ValidatorSet, core::ConsensusChain, engine::Engine};
+use crate::consensus::{core::ConsensusChain, engine::Engine};
 use crate::ledger::bootstrap::BootStrap;
 use crate::ledger::state_db::{KeyValueIO, StateDB};
-use crate::network::api::{spawn_network_io_listeners, spawn_peer_discovery_listener};
-use crate::network::client_handle::MessagePeerHandle;
 use crate::network::mdns::ValidatedPeer;
 use crate::types::{block::Block, pool::TxPool};
+use std::sync::Arc;
 use std::vec::Vec;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::sync::mpsc::{self, Receiver};
-use tokio::task::JoinHandle;
 
 pub struct Blockchain {
     // contiguous link of blocks
@@ -93,6 +91,10 @@ impl Blockchain {
         return self.chain.last().unwrap().clone();
     }
 
+    pub fn public_hex(&self) -> String {
+        self.bootstrap.get_public_hex()
+    }
+
     pub fn public_type(&self) -> EcdsaPublicKey {
         self.bootstrap.get_public_as_type()
     }
@@ -104,38 +106,6 @@ impl Blockchain {
     pub fn peers_str(&self) -> Vec<String> {
         self.bootstrap.get_peers_str()
     }
-}
-
-pub async fn id_and_peer_setup(
-    validator_peers: Vec<String>,
-    public: EcdsaPublicKey,
-    secret: EcdsaPrivateKey,
-) -> (
-    JoinHandle<()>,
-    JoinHandle<()>,
-    JoinHandle<()>,
-    JoinHandle<()>,
-    MessagePeerHandle,
-    Receiver<ValidatedPeer>,
-) {
-    let second = std::time::Duration::from_secs(1);
-
-    let (message_peer_handle, join_server, join_peer, join_inbox) =
-        spawn_network_io_listeners(validator_peers.clone()).await;
-
-    let port_serv = message_peer_handle.get_host_port().await;
-
-    let (recv_peer_discv, join_discv) =
-        spawn_peer_discovery_listener(public, secret, port_serv, validator_peers).await;
-
-    (
-        join_server,
-        join_peer,
-        join_inbox,
-        join_discv,
-        message_peer_handle,
-        recv_peer_discv,
-    )
 }
 
 fn create_db_folder(node_id_index: u32) -> StateDB {
@@ -182,7 +152,7 @@ mod tests {
         let keys = generate_keys_as_str(4);
         let (sk, pk) = themis::keygen::gen_ec_key_pair().split();
         let (send, recv): (mpsc::Sender<Block>, mpsc::Receiver<Block>) = mpsc::channel(4);
-        let mut bc = Blockchain::new(10, Some(keys), send);
+        let mut bc = Blockchain::new(10, Some(keys), 0, send);
 
         let exp_len = 1;
         let exp_hash = hashed!("0x");
