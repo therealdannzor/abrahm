@@ -107,6 +107,26 @@ pub struct ValidatedPeer {
     port: Vec<u8>,
     public_key: Vec<u8>,
 }
+impl ValidatedPeer {
+    pub fn port_as_str(&self) -> String {
+        let port = match std::str::from_utf8(&self.port) {
+            Ok(s) => s,
+            Err(e) => {
+                panic!("this should not happen: {}", e);
+            }
+        };
+        port.to_string()
+    }
+
+    pub fn key_as_type(&self) -> EcdsaPublicKey {
+        match EcdsaPublicKey::try_from_slice(self.public_key.clone()) {
+            Ok(k) => k,
+            Err(e) => {
+                panic!("this should not happen: {}", e);
+            }
+        }
+    }
+}
 
 pub struct Server {
     socket: UdpSocket,
