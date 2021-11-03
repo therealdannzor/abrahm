@@ -19,7 +19,7 @@ pub struct MessagePeerHandle(
 );
 
 impl MessagePeerHandle {
-    fn new(tx_outbound: Sender<InternalMessage>, tx_inbound: Sender<PayloadEvent>) -> Self {
+    pub fn new(tx_outbound: Sender<InternalMessage>, tx_inbound: Sender<PayloadEvent>) -> Self {
         Self {
             0: tx_outbound,
             1: tx_inbound,
@@ -47,12 +47,13 @@ impl MessagePeerHandle {
     }
 
     pub async fn get_host_port(&self) -> String {
-        println!("Peer handle: get host port");
         let (send, recv): (oneshot::Sender<String>, oneshot::Receiver<String>) = oneshot::channel();
         let sender = self.0.clone();
-        sender.try_send(InternalMessage::FromServerEvent(
-            FromServerEvent::GetHostPort(send),
-        ));
+        sender
+            .send(InternalMessage::FromServerEvent(
+                FromServerEvent::GetHostPort(send),
+            ))
+            .await;
 
         let res = match recv.await {
             Ok(v) => v,

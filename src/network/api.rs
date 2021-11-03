@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use super::mdns::{spawn_peer_discovery_loop, ValidatedPeer};
 use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent};
 use crate::network::client_handle::{spawn_peer_listeners, MessagePeerHandle};
@@ -40,12 +38,6 @@ impl Networking {
     }
 }
 
-pub struct NetworkIoHandlers {
-    message_handle: MessagePeerHandle,
-    pub peer_join: JoinHandle<()>,
-    pub server_join: JoinHandle<()>,
-}
-
 // spawn_peer_discovery_listener finds the other peers on the same network.
 // It needs to know the host server loop to tell other peers to speak with it there.
 // This port is received by a succcessful call to `spawn_io_listeners`.
@@ -80,7 +72,7 @@ pub async fn spawn_peer_discovery_listener(
     peers_found
 }
 
-pub async fn spawn_io_listeners(val_set: Vec<String>) -> String {
+pub async fn spawn_io_listeners(val_set: Vec<String>) -> (String, MessagePeerHandle) {
     // out channels correpond to communication outside the host, i.e. with other peers
     let (tx_out, rx_out): (Sender<InternalMessage>, Receiver<InternalMessage>) = mpsc::channel(128);
     let tx_out_2 = tx_out.clone();
@@ -105,20 +97,9 @@ pub async fn spawn_io_listeners(val_set: Vec<String>) -> String {
     let message = InternalMessage::FromServerEvent(FromServerEvent::GetHostPort(snd));
     // stop sign, wait for green light
     notif.notified().await;
-    match tx_out_2.send(message).await {
-        Ok(_) => {}
-        Err(e) => {
-            panic!("failed to send, internal error: {}", e);
-        }
-    };
-
+    let mph = MessagePeerHandle::new(tx_out_2, tx_in_2);
     // receive answer from backend on which port the new conn loop listens to
-    let port = match rcv.await {
-        Ok(n) => n,
-        Err(e) => {
-            panic!("failed to receive listener port, internal error: {}", e);
-        }
-    };
+    let port = mph.get_host_port().await;
 
-    port
+    (port, mph)
 }
