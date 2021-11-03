@@ -67,12 +67,12 @@ impl MessageWorker {
             return Err(validation_error("invalid consensus message round"));
         }
         let targ_short_id = message[1];
-        let targ_pub_key = self.peer_shortnames.get(&targ_short_id);
-        if targ_pub_key.is_none() {
-            return Err(validation_error("missing public key from other peer"));
-        }
-
-        let targ_pub_key = targ_pub_key.unwrap();
+        let targ_pub_key = match self.peer_shortnames.get(&targ_short_id) {
+            Some(k) => k,
+            None => {
+                return Err(validation_error("missing public key from other peer"));
+            }
+        };
 
         let mut payload_len: Vec<u8> = Vec::new();
         for i in 0..3 {
@@ -268,6 +268,7 @@ fn check_id_length(short_identifier: u8) -> Result<(), std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consensus::transition::{Transact, Transition};
     use crate::hashed;
     use crate::network::common::usize_to_ascii_decimal;
     use crate::swiss_knife::helper::generate_hash_from_input;
@@ -316,9 +317,6 @@ mod tests {
         full_message.extend(serialized.as_bytes().to_vec());
         full_message.extend(signed_request);
         let result = mw.validate_received(full_message);
-        if result.is_err() {
-            panic!("{:?}", result.err());
-        }
         assert_ok!(result);
     }
 
@@ -370,9 +368,9 @@ mod tests {
         assert_err!(actual);
 
         let mut message = vec![1, 2, 49, 54, 48];
-        message.extend(payload.clone());
+        message.extend(payload.clone()); // not signed properly
         let actual = mw.validate_received(message);
-        assert_ok!(actual);
+        assert_err!(actual);
     }
 
     #[test]
