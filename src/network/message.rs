@@ -42,12 +42,20 @@ impl MessageWorker {
 
     // The message structure is as follows:
     //
-    // * consensus round: 0 (request / txs), 1 (preprepare), 2 (prepare), 3 (commit),
+    // +-----------------------------------------------------------+
+    // | Consensus round  | Peer ID       | Payload length         |
+    // | (1 character)    | (1 character) | (3 characters)         |
+    // |-----------------------------------------------------------+
+    // | Serialized message    | Signed message digest             |
+    // | (length varies)       | (241 - 243 characters)            |
+    // +-----------------------------------------------------------+
+    // * Consensus round:
+    //   0 (request / txs), 1 (preprepare), 2 (prepare), 3 (commit),
     //   4 (view change), 5 (new view), and 6 (checkpoint)
-    // * peer identifier: 1 character (digit)
-    // * message payload length: 3 characters
-    // * serialized message: varying length (indicated by previous length flag)
-    // * signed message digest: the rest of the message (TODO: understand why its length
+    // * Peer identifier: 1 character (digit)
+    // * Length of payload: 3 characters
+    // * Serialized message: varying length; plain text
+    // * Signed message digest: the rest of the message (TODO: understand why its length
     //   differs with ± 2 chars)
     pub fn validate_received(&self, message: Vec<u8>) -> Result<(), std::io::Error> {
         if message.len() < 152 {
@@ -340,28 +348,28 @@ mod tests {
             54, /* 6 */
             48, /* 0 */
         ];
-        let payload = vec![2; 160];
+        let payload = vec![2; 160]; // 160 corresponds to [49, 54, 48]
         message.extend(payload.clone());
         let actual = mw.validate_received(message);
         assert_err!(actual);
 
-        let mut message = vec![8, 1, 65 /* 'A' (invalid) */, 54, 48];
+        let mut message = vec![8, 2, 65 /* 'A' (invalid) */, 54, 48];
         message.extend(payload.clone());
         let actual = mw.validate_received(message);
         assert_err!(actual);
 
-        let mut message = vec![8, 1, 49, 54, 48];
+        let mut message = vec![1, 2, 49, 54, 48];
         let err_payload = vec![255; 200]; // choose non utf-8 payload
         message.extend(err_payload);
         let actual = mw.validate_received(message);
         assert_err!(actual);
 
-        let mut message = vec![8, 1, 49, 54, 48];
+        let mut message = vec![8 /* invalid consensus flag */, 2, 49, 54, 48];
         message.extend(payload.clone()); // choose any other payload than a signed message by peer 8's secret key
         let actual = mw.validate_received(message);
         assert_err!(actual);
 
-        let mut message = vec![8, 1, 49, 54, 48];
+        let mut message = vec![1, 2, 49, 54, 48];
         message.extend(payload.clone());
         let actual = mw.validate_received(message);
         assert_ok!(actual);
