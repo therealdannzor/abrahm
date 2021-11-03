@@ -63,7 +63,6 @@ async fn peer_discovery_loop(
                     let socket = UdpSocket::bind("127.0.0.1:0").await?;
                     let broadcast_disc_msg =
                         create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
-                    log::debug!("broadcast discv message");
                     tokio::spawn(async move {
                         for _ in 0..9 {
                             let to_address = recipient_addr.clone();
@@ -161,7 +160,6 @@ impl Server {
                 notif.notified().await;
                 let (is_verified, public_key) = verify_discv_handshake(buf.clone());
                 if is_verified {
-                    log::debug!("successful authentication of discv message read from buffer");
                     let public_hex = hex::encode(public_key.clone()).to_string();
                     // to make sure we don't count the same peer more than once
                     if peers_confirmed.contains(&public_hex) {
@@ -174,11 +172,7 @@ impl Server {
                             if let Some(pos) = to_find.clone().iter().position(|x| *x == public_hex)
                             {
                                 peers_confirmed.push(public_hex);
-                                // if we have found all peers we are looking for, bail out
-                                if peers_confirmed.len() == to_find.len() {
-                                    log::info!("found and verified all peers, discovery done");
-                                    return Ok(());
-                                }
+                                log::debug!("found new peer, added to list");
                             }
                             let validated = ValidatedPeer::new(port, public_key_vec);
                             let _ = tx.send(validated).await;
