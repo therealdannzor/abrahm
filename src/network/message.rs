@@ -364,6 +364,7 @@ mod tests {
         let mut message = vec![8, 1, 49, 54, 48];
         message.extend(payload.clone());
         let actual = mw.validate_received(message);
+        assert_ok!(actual);
     }
 
     #[test]
@@ -411,9 +412,6 @@ mod tests {
 
         // Returns true if the message we have constructed is authentic and non-tampered with
         let result = mw.validate_received(msg);
-        if result.is_err() {
-            panic!("{:?}", result.err());
-        }
-        assert!(true);
+        assert_ok!(result);
     }
 }
