@@ -3,6 +3,8 @@
 use crate::consensus::{core::ConsensusChain, engine::Engine};
 use crate::ledger::bootstrap::BootStrap;
 use crate::ledger::state_db::{KeyValueIO, StateDB};
+use crate::network::api::{spawn_io_listeners, spawn_peer_discovery_listener};
+use crate::network::client_handle::MessagePeerHandle;
 use crate::network::mdns::ValidatedPeer;
 use crate::types::{block::Block, pool::TxPool};
 use std::sync::Arc;
@@ -69,6 +71,19 @@ impl Blockchain {
                 blockchain_channel,
             ),
         }
+    }
+
+    pub async fn start_listeners(&self) -> (Vec<ValidatedPeer>, MessagePeerHandle) {
+        let (port, mph) = spawn_io_listeners(self.peers_str()).await;
+        let disc_peers = spawn_peer_discovery_listener(
+            self.public_type(),
+            self.secret_type(),
+            port,
+            self.peers_str(),
+        )
+        .await;
+
+        (disc_peers, mph)
     }
 
     // append_block appends a block `b` which is assumed to have:
