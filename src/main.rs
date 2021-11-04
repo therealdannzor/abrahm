@@ -1,4 +1,5 @@
 mod blockchain;
+mod cli;
 mod consensus;
 mod ledger;
 mod network;

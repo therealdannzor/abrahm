@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+use crate::cli::read_args;
 use crate::consensus::{core::ConsensusChain, engine::Engine};
 use crate::ledger::bootstrap::BootStrap;
 use crate::ledger::state_db::{KeyValueIO, StateDB};
@@ -43,10 +44,13 @@ impl Blockchain {
     pub fn new(
         stream_cap: usize,
         validators_id: Option<Vec<String>>,
-        node_id_index: u32,
+        node_id_index: Option<u32>,
         blockchain_channel: mpsc::Sender<Block>,
     ) -> Self {
-        let mut bootstrap = BootStrap::new(node_id_index);
+        if node_id_index.is_none() {
+            let node_id_index = read_args();
+        }
+        let mut bootstrap = BootStrap::new(node_id_index.unwrap());
         if validators_id.is_none() {
             bootstrap.setup(None);
         } else {
@@ -61,7 +65,7 @@ impl Blockchain {
         Self {
             chain: vec![genesis_block.clone()],
             pool: TxPool::new(),
-            account_db: create_db_folder(node_id_index),
+            account_db: create_db_folder(node_id_index.unwrap()),
             bootstrap,
             consensus: ConsensusChain::new(
                 Engine::new(pub_key_hex.clone(), validator_peers),
@@ -167,7 +171,7 @@ mod tests {
         let keys = generate_keys_as_str(4);
         let (sk, pk) = themis::keygen::gen_ec_key_pair().split();
         let (send, recv): (mpsc::Sender<Block>, mpsc::Receiver<Block>) = mpsc::channel(4);
-        let mut bc = Blockchain::new(10, Some(keys), 0, send);
+        let mut bc = Blockchain::new(10, Some(keys), Some(0), send);
 
         let exp_len = 1;
         let exp_hash = hashed!("0x");
