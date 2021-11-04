@@ -169,8 +169,7 @@ impl Server {
                         let port = extract_port_addr_field(buf.clone());
                         if to_find.clone().contains(&public_hex) {
                             // remove the peer already found in vector
-                            if let Some(pos) = to_find.clone().iter().position(|x| *x == public_hex)
-                            {
+                            if let Some(_) = to_find.clone().iter().position(|x| *x == public_hex) {
                                 peers_confirmed.push(public_hex);
                                 log::debug!("found new peer, added to list");
                             }
@@ -194,7 +193,6 @@ impl Server {
             stream_size = Some(socket.recv(&mut buf).await?);
             notif.notify_one();
         }
-        Ok(())
     }
 }
 
@@ -262,7 +260,7 @@ fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
     let public_key = match EcdsaPublicKey::try_from_slice(public_key) {
         Ok(k) => k,
         Err(e) => {
-            log::error!("could not restore public key from slice");
+            log::error!("could not restore public key from slice: {}", e);
             return (false, dummy_pk);
         }
     };

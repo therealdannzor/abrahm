@@ -14,7 +14,7 @@ pub fn net_open() -> (Poll, Arc<Mutex<UdpSocket>>, SocketAddr) {
     const SOCKET_TOK: Token = Token(1024); // token which represents the server
     const INTERESTS: Interest = Interest::READABLE.add(Interest::WRITABLE);
 
-    let mut poller = Poll::new().unwrap();
+    let poller = Poll::new().unwrap();
     let _ = poller
         .registry()
         .register(&mut socket, SOCKET_TOK, INTERESTS);

@@ -1,12 +1,8 @@
 use super::udp_utils::{net_open, next_token};
 use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, PeerInfo};
-use mio::net::UdpSocket;
-use mio::{Events, Interest, Poll, Token};
-use std::borrow::Borrow;
+use mio::{Events, Interest, Token};
 use std::io;
-use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::Sender;
-use tokio::task::JoinHandle;
 
 pub async fn spawn_server_accept_loop(
     tx_out: Sender<InternalMessage>,
@@ -17,7 +13,7 @@ pub async fn spawn_server_accept_loop(
         event_loop(tx_out, tx_in, validators).await;
     });
 
-    join.await;
+    let _ = join.await;
 }
 
 async fn event_loop(
@@ -34,7 +30,7 @@ async fn event_loop(
     let mut events = Events::with_capacity(16); // events correspond to amount of validators (AFAIK)
 
     // create listening server and register it will poll to receive events
-    let (mut poller, mut socket, sock_addr) = net_open();
+    let (mut poller, socket, sock_addr) = net_open();
     let payload = socket.clone();
     let sender = tx_out.clone();
     // spawn thread to not make Arc become mad

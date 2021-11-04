@@ -1,5 +1,5 @@
 use super::mdns::{spawn_peer_discovery_loop, ValidatedPeer};
-use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent};
+use super::{InternalMessage, OrdPayload, PayloadEvent};
 use crate::network::client_handle::{spawn_peer_listeners, MessagePeerHandle};
 use crate::network::server_handle::spawn_server_accept_loop;
 use std::sync::Arc;
@@ -9,7 +9,6 @@ use tokio::sync::{
     oneshot::error::TryRecvError,
     Notify,
 };
-use tokio::task::JoinHandle;
 
 pub struct Networking(MessagePeerHandle);
 
@@ -58,7 +57,7 @@ pub async fn spawn_peer_discovery_listener(
         spawn_peer_discovery_loop(pk, sk, server_port, tx_peer_discv, validator_list.clone()).await
     });
 
-    join.await;
+    let _ = join.await;
 
     let mut peers_found: Vec<ValidatedPeer> = Vec::new();
     while let Some(msg) = rx_peer_discv.recv().await {
@@ -92,9 +91,6 @@ pub async fn spawn_io_listeners(val_set: Vec<String>) -> (String, MessagePeerHan
     tokio::spawn(async move {
         spawn_server_accept_loop(tx_out, tx_in, val_set).await;
     });
-    // prepare internal request
-    let (snd, rcv) = tokio::sync::oneshot::channel();
-    let message = InternalMessage::FromServerEvent(FromServerEvent::GetHostPort(snd));
     // stop sign, wait for green light
     notif.notified().await;
     let mph = MessagePeerHandle::new(tx_out_2, tx_in_2);

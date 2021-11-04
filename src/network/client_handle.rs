@@ -9,7 +9,6 @@ use tokio::sync::{
     mpsc::{Receiver, Sender},
     oneshot, Mutex,
 };
-use tokio::task::JoinHandle;
 
 pub struct MessagePeerHandle(
     // transmit channel to send messages to other peers
@@ -49,7 +48,7 @@ impl MessagePeerHandle {
     pub async fn get_host_port(&self) -> String {
         let (send, recv): (oneshot::Sender<String>, oneshot::Receiver<String>) = oneshot::channel();
         let sender = self.0.clone();
-        sender
+        let _ = sender
             .send(InternalMessage::FromServerEvent(
                 FromServerEvent::GetHostPort(send),
             ))
@@ -71,7 +70,7 @@ pub async fn spawn_peer_listeners(rx: Receiver<InternalMessage>, notify: Arc<Not
         peer_loop(rx, notify).await;
     });
 
-    join_peer.await;
+    let _ = join_peer.await;
 }
 
 // peer_loop contains the operations that concern all the peers connected to the server.
