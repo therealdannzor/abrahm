@@ -10,11 +10,27 @@ use tokio::sync::{
     Notify,
 };
 
-pub struct Networking(MessagePeerHandle);
+pub struct Networking {
+    // List of (presumably) connected and validated peers which the client can communicate with
+    peers: Vec<ValidatedPeer>,
+    // Handler to send commands internally and externally
+    handle: Option<MessagePeerHandle>,
+}
 
 impl Networking {
-    pub fn new(handle: MessagePeerHandle) -> Self {
-        Self { 0: handle }
+    pub fn new() -> Self {
+        Self {
+            peers: Vec::new(),
+            handle: None,
+        }
+    }
+
+    pub fn set_peers(&mut self, p: Vec<ValidatedPeer>) {
+        self.peers = p;
+    }
+
+    pub fn set_handler(&mut self, h: MessagePeerHandle) {
+        self.handle = Some(h);
     }
 
     pub async fn send_payload_to(
@@ -23,7 +39,9 @@ impl Networking {
         recipient: mio::Token,
     ) -> Result<usize, TryRecvError> {
         Ok(self
-            .0
+            .handle
+            .as_ref()
+            .unwrap()
             .send_payload(payload.into_bytes(), recipient)
             .await
             .try_recv()?)
@@ -33,7 +51,13 @@ impl Networking {
         &self,
         target: mio::Token,
     ) -> Result<Vec<OrdPayload>, TryRecvError> {
-        Ok(self.0.send_get(target).await.try_recv()?)
+        Ok(self
+            .handle
+            .as_ref()
+            .unwrap()
+            .send_get(target)
+            .await
+            .try_recv()?)
     }
 }
 
