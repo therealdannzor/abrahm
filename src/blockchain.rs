@@ -47,10 +47,13 @@ impl Blockchain {
         node_id_index: Option<u32>,
         blockchain_channel: mpsc::Sender<Block>,
     ) -> Self {
+        let mut index: u32 = 0;
         if node_id_index.is_none() {
-            let node_id_index = read_args();
+            index = read_args();
+        } else {
+            index = node_id_index.unwrap();
         }
-        let mut bootstrap = BootStrap::new(node_id_index.unwrap());
+        let mut bootstrap = BootStrap::new(index);
         if validators_id.is_none() {
             bootstrap.setup(None);
         } else {
@@ -65,7 +68,7 @@ impl Blockchain {
         Self {
             chain: vec![genesis_block.clone()],
             pool: TxPool::new(),
-            account_db: create_db_folder(node_id_index.unwrap()),
+            account_db: create_db_folder(index),
             bootstrap,
             consensus: ConsensusChain::new(
                 Engine::new(pub_key_hex.clone(), validator_peers),
