@@ -69,11 +69,10 @@ pub async fn spawn_peer_listeners(rx: Receiver<InternalMessage>, notify: Arc<Not
     let join_peer = tokio::spawn(async move {
         peer_loop(rx, notify).await;
     });
-
     let _ = join_peer.await;
 }
 
-// peer_loop contains the operations that concern all the peers connected to the server.
+// peer_loop support internal operations of the peers it is connected to
 async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
     let token_to_sock: HashMap<Token, SocketAddr> = HashMap::new();
     let token_to_sock = Arc::new(Mutex::new(token_to_sock));
@@ -141,9 +140,8 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
                         log::warn!("server UDP server has not started yet");
                         continue;
                     }
-                    let srv = Arc::try_unwrap(server_udp.clone().unwrap())
-                        .unwrap()
-                        .into_inner();
+                    let arc = server_udp.clone().unwrap();
+                    let srv = arc.lock().await;
                     match srv.send_to(&payload, *recipient_sock_addr) {
                         Ok(n) => {
                             if n != payload.len() {
@@ -155,6 +153,7 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
                                 let _ = response.send(0);
                             } else {
                                 // all good
+                                log::debug!("sent {} bytes to {}", n, recipient_sock_addr);
                                 let _ = response.send(n);
                             }
                         }
