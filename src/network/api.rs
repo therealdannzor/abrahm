@@ -33,18 +33,21 @@ impl Networking {
         self.handle = Some(h);
     }
 
-    pub async fn send_payload_to(
-        &self,
-        payload: String,
-        recipient: mio::Token,
-    ) -> Result<usize, TryRecvError> {
-        Ok(self
+    pub async fn send_payload_to(&self, payload: String, recipient: mio::Token) -> usize {
+        let res = self
             .handle
             .as_ref()
             .unwrap()
             .send_payload(payload.into_bytes(), recipient)
-            .await
-            .try_recv()?)
+            .await;
+
+        match res.await {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("could not send payload: {}", e);
+                return 0;
+            }
+        }
     }
 
     pub async fn get_messages_from(
