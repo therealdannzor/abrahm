@@ -51,7 +51,7 @@ async fn event_loop(
 
             for event in events.iter() {
                 match event.token() {
-                    socket_token => loop {
+                    Token(1024) => loop {
                         let mut handshake_key_buf = [0; ECDSA_PUB_KEY_SIZE_BITS];
                         match sok1.recv_from(&mut handshake_key_buf) {
                             Ok((packet_size, source_address)) => {
@@ -93,15 +93,16 @@ async fn event_loop(
                             }
                         };
                     },
-                    client_token => loop {
+                    Token(tok) => loop {
                         let mut message_buf = [0; PEER_MESSAGE_MAX_LEN];
                         // message received from a known peer
                         match sok1.recv_from(&mut message_buf) {
                             Ok((size, _)) => {
                                 nonce += 1;
                                 let message = message_buf[..size].to_vec();
+                                log::info!("received message: {:?}, from: {}", message, tok);
                                 let ord_pay = OrdPayload(message, nonce);
-                                let new_message = PayloadEvent::StoreMessage(client_token, ord_pay);
+                                let new_message = PayloadEvent::StoreMessage(Token(tok), ord_pay);
                                 let _ = tx_in.send(new_message);
                             }
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
