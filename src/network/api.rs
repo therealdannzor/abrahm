@@ -33,6 +33,10 @@ impl Networking {
         self.handle = Some(h);
     }
 
+    pub fn get_registered_peers(&self) -> Vec<ValidatedPeer> {
+        self.peers.clone()
+    }
+
     pub async fn send_payload_to(&self, payload: String, recipient: mio::Token) -> usize {
         let res = self
             .handle
