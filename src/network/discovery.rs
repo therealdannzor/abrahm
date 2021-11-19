@@ -27,10 +27,11 @@ pub async fn spawn_peer_discovery_loop(
     sk: EcdsaPrivateKey,
     serv_port: String,
     tx: Sender<ValidatedPeer>,
+    kill: Sender<bool>,
     to_discover: Vec<String>,
 ) -> JoinHandle<()> {
     let join = tokio::spawn(async move {
-        match peer_discovery_loop(pk, sk, serv_port, tx, to_discover).await {
+        match peer_discovery_loop(pk, sk, serv_port, tx, kill, to_discover).await {
             Ok(()) => {}
             Err(e) => {
                 panic!("discovery loop failed: {:?}", e);
@@ -46,6 +47,7 @@ async fn peer_discovery_loop(
     sk: EcdsaPrivateKey,
     serv_port: String,
     tx: Sender<ValidatedPeer>,
+    kill: Sender<bool>,
     to_discover: Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
     let keys_id = identity::Keypair::generate_ed25519();
@@ -93,12 +95,12 @@ async fn peer_discovery_loop(
                         stream_size: None,
                         exploration_mode: true,
                         ready_upgrade_mode: false,
-                        connected_mode: false,
                     };
                     let list_peers = to_discover.clone();
                     log::debug!("start server buffer to receive other discv messages");
+                    let kill_tx = kill.clone();
                     tokio::spawn(async move {
-                        let _ = serv.run(tx, list_peers).await;
+                        let _ = serv.run(tx, kill_tx, list_peers).await;
                     });
                 }
             }
@@ -143,17 +145,20 @@ pub struct Server {
     stream_size: Option<usize>,
     exploration_mode: bool,
     ready_upgrade_mode: bool,
-    connected_mode: bool,
 }
 
 impl Server {
     async fn run(
         mut self,
         tx: Sender<ValidatedPeer>,
+        kill: Sender<bool>,
         to_find: Vec<String>,
     ) -> Result<(), std::io::Error> {
         let total_peers = to_find.len();
+        // contains discovered and verified peers (i.e., signed messages from validator set)
         let mut peers_confirmed = Vec::new();
+        // contains peers who have successfully found its neighbors (i.e., full validator set)
+        let mut peers_ready = Vec::new();
         let wait_time = std::time::Duration::from_secs(2);
         let notif = Notify::new();
 
@@ -164,13 +169,28 @@ impl Server {
                 notif.notified().await;
                 let (is_verified, public_key) = verify_discv_handshake(self.buf.clone());
                 if is_verified {
+                    let msg = self.buf.clone();
                     let public_hex = hex::encode(public_key.clone()).to_string();
                     // to make sure we don't count the same peer more than once
                     if peers_confirmed.contains(&public_hex) {
-                        log::debug!("peer already confirmed, skip it");
+                        log::debug!(
+                            "peer already confirmed, check for readiness to upgrade connection"
+                        );
+                        if check_for_ready_message(msg) {
+                            if !peers_ready.contains(&public_hex) {
+                                log::debug!("saved a ready message from peer: {}", public_hex);
+                                peers_ready.push(public_hex);
+                            } else {
+                                log::debug!("peer already known to be ready");
+                            }
+                        }
+                        if peers_ready.len() == total_peers {
+                            log::info!("all peers are ready, proceed to full connection");
+                            break;
+                        }
                     } else {
                         let public_key_vec = public_key.as_ref().to_vec();
-                        let port = extract_port_addr_field(self.buf.clone());
+                        let port = extract_port_addr_field(msg);
                         if to_find.contains(&public_hex) {
                             // add peers found for the first time
                             if let Some(_) = to_find.iter().position(|x| *x == public_hex) {
@@ -202,6 +222,10 @@ impl Server {
             self.stream_size = Some(self.socket.recv(&mut self.buf).await?);
             notif.notify_one();
         }
+        // alert api that discovery is finished
+        let _ = kill.send(true).await;
+
+        Ok(())
     }
 }
 
@@ -314,6 +338,12 @@ fn extract_signed_message(v: Vec<u8>) -> Vec<u8> {
     let last_three_elements = v[size - 3..].to_vec();
     let trailing_zeros = check_zeros(last_three_elements);
     v[PUB_KEY_LEN + SRV_PORT_LEN..size - trailing_zeros].to_vec()
+}
+
+fn check_for_ready_message(v: Vec<u8>) -> bool {
+    let expected = "READY".to_string().as_bytes().to_vec();
+    let payload_len = expected.len();
+    v[PUB_KEY_LEN..PUB_KEY_LEN + payload_len].to_vec() == expected
 }
 
 fn check_zeros(v: Vec<u8>) -> usize {
