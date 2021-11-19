@@ -73,8 +73,8 @@ pub fn vec_u8_ascii_decimal_to_u8(input: Vec<u8>) -> u8 {
     acc
 }
 
-pub fn public_key_and_port_to_vec(key: EcdsaPublicKey, port: String) -> Vec<u8> {
+pub fn public_key_and_payload_to_vec(key: EcdsaPublicKey, msg: String) -> Vec<u8> {
     let mut enc_key = hex::encode(key).as_bytes().to_vec();
-    enc_key.append(&mut port.as_bytes().to_vec());
+    enc_key.append(&mut msg.as_bytes().to_vec());
     enc_key
 }
