@@ -1,14 +1,20 @@
-use super::mdns::{spawn_peer_discovery_loop, ValidatedPeer};
+use super::discovery::{create_rnd_number, spawn_peer_discovery_loop, ValidatedPeer};
 use super::{InternalMessage, OrdPayload, PayloadEvent};
 use crate::network::client_handle::{spawn_peer_listeners, MessagePeerHandle};
+use crate::network::common::public_key_and_payload_to_vec;
 use crate::network::server_handle::spawn_server_accept_loop;
+use crate::swiss_knife::helper::hash_and_sign_message_digest;
+use std::convert::TryInto;
+use std::error::Error;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
+use tokio::net::UdpSocket;
 use tokio::sync::{
     mpsc::{self, Receiver, Sender},
     oneshot::error::TryRecvError,
     Notify,
 };
+use tokio::task::JoinHandle;
 
 pub struct Networking {
     // List of (presumably) connected and validated peers which the client can communicate with
@@ -81,11 +87,25 @@ pub async fn spawn_peer_discovery_listener(
     let (tx_peer_discv, mut rx_peer_discv): (Sender<ValidatedPeer>, Receiver<ValidatedPeer>) =
         mpsc::channel(8);
 
+    let (kill_tx, mut kill_rx): (Sender<bool>, Receiver<bool>) = mpsc::channel(2);
+
     // subtract by one because we have already discovered ourself, by definition
     let amount_to_validate = validator_list.len() - 1;
 
+    let not = Notify::new();
+
+    let public_key = pk.clone();
+    let secret_key = sk.clone();
     let join = tokio::spawn(async move {
-        spawn_peer_discovery_loop(pk, sk, server_port, tx_peer_discv, validator_list.clone()).await
+        spawn_peer_discovery_loop(
+            public_key,
+            secret_key,
+            server_port,
+            tx_peer_discv,
+            kill_tx,
+            validator_list,
+        )
+        .await
     });
 
     let _ = join.await;
@@ -94,12 +114,62 @@ pub async fn spawn_peer_discovery_listener(
     while let Some(msg) = rx_peer_discv.recv().await {
         peers_found.push(msg);
         if peers_found.len() == amount_to_validate {
+            not.notify_one();
+            break;
+        }
+    }
+
+    not.notified().await;
+    let pf = peers_found.clone();
+    let join = tokio::spawn(async move { ready_to_connect(pk.clone(), sk.clone(), pf).await });
+
+    let _ = join.await;
+
+    while let Some(msg) = kill_rx.recv().await {
+        if msg == true {
             break;
         }
     }
 
     log::info!("returning a list of the discovered peers");
     peers_found
+}
+
+async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
+    let three_to_seven = create_rnd_number(3, 7).try_into().unwrap();
+    let mut counter = 0;
+    let socket = match UdpSocket::bind("127.0.0.1:0").await {
+        Ok(socket) => socket,
+        Err(e) => {
+            panic!("udp error when starting discovery connected phase: {}", e);
+        }
+    };
+    loop {
+        // round robin: iterate over the different peers
+        let rr = counter % peers.len();
+        let mut address = "127.0.0.1:".to_string();
+        let port = peers[rr].port();
+        address.push_str(&port.clone());
+        let payload = create_ready_message(pk.clone(), sk.clone());
+        let _ = socket.send_to(&payload, address).await;
+        // sleep some random time between 3 and 7 seconds to not overflow the network
+        let dur = tokio::time::Duration::from_secs(three_to_seven);
+        tokio::time::sleep(dur);
+    }
+}
+
+fn create_ready_message(public_key: EcdsaPublicKey, secret_key: EcdsaPrivateKey) -> Vec<u8> {
+    let msg = "READY".to_string();
+    let mut result = Vec::new();
+    // First half is PUBLIC_KEY | PORT (in bytes)
+    let first_half = public_key_and_payload_to_vec(public_key, msg);
+    // Second half is H(PUBLIC_KEY | PORT)_C (in bytes)
+    let second_half = hash_and_sign_message_digest(secret_key, first_half.clone());
+
+    result.extend(first_half);
+    result.extend(second_half);
+
+    result
 }
 
 pub async fn spawn_io_listeners(val_set: Vec<String>) -> (String, MessagePeerHandle) {
