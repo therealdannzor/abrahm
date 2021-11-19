@@ -1,5 +1,5 @@
 use super::common::cmp_message_with_signed_digest;
-use crate::network::common::public_key_and_port_to_vec;
+use crate::network::common::public_key_and_payload_to_vec;
 use crate::swiss_knife::helper::hash_and_sign_message_digest;
 use futures::StreamExt;
 use libp2p::{
@@ -16,7 +16,10 @@ use std::convert::TryInto;
 use std::error::Error;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::{
+    mpsc::{self, Receiver, Sender},
+    Notify,
+};
 use tokio::task::JoinHandle;
 
 pub async fn spawn_peer_discovery_loop(
@@ -68,7 +71,7 @@ async fn peer_discovery_loop(
                             let to_address = recipient_addr.clone();
                             let payload = broadcast_disc_msg.clone();
                             // let us pick a number [1, 5] to mitigate congestion
-                            let one_to_five = create_rnd_number().try_into().unwrap();
+                            let one_to_five = create_rnd_number(1, 5).try_into().unwrap();
                             let duration = tokio::time::Duration::from_secs(one_to_five);
                             tokio::time::sleep(duration);
                             let _ = socket.send_to(&payload, to_address).await;
@@ -88,6 +91,9 @@ async fn peer_discovery_loop(
                         socket,
                         buf: vec![0; 243],
                         stream_size: None,
+                        exploration_mode: true,
+                        ready_upgrade_mode: false,
+                        connected_mode: false,
                     };
                     let list_peers = to_discover.clone();
                     log::debug!("start server buffer to receive other discv messages");
@@ -101,7 +107,7 @@ async fn peer_discovery_loop(
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ValidatedPeer {
     port: String,
     key: EcdsaPublicKey,
@@ -135,30 +141,28 @@ pub struct Server {
     socket: UdpSocket,
     buf: Vec<u8>,
     stream_size: Option<usize>,
+    exploration_mode: bool,
+    ready_upgrade_mode: bool,
+    connected_mode: bool,
 }
 
 impl Server {
     async fn run(
-        self,
+        mut self,
         tx: Sender<ValidatedPeer>,
         to_find: Vec<String>,
     ) -> Result<(), std::io::Error> {
-        let Server {
-            socket,
-            mut buf,
-            mut stream_size,
-        } = self;
-
+        let total_peers = to_find.len();
         let mut peers_confirmed = Vec::new();
         let wait_time = std::time::Duration::from_secs(2);
-        let notif = tokio::sync::Notify::new();
+        let notif = Notify::new();
 
         loop {
-            if let Some(_) = stream_size {
+            if let Some(_) = self.stream_size {
                 let start = std::time::Instant::now();
 
                 notif.notified().await;
-                let (is_verified, public_key) = verify_discv_handshake(buf.clone());
+                let (is_verified, public_key) = verify_discv_handshake(self.buf.clone());
                 if is_verified {
                     let public_hex = hex::encode(public_key.clone()).to_string();
                     // to make sure we don't count the same peer more than once
@@ -166,12 +170,17 @@ impl Server {
                         log::debug!("peer already confirmed, skip it");
                     } else {
                         let public_key_vec = public_key.as_ref().to_vec();
-                        let port = extract_port_addr_field(buf.clone());
-                        if to_find.clone().contains(&public_hex) {
-                            // remove the peer already found in vector
-                            if let Some(_) = to_find.clone().iter().position(|x| *x == public_hex) {
+                        let port = extract_port_addr_field(self.buf.clone());
+                        if to_find.contains(&public_hex) {
+                            // add peers found for the first time
+                            if let Some(_) = to_find.iter().position(|x| *x == public_hex) {
                                 peers_confirmed.push(public_hex);
                                 log::debug!("found new peer, added to list");
+                                if peers_confirmed.len() == total_peers && !self.ready_upgrade_mode
+                                {
+                                    log::info!("peer entering ready-to-upgrade mode");
+                                    self.ready_upgrade_mode = true;
+                                }
                             }
                             let validated = ValidatedPeer::new(port, public_key_vec);
                             let _ = tx.send(validated).await;
@@ -187,10 +196,10 @@ impl Server {
                     tokio::time::sleep(time).await;
                 }
             }
-            buf.clear();
-            buf = vec![0; 243];
+            self.buf.clear();
+            self.buf = vec![0; 243];
             log::debug!("fetch new discovery messages");
-            stream_size = Some(socket.recv(&mut buf).await?);
+            self.stream_size = Some(self.socket.recv(&mut self.buf).await?);
             notif.notify_one();
         }
     }
@@ -231,7 +240,7 @@ fn create_discv_handshake(
     let mut result = Vec::new();
 
     // First half is PUBLIC_KEY | PORT (in bytes)
-    let first_half = public_key_and_port_to_vec(public_key, port);
+    let first_half = public_key_and_payload_to_vec(public_key, port);
     // Second half is H(PUBLIC_KEY | PORT)_C (in bytes)
     let second_half = hash_and_sign_message_digest(secret_key, first_half.clone());
 
@@ -276,7 +285,7 @@ fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
     //  Important to encode to hex again to mimic the process of how the sender
     //  created this message. If not, the public key will only be 45 character as
     //  opposed to the 90 characters it is in hex form.
-    let pk_and_port_vec = public_key_and_port_to_vec(public_key.clone(), port_str);
+    let pk_and_port_vec = public_key_and_payload_to_vec(public_key.clone(), port_str);
     let mut plain_message = Vec::new();
     plain_message.extend(pk_and_port_vec);
 
@@ -317,8 +326,7 @@ fn check_zeros(v: Vec<u8>) -> usize {
     result
 }
 
-fn create_rnd_number() -> usize {
+pub fn create_rnd_number(from: usize, to: usize) -> usize {
     let mut rng = thread_rng();
-    let one_to_five = Uniform::new_inclusive(1, 5);
-    one_to_five.sample(&mut rng)
+    Uniform::new_inclusive(from, to).sample(&mut rng)
 }
