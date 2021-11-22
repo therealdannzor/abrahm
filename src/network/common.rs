@@ -75,6 +75,30 @@ pub fn vec_u8_ascii_decimal_to_u8(input: Vec<u8>) -> u8 {
 
 pub fn public_key_and_payload_to_vec(key: EcdsaPublicKey, msg: String) -> Vec<u8> {
     let mut enc_key = hex::encode(key).as_bytes().to_vec();
-    enc_key.append(&mut msg.as_bytes().to_vec());
+    let mut payload_as_bytes = msg.as_bytes().to_vec();
+    enc_key.append(&mut payload_as_bytes);
     enc_key
+}
+
+const PUB_KEY_LEN: usize = 90;
+
+// same length as both port and READY message
+const MSG_LEN: usize = 5;
+pub fn extract_signed_message(v: Vec<u8>) -> Vec<u8> {
+    let size = v.len();
+    // a hack to make sure that the signed message does not include
+    // zeros that the peer never intended to be part of the message
+    let last_three_elements = v[size - 3..].to_vec();
+    let trailing_zeros = check_zeros(last_three_elements);
+    v[PUB_KEY_LEN + MSG_LEN..size - trailing_zeros].to_vec()
+}
+
+fn check_zeros(v: Vec<u8>) -> usize {
+    let mut result = 0;
+    for num in v.iter() {
+        if *num == 0 {
+            result += 1;
+        }
+    }
+    result
 }
