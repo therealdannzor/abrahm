@@ -1,5 +1,5 @@
 use super::common::cmp_message_with_signed_digest;
-use crate::network::common::public_key_and_payload_to_vec;
+use crate::network::common::{extract_signed_message, public_key_and_payload_to_vec};
 use crate::swiss_knife::helper::hash_and_sign_message_digest;
 use futures::StreamExt;
 use libp2p::{
@@ -69,7 +69,8 @@ async fn peer_discovery_loop(
                     let broadcast_disc_msg =
                         create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
                     tokio::spawn(async move {
-                        for _ in 0..9 {
+                        for i in 0..9 {
+                            log::trace!("sending discovery message #{}", i);
                             let to_address = recipient_addr.clone();
                             let payload = broadcast_disc_msg.clone();
                             // let us pick a number [1, 5] to mitigate congestion
@@ -172,10 +173,7 @@ impl Server {
                     let msg = self.buf.clone();
                     let public_hex = hex::encode(public_key.clone()).to_string();
                     // to make sure we don't count the same peer more than once
-                    if peers_confirmed.contains(&public_hex) {
-                        log::debug!(
-                            "peer already confirmed, check for readiness to upgrade connection"
-                        );
+                    if peers_confirmed.contains(&public_hex) && self.ready_upgrade_mode {
                         if check_for_ready_message(msg) {
                             if !peers_ready.contains(&public_hex) {
                                 log::debug!("saved a ready message from peer: {}", public_hex);
@@ -183,6 +181,8 @@ impl Server {
                             } else {
                                 log::debug!("peer already known to be ready");
                             }
+                        } else {
+                            log::debug!("unknown message (not of type ready)");
                         }
                         if peers_ready.len() == total_peers {
                             log::info!("all peers are ready, proceed to full connection");
@@ -191,11 +191,11 @@ impl Server {
                     } else {
                         let public_key_vec = public_key.as_ref().to_vec();
                         let port = extract_port_addr_field(msg);
-                        if to_find.contains(&public_hex) {
+                        if !peers_confirmed.contains(&public_hex) {
                             // add peers found for the first time
                             if let Some(_) = to_find.iter().position(|x| *x == public_hex) {
                                 peers_confirmed.push(public_hex);
-                                log::debug!("found new peer, added to list");
+                                log::warn!("found new peer, added to list");
                                 if peers_confirmed.len() == total_peers && !self.ready_upgrade_mode
                                 {
                                     log::info!("peer entering ready-to-upgrade mode");
@@ -205,7 +205,7 @@ impl Server {
                             let validated = ValidatedPeer::new(port, public_key_vec);
                             let _ = tx.send(validated).await;
                         } else {
-                            log::debug!("public hex not found in validator list");
+                            log::debug!("peer already confirmed");
                         }
                     }
                 } else {
@@ -218,10 +218,11 @@ impl Server {
             }
             self.buf.clear();
             self.buf = vec![0; 243];
-            log::debug!("fetch new discovery messages");
+            log::debug!("fetch new message from stream");
             self.stream_size = Some(self.socket.recv(&mut self.buf).await?);
             notif.notify_one();
         }
+        log::info!("discovery completed, exiting");
         // alert api that discovery is finished
         let _ = kill.send(true).await;
 
@@ -275,7 +276,6 @@ fn create_discv_handshake(
 }
 
 fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
-    log::debug!("begin verification process of discv message");
     let (_, dummy_pk) = themis::keygen::gen_ec_key_pair().split();
     let full_length = message.len();
     if full_length > 243 || full_length < 241 {
@@ -316,7 +316,6 @@ fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
     let signed_message = extract_signed_message(message);
 
     let auth_ok = cmp_message_with_signed_digest(public_key.clone(), plain_message, signed_message);
-    log::debug!("message is signed by presumed peer: {}", auth_ok);
     (auth_ok, public_key)
 }
 
@@ -331,29 +330,11 @@ fn extract_port_addr_field(v: Vec<u8>) -> Vec<u8> {
     v[PUB_KEY_LEN..PUB_KEY_LEN + SRV_PORT_LEN].to_vec()
 }
 
-fn extract_signed_message(v: Vec<u8>) -> Vec<u8> {
-    let size = v.len();
-    // a hack to make sure that the signed message does not include
-    // zeros that the peer never intended to be part of the message
-    let last_three_elements = v[size - 3..].to_vec();
-    let trailing_zeros = check_zeros(last_three_elements);
-    v[PUB_KEY_LEN + SRV_PORT_LEN..size - trailing_zeros].to_vec()
-}
-
 fn check_for_ready_message(v: Vec<u8>) -> bool {
     let expected = "READY".to_string().as_bytes().to_vec();
     let payload_len = expected.len();
-    v[PUB_KEY_LEN..PUB_KEY_LEN + payload_len].to_vec() == expected
-}
-
-fn check_zeros(v: Vec<u8>) -> usize {
-    let mut result = 0;
-    for num in v.iter() {
-        if *num == 0 {
-            result += 1;
-        }
-    }
-    result
+    let p = v[PUB_KEY_LEN..PUB_KEY_LEN + payload_len].to_vec();
+    p == expected
 }
 
 pub fn create_rnd_number(from: usize, to: usize) -> usize {
