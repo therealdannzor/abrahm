@@ -69,15 +69,18 @@ async fn peer_discovery_loop(
                     let broadcast_disc_msg =
                         create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
                     tokio::spawn(async move {
-                        for i in 0..9 {
-                            log::debug!("sending discovery message #{}", i);
+                        // send each new peer three discovery messages at each new discovery event
+                        for i in 0..3 {
                             let to_address = recipient_addr.clone();
                             let payload = broadcast_disc_msg.clone();
                             // let us pick a number [1, 5] to mitigate congestion
-                            let one_to_five = create_rnd_number(3, 6).try_into().unwrap();
-                            let duration = tokio::time::Duration::from_secs(one_to_five);
+                            let three_to_six = create_rnd_number(3, 6).try_into().unwrap();
+                            let duration = tokio::time::Duration::from_secs(three_to_six);
                             tokio::time::sleep(duration).await;
-                            let _ = socket.send_to(&payload, to_address).await;
+                            let res = socket.send_to(&payload, to_address).await;
+                            if res.is_err() {
+                                log::error!("discv message dispatch failed: {:?}", res);
+                            }
                         }
                     });
                 }
@@ -190,7 +193,7 @@ impl Server {
                                 log::warn!("peer already known to be ready");
                             }
                         } else {
-                            log::error!("did not receive a ready message, discarding");
+                            log::error!("not a ready message, discard it");
                         }
                         if peers_ready.len() == total_peers {
                             log::info!("all peers are ready, proceed to full connection");
@@ -223,10 +226,9 @@ impl Server {
                     tokio::time::sleep(time).await;
                 }
             }
-            self.buf.clear();
             self.buf = vec![0; 243];
-            log::debug!("fetch new message from stream");
             self.stream_size = Some(self.socket.recv(&mut self.buf).await?);
+            log::debug!("fetch new message from stream");
             notif.notify_one();
         }
         log::info!("discovery completed, exiting");
@@ -341,6 +343,9 @@ fn check_for_ready_message(v: Vec<u8>) -> bool {
     let expected = "READY".to_string().as_bytes().to_vec();
     let payload_len = expected.len();
     let p = v[PUB_KEY_LEN..PUB_KEY_LEN + payload_len].to_vec();
+    let p1 = p.clone();
+    let s = std::str::from_utf8(&p1).unwrap();
+    log::debug!("rcv message: {}", s);
     p == expected
 }
 

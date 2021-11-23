@@ -85,7 +85,7 @@ pub async fn spawn_peer_discovery_listener(
     validator_list: Vec<String>,
 ) -> Vec<ValidatedPeer> {
     let (tx_peer_discv, mut rx_peer_discv): (Sender<ValidatedPeer>, Receiver<ValidatedPeer>) =
-        mpsc::channel(8);
+        mpsc::channel(128);
 
     let (kill_tx, mut kill_rx): (Sender<bool>, Receiver<bool>) = mpsc::channel(2);
 
@@ -147,18 +147,21 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
         }
     };
     for i in 0..19 {
-        log::debug!("sending ready message #{}", i);
         // round robin: iterate over the different peers
         let rr = counter % peers.len();
         let mut address = "127.0.0.1:".to_string();
         let port = peers[rr].port();
         address.push_str(&port.clone());
+        log::debug!("sending ready message #{}", i);
         let payload = create_ready_message(pk.clone(), sk.clone());
         // sleep some random time between 3 and 7 seconds to not overflow the network
         let dur = tokio::time::Duration::from_secs(three_to_seven);
         tokio::time::sleep(dur).await;
 
-        let _ = socket.send_to(&payload, address).await;
+        let res = socket.send_to(&payload, address).await;
+        if res.is_err() {
+            log::error!("ready message dispatch failed: {:?}", res);
+        }
     }
 }
 
