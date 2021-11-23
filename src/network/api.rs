@@ -114,6 +114,7 @@ pub async fn spawn_peer_discovery_listener(
     while let Some(msg) = rx_peer_discv.recv().await {
         peers_found.push(msg);
         if peers_found.len() == amount_to_validate {
+            log::info!("all peers found, sending ready messages");
             not.notify_one();
             break;
         }
@@ -136,7 +137,8 @@ pub async fn spawn_peer_discovery_listener(
 }
 
 async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
-    let three_to_seven = create_rnd_number(3, 7).try_into().unwrap();
+    log::info!("peer ready to connect");
+    let three_to_seven = create_rnd_number(5, 9).try_into().unwrap();
     let mut counter = 0;
     let socket = match UdpSocket::bind("127.0.0.1:0").await {
         Ok(socket) => socket,
@@ -144,26 +146,28 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
             panic!("udp error when starting discovery connected phase: {}", e);
         }
     };
-    loop {
+    for i in 0..19 {
+        log::debug!("sending ready message #{}", i);
         // round robin: iterate over the different peers
         let rr = counter % peers.len();
         let mut address = "127.0.0.1:".to_string();
         let port = peers[rr].port();
         address.push_str(&port.clone());
         let payload = create_ready_message(pk.clone(), sk.clone());
-        let _ = socket.send_to(&payload, address).await;
         // sleep some random time between 3 and 7 seconds to not overflow the network
         let dur = tokio::time::Duration::from_secs(three_to_seven);
-        tokio::time::sleep(dur);
+        tokio::time::sleep(dur).await;
+
+        let _ = socket.send_to(&payload, address).await;
     }
 }
 
 fn create_ready_message(public_key: EcdsaPublicKey, secret_key: EcdsaPrivateKey) -> Vec<u8> {
     let msg = "READY".to_string();
     let mut result = Vec::new();
-    // First half is PUBLIC_KEY | PORT (in bytes)
+    // First half is PUBLIC_KEY | 'READY' (in bytes)
     let first_half = public_key_and_payload_to_vec(public_key, msg);
-    // Second half is H(PUBLIC_KEY | PORT)_C (in bytes)
+    // Second half is H(PUBLIC_KEY | 'READY')_C (in bytes)
     let second_half = hash_and_sign_message_digest(secret_key, first_half.clone());
 
     result.extend(first_half);
