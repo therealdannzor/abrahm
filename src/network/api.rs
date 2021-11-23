@@ -150,15 +150,15 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
         // round robin: iterate over the different peers
         let rr = counter % peers.len();
         let mut address = "127.0.0.1:".to_string();
-        let port = peers[rr].port();
+        let port = peers[rr].disc_port();
         address.push_str(&port.clone());
-        log::debug!("sending ready message #{}", i);
         let payload = create_ready_message(pk.clone(), sk.clone());
         // sleep some random time between 3 and 7 seconds to not overflow the network
         let dur = tokio::time::Duration::from_secs(three_to_seven);
         tokio::time::sleep(dur).await;
 
-        let res = socket.send_to(&payload, address).await;
+        let res = socket.send_to(&payload, address.clone()).await;
+
         if res.is_err() {
             log::error!("ready message dispatch failed: {:?}", res);
         }
@@ -166,11 +166,11 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
 }
 
 fn create_ready_message(public_key: EcdsaPublicKey, secret_key: EcdsaPrivateKey) -> Vec<u8> {
-    let msg = "READY".to_string();
+    let msg = "READYREADY".to_string();
     let mut result = Vec::new();
-    // First half is PUBLIC_KEY | 'READY' (in bytes)
+    // First half is PUBLIC_KEY | 'READYREADY' (in bytes)
     let first_half = public_key_and_payload_to_vec(public_key, msg);
-    // Second half is H(PUBLIC_KEY | 'READY')_C (in bytes)
+    // Second half is H(PUBLIC_KEY | 'READYREADY')_C (in bytes)
     let second_half = hash_and_sign_message_digest(secret_key, first_half.clone());
 
     result.extend(first_half);

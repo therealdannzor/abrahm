@@ -64,22 +64,26 @@ async fn peer_discovery_loop(
         match swarm.select_next_some().await {
             SwarmEvent::Behaviour(MdnsEvent::Discovered(peers)) => {
                 for (_, addr) in peers {
-                    let recipient_addr = multi_to_socket_addr(addr);
+                    let discv_addr = multi_to_socket_addr(addr);
                     let socket = UdpSocket::bind("127.0.0.1:0").await?;
-                    let broadcast_disc_msg =
-                        create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
+                    let broadcast_disc_msg = create_discv_handshake(
+                        pk.clone(),
+                        sk.clone(),
+                        discv_addr.clone(),
+                        serv_port.clone(),
+                    );
                     tokio::spawn(async move {
                         // send each new peer three discovery messages at each new discovery event
                         for i in 0..3 {
-                            let to_address = recipient_addr.clone();
+                            let to_address = discv_addr.clone();
                             let payload = broadcast_disc_msg.clone();
                             // let us pick a number [1, 5] to mitigate congestion
                             let three_to_six = create_rnd_number(3, 6).try_into().unwrap();
                             let duration = tokio::time::Duration::from_secs(three_to_six);
                             tokio::time::sleep(duration).await;
-                            let res = socket.send_to(&payload, to_address).await;
+                            let res = socket.send_to(&payload, to_address.clone()).await;
                             if res.is_err() {
-                                log::error!("discv message dispatch failed: {:?}", res);
+                                log::error!("[discv] dispatch failed: {:?}", res);
                             }
                         }
                     });
@@ -95,7 +99,7 @@ async fn peer_discovery_loop(
                     let socket = UdpSocket::bind(&socket_addr).await?;
                     let serv = Server {
                         socket,
-                        buf: vec![0; 243],
+                        buf: vec![0; 248],
                         stream_size: None,
                         exploration_mode: true,
                         ready_upgrade_mode: false,
@@ -115,12 +119,19 @@ async fn peer_discovery_loop(
 
 #[derive(Clone, Debug)]
 pub struct ValidatedPeer {
-    port: String,
+    disc_port: String,
+    serv_port: String,
     key: EcdsaPublicKey,
 }
 impl ValidatedPeer {
-    fn new(port: Vec<u8>, public_key: Vec<u8>) -> Self {
-        let port = match std::str::from_utf8(&port) {
+    fn new(disc_port: Vec<u8>, serv_port: Vec<u8>, public_key: Vec<u8>) -> Self {
+        let disc_port = match std::str::from_utf8(&disc_port) {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                panic!("this should not happen: {}", e);
+            }
+        };
+        let serv_port = match std::str::from_utf8(&serv_port) {
             Ok(s) => s.to_string(),
             Err(e) => {
                 panic!("this should not happen: {}", e);
@@ -132,10 +143,18 @@ impl ValidatedPeer {
                 panic!("this should not happen: {}", e);
             }
         };
-        Self { port, key }
+        Self {
+            disc_port,
+            serv_port,
+            key,
+        }
     }
-    pub fn port(&self) -> String {
-        self.port.clone()
+    pub fn disc_port(&self) -> String {
+        self.disc_port.clone()
+    }
+
+    pub fn serv_port(&self) -> String {
+        self.serv_port.clone()
     }
 
     pub fn key(&self) -> EcdsaPublicKey {
@@ -201,7 +220,8 @@ impl Server {
                         }
                     } else {
                         let public_key_vec = public_key.as_ref().to_vec();
-                        let port = extract_port_addr_field(msg);
+                        let disc_port = extract_discv_port_field(msg.clone());
+                        let serv_port = extract_server_port_field(msg);
                         if !peers_confirmed.contains(&public_hex) {
                             // add peers found for the first time
                             if let Some(_) = to_find.iter().position(|x| *x == public_hex) {
@@ -212,7 +232,8 @@ impl Server {
                                     self.ready_upgrade_mode = true;
                                 }
                             }
-                            let validated = ValidatedPeer::new(port, public_key_vec);
+                            let validated =
+                                ValidatedPeer::new(disc_port, serv_port, public_key_vec);
                             let _ = tx.send(validated).await;
                         } else {
                             log::warn!("peer already confirmed");
@@ -226,7 +247,7 @@ impl Server {
                     tokio::time::sleep(time).await;
                 }
             }
-            self.buf = vec![0; 243];
+            self.buf = vec![0; 248];
             self.stream_size = Some(self.socket.recv(&mut self.buf).await?);
             log::debug!("fetch new message from stream");
             notif.notify_one();
@@ -259,7 +280,8 @@ fn multi_to_host_addr(multi_address: libp2p::Multiaddr) -> String {
 
 // create_discv_handshake creates a discovery handshake message containing the:
 // * client's public key,
-// * port to communicate with the server; and
+// * a discovery port to finish the discovery protocol;
+// * a message port to communicate with the server; and
 // * a signature of the hash of these two items.
 //
 // More formally, a message looks like so
@@ -269,12 +291,16 @@ fn multi_to_host_addr(multi_address: libp2p::Multiaddr) -> String {
 fn create_discv_handshake(
     public_key: EcdsaPublicKey,
     secret_key: EcdsaPrivateKey,
-    port: String,
+    disc_port: String,
+    msg_port: String,
 ) -> Vec<u8> {
     let mut result = Vec::new();
+    let mut payload = "".to_string();
+    payload.push_str(&disc_port);
+    payload.push_str(&msg_port);
 
     // First half is PUBLIC_KEY | PORT (in bytes)
-    let first_half = public_key_and_payload_to_vec(public_key, port);
+    let first_half = public_key_and_payload_to_vec(public_key, payload);
     // Second half is H(PUBLIC_KEY | PORT)_C (in bytes)
     let second_half = hash_and_sign_message_digest(secret_key, first_half.clone());
 
@@ -287,8 +313,8 @@ fn create_discv_handshake(
 fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
     let (_, dummy_pk) = themis::keygen::gen_ec_key_pair().split();
     let full_length = message.len();
-    if full_length > 243 || full_length < 241 {
-        log::error!("message length not between 241 and 243");
+    if full_length > 248 || full_length < 246 {
+        log::error!("message length not between 246 and 248");
         return (false, dummy_pk);
     }
     let public_key = match extract_pub_key_field(message.clone()) {
@@ -307,18 +333,32 @@ fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
         }
     };
 
-    let port = extract_port_addr_field(message.clone());
-    let port_str = match std::str::from_utf8(&port.clone()) {
+    let disc = extract_discv_port_field(message.clone());
+    let disc_str = match std::str::from_utf8(&disc.clone()) {
         Ok(s) => s.to_string(),
         Err(e) => {
-            log::error!("failure to convert port from utf-8 to string: {}", e);
+            log::error!("failure to convert discv port from utf-8 to string: {}", e);
             return (false, dummy_pk);
         }
     };
+
+    let srv_port = extract_server_port_field(message.clone());
+    let srv_port = match std::str::from_utf8(&srv_port.clone()) {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            log::error!("failure to convert server port from utf-8 to string: {}", e);
+            return (false, dummy_pk);
+        }
+    };
+
+    let mut payload = "".to_string();
+    payload.push_str(&disc_str);
+    payload.push_str(&srv_port);
+
     //  Important to encode to hex again to mimic the process of how the sender
     //  created this message. If not, the public key will only be 45 character as
     //  opposed to the 90 characters it is in hex form.
-    let pk_and_port_vec = public_key_and_payload_to_vec(public_key.clone(), port_str);
+    let pk_and_port_vec = public_key_and_payload_to_vec(public_key.clone(), payload);
     let mut plain_message = Vec::new();
     plain_message.extend(pk_and_port_vec);
 
@@ -335,12 +375,16 @@ fn extract_pub_key_field(v: Vec<u8>) -> Result<Vec<u8>, hex::FromHexError> {
     Ok(hex::decode(v)?)
 }
 
-fn extract_port_addr_field(v: Vec<u8>) -> Vec<u8> {
+fn extract_discv_port_field(v: Vec<u8>) -> Vec<u8> {
     v[PUB_KEY_LEN..PUB_KEY_LEN + SRV_PORT_LEN].to_vec()
 }
 
+fn extract_server_port_field(v: Vec<u8>) -> Vec<u8> {
+    v[PUB_KEY_LEN + SRV_PORT_LEN..PUB_KEY_LEN + 2 * SRV_PORT_LEN].to_vec()
+}
+
 fn check_for_ready_message(v: Vec<u8>) -> bool {
-    let expected = "READY".to_string().as_bytes().to_vec();
+    let expected = "READYREADY".to_string().as_bytes().to_vec();
     let payload_len = expected.len();
     let p = v[PUB_KEY_LEN..PUB_KEY_LEN + payload_len].to_vec();
     let p1 = p.clone();
