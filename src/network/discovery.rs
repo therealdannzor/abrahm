@@ -70,13 +70,13 @@ async fn peer_discovery_loop(
                         create_discv_handshake(pk.clone(), sk.clone(), serv_port.clone());
                     tokio::spawn(async move {
                         for i in 0..9 {
-                            log::trace!("sending discovery message #{}", i);
+                            log::debug!("sending discovery message #{}", i);
                             let to_address = recipient_addr.clone();
                             let payload = broadcast_disc_msg.clone();
                             // let us pick a number [1, 5] to mitigate congestion
-                            let one_to_five = create_rnd_number(1, 5).try_into().unwrap();
+                            let one_to_five = create_rnd_number(3, 6).try_into().unwrap();
                             let duration = tokio::time::Duration::from_secs(one_to_five);
-                            tokio::time::sleep(duration);
+                            tokio::time::sleep(duration).await;
                             let _ = socket.send_to(&payload, to_address).await;
                         }
                     });
@@ -155,7 +155,8 @@ impl Server {
         kill: Sender<bool>,
         to_find: Vec<String>,
     ) -> Result<(), std::io::Error> {
-        let total_peers = to_find.len();
+        // we do not need to validate ourselves so subtract one
+        let total_peers = to_find.len() - 1;
         // contains discovered and verified peers (i.e., signed messages from validator set)
         let mut peers_confirmed = Vec::new();
         // contains peers who have successfully found its neighbors (i.e., full validator set)
@@ -164,6 +165,13 @@ impl Server {
         let notif = Notify::new();
 
         loop {
+            log::debug!(
+                "confirmed: {} of {}, ready: {} of {}",
+                peers_confirmed.len(),
+                total_peers,
+                peers_ready.len(),
+                total_peers,
+            );
             if let Some(_) = self.stream_size {
                 let start = std::time::Instant::now();
 
@@ -179,10 +187,10 @@ impl Server {
                                 log::debug!("saved a ready message from peer: {}", public_hex);
                                 peers_ready.push(public_hex);
                             } else {
-                                log::debug!("peer already known to be ready");
+                                log::warn!("peer already known to be ready");
                             }
                         } else {
-                            log::debug!("unknown message (not of type ready)");
+                            log::error!("did not receive a ready message, discarding");
                         }
                         if peers_ready.len() == total_peers {
                             log::info!("all peers are ready, proceed to full connection");
@@ -196,20 +204,19 @@ impl Server {
                             if let Some(_) = to_find.iter().position(|x| *x == public_hex) {
                                 peers_confirmed.push(public_hex);
                                 log::warn!("found new peer, added to list");
-                                if peers_confirmed.len() == total_peers && !self.ready_upgrade_mode
-                                {
-                                    log::info!("peer entering ready-to-upgrade mode");
+                                if peers_confirmed.len() == total_peers {
+                                    log::info!("enter ready-to-upgrade mode");
                                     self.ready_upgrade_mode = true;
                                 }
                             }
                             let validated = ValidatedPeer::new(port, public_key_vec);
                             let _ = tx.send(validated).await;
                         } else {
-                            log::debug!("peer already confirmed");
+                            log::warn!("peer already confirmed");
                         }
                     }
                 } else {
-                    log::debug!("could not authenticate buffered message, discarding");
+                    log::error!("could not authenticate buffered message, discarding");
                 }
                 let elapsed_time = start.elapsed();
                 if let Some(time) = wait_time.checked_sub(elapsed_time) {
