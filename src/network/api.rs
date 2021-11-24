@@ -82,15 +82,23 @@ pub async fn spawn_peer_discovery_listener(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     server_port: String,
-    validator_list: Vec<String>,
+    mut validator_list: Vec<String>,
 ) -> Vec<ValidatedPeer> {
     let (tx_peer_discv, mut rx_peer_discv): (Sender<ValidatedPeer>, Receiver<ValidatedPeer>) =
         mpsc::channel(128);
 
     let (kill_tx, mut kill_rx): (Sender<bool>, Receiver<bool>) = mpsc::channel(2);
 
-    // subtract by one because we have already discovered ourself, by definition
-    let amount_to_validate = validator_list.len() - 1;
+    let whoami: String = hex::encode(pk.clone());
+    // no need to discover ourselves
+    validator_list.remove(
+        validator_list
+            .iter()
+            .position(|x| *x == whoami)
+            .expect("local node id not found in validator whitelist"),
+    );
+
+    let amount_to_validate = validator_list.len();
 
     let not = Notify::new();
 
@@ -139,7 +147,6 @@ pub async fn spawn_peer_discovery_listener(
 async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
     log::info!("peer ready to connect");
     let three_to_seven = create_rnd_number(5, 9).try_into().unwrap();
-    let mut counter = 0;
     let socket = match UdpSocket::bind("127.0.0.1:0").await {
         Ok(socket) => socket,
         Err(e) => {
@@ -148,7 +155,7 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
     };
     for i in 0..19 {
         // round robin: iterate over the different peers
-        let rr = counter % peers.len();
+        let rr = i % peers.len();
         let mut address = "127.0.0.1:".to_string();
         let port = peers[rr].disc_port();
         address.push_str(&port.clone());
