@@ -58,6 +58,8 @@ async fn peer_discovery_loop(
     let mut swarm = Swarm::new(transport, behaviour, peer_id);
     let assign_multi_addr = "/ip4/0.0.0.0/tcp/0".parse::<libp2p::Multiaddr>()?;
     let _ = swarm.listen_on(assign_multi_addr.clone());
+    let notify = Notify::new();
+    let mut my_disc_port = "".to_string();
 
     loop {
         let tx = tx.clone();
@@ -70,22 +72,16 @@ async fn peer_discovery_loop(
                     let broadcast_disc_msg = create_discv_handshake(
                         pk.clone(),
                         sk.clone(),
-                        discv_port.clone(),
+                        my_disc_port.clone(),
                         serv_port.clone(),
                     );
                     tokio::spawn(async move {
                         // send each new peer three discovery messages at each new discovery event
-                        for i in 0..3 {
-                            let to_address = discv_addr.clone();
-                            let payload = broadcast_disc_msg.clone();
-                            // let us pick a number [1, 5] to mitigate congestion
-                            let three_to_six = create_rnd_number(3, 6).try_into().unwrap();
-                            let duration = tokio::time::Duration::from_secs(three_to_six);
-                            tokio::time::sleep(duration).await;
-                            let res = socket.send_to(&payload, to_address.clone()).await;
-                            if res.is_err() {
-                                log::error!("[discv] dispatch failed: {:?}", res);
-                            }
+                        let to_address = discv_addr.clone();
+                        let payload = broadcast_disc_msg.clone();
+                        let res = socket.send_to(&payload, to_address.clone()).await;
+                        if res.is_err() {
+                            log::error!("discovery dispatch failed: {:?}", res);
                         }
                     });
                 }
@@ -95,6 +91,8 @@ async fn peer_discovery_loop(
                 address,
             } => {
                 let hostname = multi_to_host_addr(address.clone());
+                my_disc_port = extract_port_from_multi(address.clone());
+
                 if hostname == "127.0.0.1" {
                     let socket_addr = multi_to_socket_addr(address);
                     let socket = UdpSocket::bind(&socket_addr).await?;
@@ -178,8 +176,7 @@ impl Server {
         kill: Sender<bool>,
         to_find: Vec<String>,
     ) -> Result<(), std::io::Error> {
-        // we do not need to validate ourselves so subtract one
-        let total_peers = to_find.len() - 1;
+        let total_peers = to_find.len();
         // contains discovered and verified peers (i.e., signed messages from validator set)
         let mut peers_confirmed = Vec::new();
         // contains peers who have successfully found its neighbors (i.e., full validator set)
@@ -189,7 +186,7 @@ impl Server {
 
         loop {
             log::debug!(
-                "confirmed: {} of {}, ready: {} of {}",
+                "found: {}/{}, ready: {}/{}",
                 peers_confirmed.len(),
                 total_peers,
                 peers_ready.len(),
@@ -235,6 +232,7 @@ impl Server {
                             }
                             let validated =
                                 ValidatedPeer::new(disc_port, serv_port, public_key_vec);
+
                             let _ = tx.send(validated).await;
                         } else {
                             log::warn!("peer already confirmed");
@@ -419,6 +417,7 @@ fn is_string_numeric(s: String) -> bool {
     true
 }
 
+#[allow(dead_code)]
 pub fn create_rnd_number(from: usize, to: usize) -> usize {
     let mut rng = thread_rng();
     Uniform::new_inclusive(from, to).sample(&mut rng)
