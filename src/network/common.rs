@@ -36,7 +36,7 @@ pub fn cmp_message_with_signed_digest(
     let decrypted = match sv.verify(signed_message) {
         Ok(m) => m,
         Err(e) => {
-            log::debug!("secure crypto verification failed: {:?}", e);
+            log::error!("secure crypto verification failed: {:?}", e);
             return false;
         }
     };
@@ -83,7 +83,7 @@ pub fn public_key_and_payload_to_vec(key: EcdsaPublicKey, msg: String) -> Vec<u8
 const PUB_KEY_LEN: usize = 90;
 
 // same length as both port and READY message
-const MSG_LEN: usize = 5;
+const MSG_LEN: usize = 10;
 pub fn extract_signed_message(v: Vec<u8>) -> Vec<u8> {
     let size = v.len();
     // a hack to make sure that the signed message does not include
