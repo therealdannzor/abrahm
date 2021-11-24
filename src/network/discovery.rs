@@ -204,7 +204,6 @@ impl Server {
                     if peers_confirmed.contains(&public_hex) && self.ready_upgrade_mode {
                         if check_for_ready_message(msg) {
                             if !peers_ready.contains(&public_hex) {
-                                log::debug!("saved a ready message from peer: {}", public_hex);
                                 peers_ready.push(public_hex);
                             } else {
                                 log::warn!("peer already known to be ready");
@@ -404,7 +403,6 @@ fn check_for_ready_message(v: Vec<u8>) -> bool {
     let p = v[PUB_KEY_LEN..PUB_KEY_LEN + payload_len].to_vec();
     let p1 = p.clone();
     let s = std::str::from_utf8(&p1).unwrap();
-    log::debug!("rcv message: {}", s);
     p == expected
 }
 
@@ -417,7 +415,6 @@ fn is_string_numeric(s: String) -> bool {
     true
 }
 
-#[allow(dead_code)]
 pub fn create_rnd_number(from: usize, to: usize) -> usize {
     let mut rng = thread_rng();
     Uniform::new_inclusive(from, to).sample(&mut rng)

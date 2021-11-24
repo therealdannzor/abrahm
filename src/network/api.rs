@@ -146,22 +146,20 @@ pub async fn spawn_peer_discovery_listener(
 
 async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
     log::info!("peer ready to connect");
-    let three_to_seven = create_rnd_number(5, 9).try_into().unwrap();
+    let five_to_eight = create_rnd_number(5, 9).try_into().unwrap();
     let socket = match UdpSocket::bind("127.0.0.1:0").await {
         Ok(socket) => socket,
         Err(e) => {
             panic!("udp error when starting discovery connected phase: {}", e);
         }
     };
-    for i in 0..19 {
-        // round robin: iterate over the different peers
-        let rr = i % peers.len();
+    for i in 0..peers.len() {
         let mut address = "127.0.0.1:".to_string();
-        let port = peers[rr].disc_port();
+        let port = peers[i].disc_port();
         address.push_str(&port.clone());
         let payload = create_ready_message(pk.clone(), sk.clone());
-        // sleep some random time between 3 and 7 seconds to not overflow the network
-        let dur = tokio::time::Duration::from_secs(three_to_seven);
+        // sleep some random time between 5 and 8 seconds to not overflow the network
+        let dur = tokio::time::Duration::from_secs(five_to_eight);
         tokio::time::sleep(dur).await;
 
         let res = socket.send_to(&payload, address.clone()).await;
