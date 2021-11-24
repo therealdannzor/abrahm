@@ -64,12 +64,13 @@ async fn peer_discovery_loop(
         match swarm.select_next_some().await {
             SwarmEvent::Behaviour(MdnsEvent::Discovered(peers)) => {
                 for (_, addr) in peers {
-                    let discv_addr = multi_to_socket_addr(addr);
+                    let discv_addr = multi_to_socket_addr(addr.clone());
+                    let discv_port = extract_port_from_multi(addr);
                     let socket = UdpSocket::bind("127.0.0.1:0").await?;
                     let broadcast_disc_msg = create_discv_handshake(
                         pk.clone(),
                         sk.clone(),
-                        discv_addr.clone(),
+                        discv_port.clone(),
                         serv_port.clone(),
                     );
                     tokio::spawn(async move {
@@ -261,13 +262,17 @@ impl Server {
 }
 
 fn multi_to_socket_addr(multi_address: libp2p::Multiaddr) -> String {
-    let multistr = multi_address.to_string();
-    let sep: Vec<&str> = multistr.split("/").collect();
-    let last_ind = sep.len() - 1;
-    let port = sep[last_ind].to_string();
+    let port = extract_port_from_multi(multi_address);
     let mut socket_addr = "127.0.0.1:".to_string();
     socket_addr.push_str(&port);
     socket_addr
+}
+
+fn extract_port_from_multi(multi_adress: libp2p::Multiaddr) -> String {
+    let multistr = multi_adress.to_string();
+    let sep: Vec<&str> = multistr.split("/").collect();
+    let last_ind = sep.len() - 1;
+    sep[last_ind].to_string()
 }
 
 fn multi_to_host_addr(multi_address: libp2p::Multiaddr) -> String {
@@ -294,6 +299,20 @@ fn create_discv_handshake(
     disc_port: String,
     msg_port: String,
 ) -> Vec<u8> {
+    if disc_port.len() != 5 {
+        log::error!("discovery port length is incorrect");
+        return vec![0];
+    } else if msg_port.len() != 5 {
+        log::error!("message port length is incorrect, discv handshake flawed");
+        return vec![0];
+    } else if !is_string_numeric(disc_port.clone()) {
+        log::error!("discovery port is not numeric");
+        return vec![0];
+    } else if !is_string_numeric(msg_port.clone()) {
+        log::error!("message port is not numeric");
+        return vec![0];
+    }
+
     let mut result = Vec::new();
     let mut payload = "".to_string();
     payload.push_str(&disc_port);
@@ -358,9 +377,7 @@ fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
     //  Important to encode to hex again to mimic the process of how the sender
     //  created this message. If not, the public key will only be 45 character as
     //  opposed to the 90 characters it is in hex form.
-    let pk_and_port_vec = public_key_and_payload_to_vec(public_key.clone(), payload);
-    let mut plain_message = Vec::new();
-    plain_message.extend(pk_and_port_vec);
+    let plain_message = public_key_and_payload_to_vec(public_key.clone(), payload);
 
     let signed_message = extract_signed_message(message);
 
@@ -391,6 +408,15 @@ fn check_for_ready_message(v: Vec<u8>) -> bool {
     let s = std::str::from_utf8(&p1).unwrap();
     log::debug!("rcv message: {}", s);
     p == expected
+}
+
+fn is_string_numeric(s: String) -> bool {
+    for c in s.chars() {
+        if !c.is_numeric() {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn create_rnd_number(from: usize, to: usize) -> usize {
