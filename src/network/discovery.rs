@@ -1,5 +1,8 @@
-use super::common::cmp_message_with_signed_digest;
-use crate::network::common::{extract_signed_message, public_key_and_payload_to_vec};
+use super::common::{
+    cmp_message_with_signed_digest, extract_discv_port_field, extract_pub_key_field,
+    extract_server_port_field, extract_signed_message, public_key_and_payload_to_vec,
+    verify_p2p_message,
+};
 use crate::swiss_knife::helper::hash_and_sign_message_digest;
 use futures::StreamExt;
 use libp2p::{
@@ -196,7 +199,7 @@ impl Server {
                 let start = std::time::Instant::now();
 
                 notif.notified().await;
-                let (is_verified, public_key) = verify_discv_handshake(self.buf.clone());
+                let (is_verified, public_key) = verify_p2p_message(self.buf.clone());
                 if is_verified {
                     let msg = self.buf.clone();
                     let public_hex = hex::encode(public_key.clone()).to_string();
@@ -326,76 +329,8 @@ fn create_discv_handshake(
     result
 }
 
-fn verify_discv_handshake(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
-    let (_, dummy_pk) = themis::keygen::gen_ec_key_pair().split();
-    let full_length = message.len();
-    if full_length > 248 || full_length < 246 {
-        log::error!("message length not between 246 and 248");
-        return (false, dummy_pk);
-    }
-    let public_key = match extract_pub_key_field(message.clone()) {
-        Ok(k) => k,
-        Err(e) => {
-            log::error!("key extraction failed: {}", e);
-            return (false, dummy_pk);
-        }
-    };
-
-    let public_key = match EcdsaPublicKey::try_from_slice(public_key) {
-        Ok(k) => k,
-        Err(e) => {
-            log::error!("could not restore public key from slice: {}", e);
-            return (false, dummy_pk);
-        }
-    };
-
-    let disc = extract_discv_port_field(message.clone());
-    let disc_str = match std::str::from_utf8(&disc.clone()) {
-        Ok(s) => s.to_string(),
-        Err(e) => {
-            log::error!("failure to convert discv port from utf-8 to string: {}", e);
-            return (false, dummy_pk);
-        }
-    };
-
-    let srv_port = extract_server_port_field(message.clone());
-    let srv_port = match std::str::from_utf8(&srv_port.clone()) {
-        Ok(s) => s.to_string(),
-        Err(e) => {
-            log::error!("failure to convert server port from utf-8 to string: {}", e);
-            return (false, dummy_pk);
-        }
-    };
-
-    let mut payload = "".to_string();
-    payload.push_str(&disc_str);
-    payload.push_str(&srv_port);
-
-    //  Important to encode to hex again to mimic the process of how the sender
-    //  created this message. If not, the public key will only be 45 character as
-    //  opposed to the 90 characters it is in hex form.
-    let plain_message = public_key_and_payload_to_vec(public_key.clone(), payload);
-
-    let signed_message = extract_signed_message(message);
-
-    let auth_ok = cmp_message_with_signed_digest(public_key.clone(), plain_message, signed_message);
-    (auth_ok, public_key)
-}
-
 const PUB_KEY_LEN: usize = 90;
 const SRV_PORT_LEN: usize = 5;
-fn extract_pub_key_field(v: Vec<u8>) -> Result<Vec<u8>, hex::FromHexError> {
-    let v = v[..PUB_KEY_LEN].to_vec();
-    Ok(hex::decode(v)?)
-}
-
-fn extract_discv_port_field(v: Vec<u8>) -> Vec<u8> {
-    v[PUB_KEY_LEN..PUB_KEY_LEN + SRV_PORT_LEN].to_vec()
-}
-
-fn extract_server_port_field(v: Vec<u8>) -> Vec<u8> {
-    v[PUB_KEY_LEN + SRV_PORT_LEN..PUB_KEY_LEN + 2 * SRV_PORT_LEN].to_vec()
-}
 
 fn check_for_ready_message(v: Vec<u8>) -> bool {
     let expected = "READYREADY".to_string().as_bytes().to_vec();
