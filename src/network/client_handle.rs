@@ -65,14 +65,51 @@ impl MessagePeerHandle {
     }
 }
 
-pub async fn spawn_peer_listeners(rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
+pub async fn spawn_peer_listeners(
+    rx: Receiver<InternalMessage>,
+    rx2: Receiver<PayloadEvent>,
+    notify: Arc<Notify>,
+) {
     let join_peer = tokio::spawn(async move {
         peer_loop(rx, notify).await;
     });
+    let join_upgraded = tokio::spawn(async move {
+        peer_upgraded_loop(rx2).await;
+    });
     let _ = join_peer.await;
+    let _ = join_upgraded.await;
 }
 
-// peer_loop support internal operations of the peers it is connected to
+// peer_upgraded_loop supports the reception and storage of p2p messages after full completed handshake
+async fn peer_upgraded_loop(mut rx: Receiver<PayloadEvent>) {
+    let token_to_ord_payload: HashMap<Token, Vec<OrdPayload>> = HashMap::new();
+    let token_to_ord_payload = Arc::new(Mutex::new(token_to_ord_payload));
+    //let mut default_entry: Option<Vec<OrdPayload>> = Some(Vec::new());
+    loop {
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                PayloadEvent::StoreMessage(token, ord_payload) => {
+                    let arc = token_to_ord_payload.clone();
+                    let mut inner = arc.lock().await;
+                    if inner.get(&token).is_none() {
+                        inner.insert(token, Vec::new());
+                    }
+                    inner.get(&token).unwrap().clone().push(ord_payload);
+                }
+                PayloadEvent::Get(token, sender) => {
+                    let arc = token_to_ord_payload.clone();
+                    let mut inner = arc.lock().await;
+                    let payload = match inner.get(&token) {
+                        Some(p) => sender.send(p.to_vec()),
+                        None => sender.send(vec![OrdPayload(vec![0], 0)]),
+                    };
+                }
+            }
+        }
+    }
+}
+
+// peer_loop supports the internal operations of the peers it is connected to
 async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
     let token_to_sock: HashMap<Token, SocketAddr> = HashMap::new();
     let token_to_sock = Arc::new(Mutex::new(token_to_sock));
@@ -106,7 +143,7 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
                     drop(idc);
                 }
                 InternalMessage::FromServerEvent(FromServerEvent::NewClient(msg)) => {
-                    println!("FromServerEvent: New Client");
+                    log::debug!("peer loop: new client event");
                     let arc = token_to_sock.clone();
                     let mut idc = arc.lock().await;
                     let op = idc.insert(msg.1, msg.2);
@@ -124,6 +161,7 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
                     payload,
                     response,
                 )) => {
+                    log::debug!("peer loop: new dial event");
                     let arc = token_to_sock.clone();
                     let idc = arc.lock().await;
                     let recipient_sock_addr = match idc.get(&send_to) {

@@ -227,7 +227,7 @@ pub async fn spawn_io_listeners(val_set: Vec<String>) -> (String, MessagePeerHan
     // peer loop
     tokio::spawn(async move {
         // semaphore moved to loop to make setup is completed before giving green light
-        spawn_peer_listeners(rx_out, notif2).await;
+        spawn_peer_listeners(rx_out, rx_in, notif2).await;
     });
     // new connections loop
     tokio::spawn(async move {
