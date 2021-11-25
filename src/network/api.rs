@@ -130,7 +130,9 @@ pub async fn spawn_peer_discovery_listener(
 
     not.notified().await;
     let pf = peers_found.clone();
-    let join = tokio::spawn(async move { ready_to_connect(pk.clone(), sk.clone(), pf).await });
+    let public_key = pk.clone();
+    let secret_key = sk.clone();
+    let join = tokio::spawn(async move { ready_to_connect(public_key, secret_key, pf).await });
 
     let _ = join.await;
 
@@ -140,12 +142,38 @@ pub async fn spawn_peer_discovery_listener(
         }
     }
 
+    let pf = peers_found.clone();
+    let join =
+        tokio::spawn(async move { ping_server_backend(pk.clone(), sk.clone(), pf).await }).await;
+
     log::info!("returning a list of the discovered peers");
     peers_found
 }
 
+async fn ping_server_backend(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
+    log::info!("send peer-to-peer message to all peer main backend");
+    let socket = match UdpSocket::bind("127.0.0.1:0").await {
+        Ok(socket) => socket,
+        Err(e) => {
+            panic!("udp error when starting server connection phase: {}", e);
+        }
+    };
+
+    let synced_peers: Vec<String> = Vec::new();
+
+    for i in 0..peers.len() {
+        let mut address = "127.0.0.1:".to_string();
+        let port = peers[i].serv_port();
+        address.push_str(&port.clone());
+        let payload = create_p2p_message(pk.clone(), sk.clone(), "REQSHORTID");
+        if let Err(e) = socket.send_to(&payload, address.clone()).await {
+            log::error!("ping message dispatch failed: {:?}", e);
+        }
+    }
+}
+
 async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
-    log::info!("peer ready to connect");
+    log::info!("peer ready for connect phase");
     let five_to_eight = create_rnd_number(5, 9).try_into().unwrap();
     let socket = match UdpSocket::bind("127.0.0.1:0").await {
         Ok(socket) => socket,
@@ -157,25 +185,26 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
         let mut address = "127.0.0.1:".to_string();
         let port = peers[i].disc_port();
         address.push_str(&port.clone());
-        let payload = create_ready_message(pk.clone(), sk.clone());
+        let payload = create_p2p_message(pk.clone(), sk.clone(), "READYREADY");
         // sleep some random time between 5 and 8 seconds to not overflow the network
         let dur = tokio::time::Duration::from_secs(five_to_eight);
         tokio::time::sleep(dur).await;
 
-        let res = socket.send_to(&payload, address.clone()).await;
-
-        if res.is_err() {
-            log::error!("ready message dispatch failed: {:?}", res);
+        if let Err(e) = socket.send_to(&payload, address.clone()).await {
+            log::error!("ready message dispatch failed: {:?}", e);
         }
     }
 }
 
-fn create_ready_message(public_key: EcdsaPublicKey, secret_key: EcdsaPrivateKey) -> Vec<u8> {
-    let msg = "READYREADY".to_string();
+fn create_p2p_message(
+    public_key: EcdsaPublicKey,
+    secret_key: EcdsaPrivateKey,
+    msg: &str,
+) -> Vec<u8> {
     let mut result = Vec::new();
-    // First half is PUBLIC_KEY | 'READYREADY' (in bytes)
-    let first_half = public_key_and_payload_to_vec(public_key, msg);
-    // Second half is H(PUBLIC_KEY | 'READYREADY')_C (in bytes)
+    // First half is PUBLIC_KEY | MSG (in bytes)
+    let first_half = public_key_and_payload_to_vec(public_key, msg.to_string());
+    // Second half is H(PUBLIC_KEY | MSG)_C (in bytes)
     let second_half = hash_and_sign_message_digest(secret_key, first_half.clone());
 
     result.extend(first_half);
