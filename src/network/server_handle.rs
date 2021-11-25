@@ -1,3 +1,4 @@
+use super::common::verify_p2p_message;
 use super::udp_utils::{net_open, next_token};
 use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, PeerInfo};
 use mio::{Events, Interest, Token};
@@ -22,7 +23,7 @@ async fn event_loop(
     validator_list: Vec<String>,
 ) {
     const ECDSA_PUB_KEY_SIZE_BITS: usize = 90; // amount of characters the public key has (hexadecimal)
-    const PEER_MESSAGE_MAX_LEN: usize = 256;
+    const PEER_MESSAGE_MAX_LEN: usize = 248;
     const PEER_TOK: Token = Token(0);
     const INTERESTS: Interest = Interest::READABLE.add(Interest::WRITABLE);
 
@@ -52,25 +53,15 @@ async fn event_loop(
             for event in events.iter() {
                 match event.token() {
                     Token(1024) => loop {
-                        let mut handshake_key_buf = [0; ECDSA_PUB_KEY_SIZE_BITS];
-                        match sok1.recv_from(&mut handshake_key_buf) {
+                        let mut buf = [0; PEER_MESSAGE_MAX_LEN];
+                        match sok1.recv_from(&mut buf) {
                             Ok((packet_size, source_address)) => {
-                                if packet_size != ECDSA_PUB_KEY_SIZE_BITS {
-                                    log::warn!("handshake failed, does not contain public key of correct length");
-                                    break;
-                                } else if std::str::from_utf8(
-                                    &handshake_key_buf[..ECDSA_PUB_KEY_SIZE_BITS],
-                                )
-                                .is_err()
-                                {
-                                    log::warn!("handshake received but incorrect key format");
-                                    break;
+                                let (valid, peer_key) = verify_p2p_message(buf.to_vec());
+                                if !valid {
+                                    log::error!("server backend failed to verify message, discard");
+                                    continue;
                                 }
-                                let peer_key = std::str::from_utf8(
-                                    &handshake_key_buf[..ECDSA_PUB_KEY_SIZE_BITS],
-                                )
-                                .unwrap()
-                                .to_string();
+                                let peer_key = hex::encode(peer_key);
                                 if !validator_list.contains(&peer_key) {
                                     log::warn!("peer not in whitelist");
                                     break;
@@ -94,6 +85,7 @@ async fn event_loop(
                         };
                     },
                     Token(tok) => loop {
+                        log::debug!("new connection from token: {}", tok);
                         let mut message_buf = [0; PEER_MESSAGE_MAX_LEN];
                         // message received from a known peer
                         match sok1.recv_from(&mut message_buf) {
@@ -109,7 +101,7 @@ async fn event_loop(
                                 break;
                             }
                             Err(e) => {
-                                eprintln!("Server loop error ocurred: {:?}", e);
+                                log::error!("server loop error ocurred: {:?}", e);
                             }
                         };
                     },

@@ -201,8 +201,8 @@ impl Server {
                 notif.notified().await;
                 let (is_verified, public_key) = verify_p2p_message(self.buf.clone());
                 if is_verified {
+                    let public_hex = hex::encode(public_key.clone());
                     let msg = self.buf.clone();
-                    let public_hex = hex::encode(public_key.clone()).to_string();
                     // to make sure we don't count the same peer more than once
                     if peers_confirmed.contains(&public_hex) && self.ready_upgrade_mode {
                         if check_for_ready_message(msg) {
