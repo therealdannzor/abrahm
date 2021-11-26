@@ -84,7 +84,6 @@ pub async fn spawn_peer_listeners(
 async fn peer_upgraded_loop(mut rx: Receiver<PayloadEvent>) {
     let token_to_ord_payload: HashMap<Token, Vec<OrdPayload>> = HashMap::new();
     let token_to_ord_payload = Arc::new(Mutex::new(token_to_ord_payload));
-    //let mut default_entry: Option<Vec<OrdPayload>> = Some(Vec::new());
     loop {
         while let Some(msg) = rx.recv().await {
             match msg {
@@ -143,7 +142,7 @@ async fn peer_loop(mut rx: Receiver<InternalMessage>, notify: Arc<Notify>) {
                     drop(idc);
                 }
                 InternalMessage::FromServerEvent(FromServerEvent::NewClient(msg)) => {
-                    log::debug!("peer loop: new client event");
+                    log::debug!("client handle registered a new client: {}", msg.2);
                     let arc = token_to_sock.clone();
                     let mut idc = arc.lock().await;
                     let op = idc.insert(msg.1, msg.2);
