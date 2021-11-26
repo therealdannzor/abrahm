@@ -1,9 +1,12 @@
-use super::common::verify_p2p_message;
+use super::common::{extract_server_port_field, verify_p2p_message};
 use super::udp_utils::{net_open, next_token};
 use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, PeerInfo};
-use mio::{Events, Interest, Token};
+use mio::{net::UdpSocket, Events, Interest, Token};
+use std::collections::HashMap;
 use std::io;
+use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
 
 pub async fn spawn_server_accept_loop(
     tx_out: Sender<InternalMessage>,
@@ -42,9 +45,12 @@ async fn event_loop(
         let _ = sender.send(whoami_socket_message).await;
     });
 
+    let mut peers_with_token: Vec<String> = Vec::new();
+    let mut token_to_socket: HashMap<Token, UdpSocket> = HashMap::new();
     tokio::spawn(async move {
         let tmp = socket.clone();
         let mut sok1 = tmp.lock().await;
+        let tx2_out = tx_out.clone();
 
         loop {
             poller.poll(&mut events, /* no timeout */ None).unwrap();
@@ -55,7 +61,7 @@ async fn event_loop(
                     Token(1024) => loop {
                         let mut buf = [0; PEER_MESSAGE_MAX_LEN];
                         match sok1.recv_from(&mut buf) {
-                            Ok((packet_size, source_address)) => {
+                            Ok((_, source_address)) => {
                                 let (valid, peer_key) = verify_p2p_message(buf.to_vec());
                                 if !valid {
                                     log::error!("server backend failed to verify message, discard");
@@ -65,14 +71,47 @@ async fn event_loop(
                                 if !validator_list.contains(&peer_key) {
                                     log::warn!("peer not in whitelist");
                                     break;
+                                } else if peers_with_token.contains(&peer_key) {
+                                    log::warn!(
+                                        "peer already given a new port to speak with, abort"
+                                    );
                                 }
-                                let new_tok = next_token(&mut unique_token);
-                                let _ = poller.registry().register(&mut *sok1, new_tok, INTERESTS);
-                                let peer_dat = PeerInfo(peer_key, new_tok, source_address);
-                                let new_client_message = InternalMessage::FromServerEvent(
-                                    FromServerEvent::NewClient(peer_dat),
-                                );
-                                let _ = tx_out.send(new_client_message);
+                                if is_upgrade_syn_tag(buf.to_vec()) {
+                                    let incoming_peer_server_port =
+                                        extract_server_port_field(buf.to_vec());
+                                    let addr = "127.0.0.1:0".parse().unwrap();
+                                    // this is the upgraded socket which will from now on solely be used
+                                    // for p2p messages between these two peers
+                                    let mut ug_socket = UdpSocket::bind(addr).unwrap();
+                                    let ug_token = next_token(&mut unique_token);
+                                    let ug_port = ug_socket.local_addr().unwrap();
+                                    let _ = poller.registry().register(
+                                        &mut ug_socket,
+                                        ug_token,
+                                        INTERESTS,
+                                    );
+                                    let peer_dat = PeerInfo(peer_key.clone(), ug_token, ug_port);
+                                    let new_client_message = InternalMessage::FromServerEvent(
+                                        FromServerEvent::NewClient(peer_dat),
+                                    );
+                                    if let Err(e) = tx2_out.try_send(new_client_message) {
+                                        log::error!(
+                                            "server backend failed to send internal message: {}",
+                                            e
+                                        );
+                                        break;
+                                    }
+
+                                    peers_with_token.push(peer_key);
+                                    token_to_socket.insert(ug_token, ug_socket);
+                                } else if is_upgrade_ack_tag(buf.to_vec()) {
+                                    if !peers_with_token.contains(&peer_key) {
+                                        log::warn!(
+                                            "peer has not sent a upgrade syn message yet, abort"
+                                        );
+                                        break;
+                                    }
+                                }
                             }
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                                 // this is normal, try again
@@ -85,10 +124,10 @@ async fn event_loop(
                         };
                     },
                     Token(tok) => loop {
-                        log::debug!("new connection from token: {}", tok);
+                        let socket = token_to_socket.get(&Token(tok)).unwrap();
                         let mut message_buf = [0; PEER_MESSAGE_MAX_LEN];
                         // message received from a known peer
-                        match sok1.recv_from(&mut message_buf) {
+                        match socket.recv_from(&mut message_buf) {
                             Ok((size, _)) => {
                                 nonce += 1;
                                 let message = message_buf[..size].to_vec();
@@ -109,4 +148,14 @@ async fn event_loop(
             }
         }
     });
+}
+
+fn is_upgrade_syn_tag(v: Vec<u8>) -> bool {
+    let expected = "UPGRD".to_string().as_bytes().to_vec();
+    v[90..95].to_vec() == expected
+}
+
+fn is_upgrade_ack_tag(v: Vec<u8>) -> bool {
+    let expected = "UGACK".to_string().as_bytes().to_vec();
+    v[90..95].to_vec() == expected
 }
