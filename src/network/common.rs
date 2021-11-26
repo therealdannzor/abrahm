@@ -1,5 +1,5 @@
-use crate::swiss_knife::helper::hash_from_vec_u8_input;
-use themis::keys::EcdsaPublicKey;
+use crate::swiss_knife::helper::{hash_and_sign_message_digest, hash_from_vec_u8_input};
+use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use themis::secure_message::SecureVerify;
 
 pub enum Messages {
@@ -42,6 +42,25 @@ pub fn cmp_message_with_signed_digest(
     };
     let plain_hashed = hash_from_vec_u8_input(plain_message).as_bytes().to_vec();
     decrypted == plain_hashed
+}
+
+// Creates a p2p message with the public key (in hex) as ID and the payload in both plain text and
+// as a signed digest
+pub fn create_p2p_message(
+    public_key: EcdsaPublicKey,
+    secret_key: EcdsaPrivateKey,
+    msg: &str,
+) -> Vec<u8> {
+    let mut result = Vec::new();
+    // First half is PUBLIC_KEY | MSG (in bytes)
+    let first_half = public_key_and_payload_to_vec(public_key, msg.to_string());
+    // Second half is H(PUBLIC_KEY | MSG)_C (in bytes)
+    let second_half = hash_and_sign_message_digest(secret_key, first_half.clone());
+
+    result.extend(first_half);
+    result.extend(second_half);
+
+    result
 }
 
 pub fn verify_p2p_message(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
