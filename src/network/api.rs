@@ -1,7 +1,7 @@
 use super::discovery::{create_rnd_number, spawn_peer_discovery_loop, ValidatedPeer};
-use super::{InternalMessage, OrdPayload, PayloadEvent};
+use super::{InternalMessage, OrdPayload, PayloadEvent, UpgradedPeerData};
 use crate::network::client_handle::{spawn_peer_listeners, MessagePeerHandle};
-use crate::network::common::public_key_and_payload_to_vec;
+use crate::network::common::{create_p2p_message, public_key_and_payload_to_vec};
 use crate::network::server_handle::spawn_server_accept_loop;
 use crate::swiss_knife::helper::hash_and_sign_message_digest;
 use std::convert::TryInto;
@@ -104,11 +104,12 @@ pub async fn spawn_peer_discovery_listener(
 
     let public_key = pk.clone();
     let secret_key = sk.clone();
+    let serv_port = server_port.clone();
     let join = tokio::spawn(async move {
         spawn_peer_discovery_loop(
             public_key,
             secret_key,
-            server_port,
+            serv_port,
             tx_peer_discv,
             kill_tx,
             validator_list,
@@ -143,15 +144,24 @@ pub async fn spawn_peer_discovery_listener(
     }
 
     let pf = peers_found.clone();
+    let serv_port = server_port.clone();
     let join =
-        tokio::spawn(async move { ping_server_backend(pk.clone(), sk.clone(), pf).await }).await;
+        tokio::spawn(
+            async move { upgrade_server_backend(pk.clone(), sk.clone(), pf, serv_port).await },
+        )
+        .await;
 
     log::info!("returning a list of the discovered peers");
     peers_found
 }
 
-async fn ping_server_backend(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
-    log::info!("send peer-to-peer message to all peer main backend");
+async fn upgrade_server_backend(
+    pk: EcdsaPublicKey,
+    sk: EcdsaPrivateKey,
+    peers: Vec<ValidatedPeer>,
+    server_port: String,
+) {
+    log::info!("send peer-to-peer upgrade to all the peers' main backend");
     let socket = match UdpSocket::bind("127.0.0.1:0").await {
         Ok(socket) => socket,
         Err(e) => {
@@ -165,7 +175,9 @@ async fn ping_server_backend(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec
         let mut address = "127.0.0.1:".to_string();
         let port = peers[i].serv_port();
         address.push_str(&port.clone());
-        let payload = create_p2p_message(pk.clone(), sk.clone(), "REQSHORTID");
+        let mut message = "UPGRD".to_string();
+        message.push_str(&server_port);
+        let payload = create_p2p_message(pk.clone(), sk.clone(), &message);
         if let Err(e) = socket.send_to(&payload, address.clone()).await {
             log::error!("ping message dispatch failed: {:?}", e);
         }
@@ -196,30 +208,19 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
     }
 }
 
-fn create_p2p_message(
-    public_key: EcdsaPublicKey,
-    secret_key: EcdsaPrivateKey,
-    msg: &str,
-) -> Vec<u8> {
-    let mut result = Vec::new();
-    // First half is PUBLIC_KEY | MSG (in bytes)
-    let first_half = public_key_and_payload_to_vec(public_key, msg.to_string());
-    // Second half is H(PUBLIC_KEY | MSG)_C (in bytes)
-    let second_half = hash_and_sign_message_digest(secret_key, first_half.clone());
-
-    result.extend(first_half);
-    result.extend(second_half);
-
-    result
-}
-
-pub async fn spawn_io_listeners(val_set: Vec<String>) -> (String, MessagePeerHandle) {
+pub async fn spawn_io_listeners(
+    pk: EcdsaPublicKey,
+    sk: EcdsaPrivateKey,
+    val_set: Vec<String>,
+) -> (String, MessagePeerHandle) {
     // out channels correpond to communication outside the host, i.e. with other peers
     let (tx_out, rx_out): (Sender<InternalMessage>, Receiver<InternalMessage>) = mpsc::channel(128);
     let tx_out_2 = tx_out.clone();
     // in channels correspond to communication within the host, i.e. deals with payloads received
     let (tx_in, rx_in): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = mpsc::channel(64);
     let tx_in_2 = tx_in.clone();
+
+    let (tx_ug, rx_ug): (Sender<UpgradedPeerData>, Receiver<UpgradedPeerData>) = mpsc::channel(8);
     // sempahores
     let notif = Arc::new(Notify::new());
     let notif2 = notif.clone();
@@ -227,15 +228,15 @@ pub async fn spawn_io_listeners(val_set: Vec<String>) -> (String, MessagePeerHan
     // peer loop
     tokio::spawn(async move {
         // semaphore moved to loop to make setup is completed before giving green light
-        spawn_peer_listeners(rx_out, rx_in, notif2).await;
+        spawn_peer_listeners(pk, sk, rx_out, rx_in, notif2).await;
     });
     // new connections loop
     tokio::spawn(async move {
-        spawn_server_accept_loop(tx_out, tx_in, val_set).await;
+        spawn_server_accept_loop(tx_out, tx_in, tx_ug, val_set).await;
     });
     // stop sign, wait for green light
     notif.notified().await;
-    let mph = MessagePeerHandle::new(tx_out_2, tx_in_2);
+    let mph = MessagePeerHandle::new(tx_out_2, tx_in_2, rx_ug);
     // receive answer from backend on which port the new conn loop listens to
     let port = mph.get_host_port().await;
 
