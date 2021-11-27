@@ -1,4 +1,5 @@
 use crate::swiss_knife::helper::{hash_and_sign_message_digest, hash_from_vec_u8_input};
+use mio::Token;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use themis::secure_message::SecureVerify;
 
@@ -61,6 +62,13 @@ pub fn create_p2p_message(
     result.extend(second_half);
 
     result
+}
+
+pub fn create_short_message(token: Token, secret: EcdsaPrivateKey, msg: &str) -> Vec<u8> {
+    let mut first_half = token_and_payload_to_vec(token, msg);
+    let second_half = hash_and_sign_message_digest(secret, first_half.clone());
+    first_half.extend(second_half);
+    first_half
 }
 
 pub fn verify_p2p_message(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
@@ -169,6 +177,13 @@ pub fn public_key_and_payload_to_vec(key: EcdsaPublicKey, msg: String) -> Vec<u8
     let mut payload_as_bytes = msg.as_bytes().to_vec();
     enc_key.append(&mut payload_as_bytes);
     enc_key
+}
+
+pub fn token_and_payload_to_vec(token: Token, msg: &str) -> Vec<u8> {
+    let mut tok = token.0.to_string().as_bytes().to_vec();
+    let msg = msg.to_string().as_bytes().to_vec();
+    tok.extend(msg);
+    tok
 }
 
 // same length as both port and READY message
