@@ -1,20 +1,24 @@
 use super::common::{extract_server_port_field, verify_p2p_message};
 use super::udp_utils::{net_open, next_token};
-use super::{FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, PeerInfo};
+use super::{
+    FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, PeerInfo, UpgradedPeerData,
+};
 use mio::{net::UdpSocket, Events, Interest, Token};
 use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
+use themis::keys::EcdsaPublicKey;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 
 pub async fn spawn_server_accept_loop(
     tx_out: Sender<InternalMessage>,
     tx_in: Sender<PayloadEvent>,
+    tx2_in: Sender<UpgradedPeerData>,
     validators: Vec<String>,
 ) {
     let join = tokio::spawn(async move {
-        event_loop(tx_out, tx_in, validators).await;
+        event_loop(tx_out, tx_in, tx2_in, validators).await;
     });
 
     let _ = join.await;
@@ -23,6 +27,7 @@ pub async fn spawn_server_accept_loop(
 async fn event_loop(
     tx_out: Sender<InternalMessage>,
     tx_in: Sender<PayloadEvent>,
+    tx2_in: Sender<UpgradedPeerData>,
     validator_list: Vec<String>,
 ) {
     const ECDSA_PUB_KEY_SIZE_BITS: usize = 90; // amount of characters the public key has (hexadecimal)
@@ -47,10 +52,12 @@ async fn event_loop(
 
     let mut peers_with_token: Vec<String> = Vec::new();
     let mut token_to_socket: HashMap<Token, UdpSocket> = HashMap::new();
+    let mut token_to_public: HashMap<Token, EcdsaPublicKey> = HashMap::new();
     tokio::spawn(async move {
         let tmp = socket.clone();
         let mut sok1 = tmp.lock().await;
         let tx2_out = tx_out.clone();
+        let tx_ug = tx2_in.clone();
 
         loop {
             poller.poll(&mut events, /* no timeout */ None).unwrap();
@@ -62,12 +69,12 @@ async fn event_loop(
                         let mut buf = [0; PEER_MESSAGE_MAX_LEN];
                         match sok1.recv_from(&mut buf) {
                             Ok((_, source_address)) => {
-                                let (valid, peer_key) = verify_p2p_message(buf.to_vec());
+                                let (valid, peer_key_type) = verify_p2p_message(buf.to_vec());
                                 if !valid {
                                     log::error!("server backend failed to verify message, discard");
                                     continue;
                                 }
-                                let peer_key = hex::encode(peer_key);
+                                let peer_key = hex::encode(peer_key_type.clone());
                                 if !validator_list.contains(&peer_key) {
                                     log::warn!("peer not in whitelist");
                                     break;
@@ -77,8 +84,18 @@ async fn event_loop(
                                     );
                                 }
                                 if is_upgrade_syn_tag(buf.to_vec()) {
+                                    let inc_serv_port = extract_server_port_field(buf.to_vec());
                                     let incoming_peer_server_port =
-                                        extract_server_port_field(buf.to_vec());
+                                        match std::str::from_utf8(&inc_serv_port) {
+                                            Ok(s) => s.to_string(),
+                                            Err(e) => {
+                                                log::error!(
+                                                "could not convert incoming peer port to str: {}",
+                                                e
+                                            );
+                                                continue;
+                                            }
+                                        };
                                     let addr = "127.0.0.1:0".parse().unwrap();
                                     // this is the upgraded socket which will from now on solely be used
                                     // for p2p messages between these two peers
@@ -90,7 +107,12 @@ async fn event_loop(
                                         ug_token,
                                         INTERESTS,
                                     );
-                                    let peer_dat = PeerInfo(peer_key.clone(), ug_token, ug_port);
+                                    let peer_dat = PeerInfo(
+                                        peer_key.clone(),
+                                        ug_token,
+                                        ug_port,
+                                        incoming_peer_server_port,
+                                    );
                                     let new_client_message = InternalMessage::FromServerEvent(
                                         FromServerEvent::NewClient(peer_dat),
                                     );
@@ -102,15 +124,48 @@ async fn event_loop(
                                         break;
                                     }
 
-                                    peers_with_token.push(peer_key);
+                                    peers_with_token.push(peer_key.clone());
                                     token_to_socket.insert(ug_token, ug_socket);
-                                } else if is_upgrade_ack_tag(buf.to_vec()) {
-                                    if !peers_with_token.contains(&peer_key) {
+                                    continue;
+                                }
+                                let (is_valid, token_id) = is_upgrade_ack_tag(buf.to_vec());
+                                if is_valid {
+                                    if !peers_with_token.contains(&peer_key.clone()) {
                                         log::warn!(
-                                            "peer has not sent a upgrade syn message yet, abort"
+                                            "peer has not sent an upgrade syn message yet, abort"
                                         );
                                         break;
                                     }
+                                    let new_port = extract_server_port_field(buf.to_vec());
+                                    let new_port = match ::std::str::from_utf8(&new_port) {
+                                        Ok(s) => s.to_string(),
+                                        Err(e) => {
+                                            log::error!(
+                                                "could not convert new peer port to str: {}",
+                                                e
+                                            );
+                                            continue;
+                                        }
+                                    };
+                                    let ug_data = UpgradedPeerData(
+                                        peer_key_type.clone(),
+                                        new_port,
+                                        Token(token_id.into()),
+                                    );
+                                    // inform the API that whenever the host wants to speak with
+                                    // this peer, make sure to use the `token_id` as identifier and
+                                    // the correct port
+                                    if let Err(e) = tx_ug.try_send(ug_data) {
+                                        log::error!(
+                                            "server backend failed to send upgrade message: {}",
+                                            e
+                                        );
+                                        break;
+                                    }
+
+                                    token_to_public
+                                        .insert(Token(token_id.into()), peer_key_type.clone());
+                                    log::info!("server backend updated register with new upgraded peer: {}", token_id);
                                 }
                             }
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -119,7 +174,7 @@ async fn event_loop(
                             }
                             Err(e) => {
                                 // something went really wrong
-                                eprintln!("Server loop error occurred: {:?}", e);
+                                log::error!("server loop recv error: {:?}", e);
                             }
                         };
                     },
@@ -155,7 +210,14 @@ fn is_upgrade_syn_tag(v: Vec<u8>) -> bool {
     v[90..95].to_vec() == expected
 }
 
-fn is_upgrade_ack_tag(v: Vec<u8>) -> bool {
-    let expected = "UGACK".to_string().as_bytes().to_vec();
-    v[90..95].to_vec() == expected
+fn is_upgrade_ack_tag(v: Vec<u8>) -> (bool, u8) {
+    let expected = "ACK=".to_string().as_bytes().to_vec();
+    let is_correct_tag = v[90..94].to_vec() == expected;
+    let dig = v[95]; // digit 48 is '0' and digit 57 is '9'
+    let is_num = dig >= 48 && dig <= 57;
+    if is_correct_tag && is_num {
+        (true, dig - 48)
+    } else {
+        (false, 0)
+    }
 }
