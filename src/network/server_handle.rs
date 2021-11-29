@@ -113,16 +113,18 @@ async fn event_loop(
                                         ug_port,
                                         incoming_peer_server_port,
                                     );
-                                    let new_client_message = InternalMessage::FromServerEvent(
-                                        FromServerEvent::NewClient(peer_dat),
-                                    );
-                                    if let Err(e) = tx2_out.try_send(new_client_message) {
-                                        log::error!(
+                                    let sender = tx2_out.clone();
+                                    tokio::spawn(async move {
+                                        let new_client_message = InternalMessage::FromServerEvent(
+                                            FromServerEvent::NewClient(peer_dat),
+                                        );
+                                        if let Err(e) = sender.send(new_client_message).await {
+                                            log::error!(
                                             "server backend failed to send internal message: {}",
                                             e
                                         );
-                                        break;
-                                    }
+                                        }
+                                    });
 
                                     peers_with_token.push(peer_key.clone());
                                     token_to_socket.insert(ug_token, ug_socket);
