@@ -12,11 +12,13 @@ pub struct UpgradedPeerData(
     mio::Token,                   // how the sender should ID itself
 );
 
+#[derive(Debug)]
 // Public key as plain text, the token assigned when connecting to the server,
 // the new port to use from now on (when only using the token as ID), and the
 // token id's own server port to repond to.
 pub struct PeerInfo(String, mio::Token, std::net::SocketAddr, String);
 
+#[derive(Debug)]
 // FromServerEvent is the event type emitted from the server when a new peer connects succesfully
 pub enum FromServerEvent {
     HostSocket(
@@ -44,6 +46,7 @@ pub enum PayloadEvent {
     Get(mio::Token, tokio::sync::oneshot::Sender<Vec<OrdPayload>>),
 }
 
+#[derive(Debug)]
 // DialEvent is when the server attempts to reach out to a peer
 pub enum DialEvent {
     // DispatchMessage is the format in which the host "dials" up another peer
@@ -53,6 +56,7 @@ pub enum DialEvent {
     DispatchMessage(mio::Token, Vec<u8>, tokio::sync::oneshot::Sender<usize>),
 }
 
+#[derive(Debug)]
 // Messages sent between the backend loops
 pub enum InternalMessage {
     FromServerEvent(FromServerEvent),
