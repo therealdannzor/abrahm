@@ -4,13 +4,14 @@ use crate::cli::read_args;
 use crate::consensus::{core::ConsensusChain, engine::Engine};
 use crate::ledger::bootstrap::BootStrap;
 use crate::ledger::state_db::{KeyValueIO, StateDB};
-use crate::network::api::{spawn_io_listeners, spawn_peer_discovery_listener};
+use crate::network::api::{spawn_io_listeners, spawn_peer_discovery_listener, Networking};
 use crate::network::client_handle::MessagePeerHandle;
-use crate::network::mdns::ValidatedPeer;
+use crate::network::discovery::ValidatedPeer;
 use crate::types::{block::Block, pool::TxPool};
 use std::sync::Arc;
 use std::vec::Vec;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
+use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, Receiver};
 
 pub struct Blockchain {
@@ -28,6 +29,9 @@ pub struct Blockchain {
 
     // consensus backend
     consensus: ConsensusChain,
+
+    // network io
+    net: Networking,
 }
 
 impl Blockchain {
@@ -77,11 +81,13 @@ impl Blockchain {
                 pub_key_type,         // set local id as initial proposer
                 blockchain_channel,
             ),
+            net: Networking::new(),
         }
     }
 
-    pub async fn start_listeners(&self) -> (Vec<ValidatedPeer>, MessagePeerHandle) {
-        let (port, mph) = spawn_io_listeners(self.peers_str()).await;
+    pub async fn start_listeners(&mut self) {
+        let (port, mut mph) =
+            spawn_io_listeners(self.public_type(), self.secret_type(), self.peers_str()).await;
         let disc_peers = spawn_peer_discovery_listener(
             self.public_type(),
             self.secret_type(),
@@ -90,7 +96,10 @@ impl Blockchain {
         )
         .await;
 
-        (disc_peers, mph)
+        let ug_peers = mph.recv_all_upgraded_peers(disc_peers.len()).await;
+
+        self.net.set_peers(ug_peers);
+        self.net.set_handler(mph);
     }
 
     // append_block appends a block `b` which is assumed to have:
