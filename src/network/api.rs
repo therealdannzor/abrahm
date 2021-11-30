@@ -151,7 +151,7 @@ pub async fn spawn_peer_discovery_listener(
         )
         .await;
 
-    log::info!("returning vector with found peers");
+    log::debug!("peer discovery finished, returning peers");
     peers_found
 }
 
@@ -169,15 +169,19 @@ async fn upgrade_server_backend(
     };
 
     let synced_peers: Vec<String> = Vec::new();
-
+    let five_to_eight = create_rnd_number(5, 9).try_into().unwrap();
     for i in 0..peers.len() {
         let mut address = "127.0.0.1:".to_string();
         let port = peers[i].serv_port();
-        log::info!("send upgrade to {}", port);
         address.push_str(&port.clone());
         let mut message = "UPGRD".to_string();
         message.push_str(&server_port);
         let payload = create_p2p_message(pk.clone(), sk.clone(), &message);
+
+        // sleep some random time between 5 and 8 seconds to not overflow the network
+        let dur = tokio::time::Duration::from_secs(five_to_eight);
+        tokio::time::sleep(dur).await;
+        log::info!("send upgrade to {}", port);
         if let Err(e) = socket.send_to(&payload, address.clone()).await {
             log::error!("upgrade message dispatch failed: {:?}", e);
         }
@@ -212,7 +216,7 @@ pub async fn spawn_io_listeners(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     val_set: Vec<String>,
-) -> (String, MessagePeerHandle) {
+) -> (String, MessagePeerHandle, Receiver<UpgradedPeerData>) {
     // out channels correpond to communication outside the host, i.e. with other peers
     let (tx_out, rx_out): (Sender<InternalMessage>, Receiver<InternalMessage>) = mpsc::channel(128);
     let tx_out_2 = tx_out.clone();
@@ -236,9 +240,9 @@ pub async fn spawn_io_listeners(
     });
     // stop sign, wait for green light
     notif.notified().await;
-    let mph = MessagePeerHandle::new(tx_out_2, tx_in_2, rx_ug);
+    let mph = MessagePeerHandle::new(tx_out_2, tx_in_2);
     // receive answer from backend on which port the new conn loop listens to
     let port = mph.get_host_port().await;
 
-    (port, mph)
+    (port, mph, rx_ug)
 }

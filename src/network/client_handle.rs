@@ -19,20 +19,13 @@ pub struct MessagePeerHandle(
     Sender<InternalMessage>,
     // transmit channel to request messages received from other peers
     Sender<PayloadEvent>,
-    // receive upgraded peer data
-    Receiver<UpgradedPeerData>,
 );
 
 impl MessagePeerHandle {
-    pub fn new(
-        tx_outbound: Sender<InternalMessage>,
-        tx_inbound: Sender<PayloadEvent>,
-        rx_upgrade: Receiver<UpgradedPeerData>,
-    ) -> Self {
+    pub fn new(tx_outbound: Sender<InternalMessage>, tx_inbound: Sender<PayloadEvent>) -> Self {
         Self {
             0: tx_outbound,
             1: tx_inbound,
-            2: rx_upgrade,
         }
     }
 
@@ -73,18 +66,6 @@ impl MessagePeerHandle {
         };
 
         res
-    }
-
-    pub async fn recv_all_upgraded_peers(&mut self, lim: usize) -> Vec<UpgradedPeerData> {
-        let mut ug_peers: Vec<UpgradedPeerData> = Vec::new();
-        while let Some(msg) = self.2.recv().await {
-            if !ug_peers.contains(&msg) {
-                ug_peers.push(msg);
-            } else if ug_peers.len() == lim {
-                break;
-            }
-        }
-        ug_peers
     }
 }
 
