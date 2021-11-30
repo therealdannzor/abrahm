@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 
 pub struct Networking {
     // List of (presumably) connected and validated peers which the client can communicate with
-    peers: Vec<ValidatedPeer>,
+    peers: Vec<UpgradedPeerData>,
     // Handler to send commands internally and externally
     handle: Option<MessagePeerHandle>,
 }
@@ -31,7 +31,7 @@ impl Networking {
         }
     }
 
-    pub fn set_peers(&mut self, p: Vec<ValidatedPeer>) {
+    pub fn set_peers(&mut self, p: Vec<UpgradedPeerData>) {
         self.peers = p;
     }
 
@@ -39,7 +39,7 @@ impl Networking {
         self.handle = Some(h);
     }
 
-    pub fn get_registered_peers(&self) -> Vec<ValidatedPeer> {
+    pub fn get_registered_peers(&self) -> Vec<UpgradedPeerData> {
         self.peers.clone()
     }
 
