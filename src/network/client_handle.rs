@@ -74,6 +74,18 @@ impl MessagePeerHandle {
 
         res
     }
+
+    pub async fn recv_all_upgraded_peers(&mut self, lim: usize) -> Vec<UpgradedPeerData> {
+        let mut ug_peers: Vec<UpgradedPeerData> = Vec::new();
+        while let Some(msg) = self.2.recv().await {
+            if !ug_peers.contains(&msg) {
+                ug_peers.push(msg);
+            } else if ug_peers.len() == lim {
+                break;
+            }
+        }
+        ug_peers
+    }
 }
 
 pub async fn spawn_peer_listeners(
@@ -277,5 +289,6 @@ async fn peer_loop(
                 }
             }
         }
+        log::error!("peer loop exited, this should not happen");
     }
 }
