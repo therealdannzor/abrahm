@@ -77,11 +77,12 @@ async fn event_loop(
                                 let peer_key = hex::encode(peer_key_type.clone());
                                 if !validator_list.contains(&peer_key) {
                                     log::warn!("peer not in whitelist");
-                                    break;
+                                    continue;
                                 } else if peers_with_token.contains(&peer_key) {
                                     log::warn!(
                                         "peer already given a new port to speak with, abort"
                                     );
+                                    continue;
                                 }
                                 if is_upgrade_syn_tag(buf.to_vec()) {
                                     let inc_serv_port = extract_server_port_field(buf.to_vec());
@@ -134,9 +135,9 @@ async fn event_loop(
                                 if is_valid {
                                     if !peers_with_token.contains(&peer_key.clone()) {
                                         log::warn!(
-                                            "peer has not sent an upgrade syn message yet, abort"
+                                            "peer ({}) has not sent an upgrade syn message yet, abort", peer_key
                                         );
-                                        break;
+                                        continue;
                                     }
                                     let new_port = extract_server_port_field(buf.to_vec());
                                     let new_port = match ::std::str::from_utf8(&new_port) {
@@ -154,16 +155,18 @@ async fn event_loop(
                                         new_port,
                                         Token(token_id.into()),
                                     );
-                                    // inform the API that whenever the host wants to speak with
-                                    // this peer, make sure to use the `token_id` as identifier and
-                                    // the correct port
-                                    if let Err(e) = tx_ug.try_send(ug_data) {
-                                        log::error!(
-                                            "server backend failed to send upgrade message: {}",
-                                            e
-                                        );
-                                        break;
-                                    }
+                                    let sender = tx_ug.clone();
+                                    tokio::spawn(async move {
+                                        // inform the API that whenever the host wants to speak with
+                                        // this peer, make sure to use the `token_id` as identifier and
+                                        // the correct port
+                                        if let Err(e) = sender.send(ug_data).await {
+                                            log::error!(
+                                                "server backend failed to send upgrade message: {}",
+                                                e
+                                            );
+                                        }
+                                    });
 
                                     token_to_public
                                         .insert(Token(token_id.into()), peer_key_type.clone());
