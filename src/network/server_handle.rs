@@ -53,7 +53,8 @@ async fn event_loop(
     let peers_with_token = Arc::new(Mutex::new(peers_with_token));
     let token_to_socket: HashMap<Token, UdpSocket> = HashMap::new();
     let token_to_socket = Arc::new(Mutex::new(token_to_socket));
-    let mut token_to_public: HashMap<Token, EcdsaPublicKey> = HashMap::new();
+    let token_to_public: HashMap<Token, EcdsaPublicKey> = HashMap::new();
+    let token_to_public = Arc::new(Mutex::new(token_to_public));
     tokio::spawn(async move {
         let tmp = socket.clone();
         let mut sok1 = tmp.lock().await;
@@ -76,19 +77,15 @@ async fn event_loop(
                                     continue;
                                 }
                                 let peer_key = hex::encode(peer_key_type.clone());
-                                let arc = peers_with_token.clone();
-                                let idc = arc.lock().unwrap();
                                 if !validator_list.contains(&peer_key) {
                                     log::warn!("peer not in whitelist");
                                     continue;
-                                } else if idc.contains(&peer_key) {
-                                    log::warn!(
-                                        "peer should use the new port to send messages to me, abort"
-                                    );
-                                    continue;
                                 }
-                                drop(idc);
                                 if is_upgrade_syn_tag(buf.to_vec()) {
+                                    log::debug!(
+                                        "received valid upgrade SYN message from {}",
+                                        source_address.port()
+                                    );
                                     let inc_serv_port = extract_server_port_field(buf.to_vec());
                                     let incoming_peer_server_port =
                                         match std::str::from_utf8(&inc_serv_port) {
@@ -120,6 +117,9 @@ async fn event_loop(
                                     );
                                     let sender = tx2_out.clone();
                                     tokio::spawn(async move {
+                                        log::debug!(
+                                            "sending upgraded data to internal client handle"
+                                        );
                                         let new_client_message = InternalMessage::FromServerEvent(
                                             FromServerEvent::NewClient(peer_dat),
                                         );
@@ -142,16 +142,21 @@ async fn event_loop(
                                 }
                                 let (is_valid, token_id) = is_upgrade_ack_tag(buf.to_vec());
                                 if is_valid {
-                                    let arc = peers_with_token.clone();
-                                    let idc = arc.lock().unwrap();
-                                    if !idc.contains(&peer_key.clone()) {
+                                    log::debug!(
+                                        "received valid upgraded ACK message from {} (short id: {})",
+                                        source_address.port(), token_id,
+                                    );
+                                    let arc = token_to_public.clone();
+                                    let mut inner = arc.lock().unwrap();
+                                    if inner.get(&Token(token_id.into())).is_some() {
                                         log::warn!(
-                                            "peer (with port {}) not sent upgrade syn message yet, abort", source_address.port()
+                                            "connection upgrade of token {} already confirmed",
+                                            token_id
                                         );
                                         continue;
                                     }
                                     let new_port = extract_server_port_field(buf.to_vec());
-                                    let new_port = match ::std::str::from_utf8(&new_port) {
+                                    let new_port = match std::str::from_utf8(&new_port) {
                                         Ok(s) => s.to_string(),
                                         Err(e) => {
                                             log::error!(
@@ -170,7 +175,7 @@ async fn event_loop(
                                     tokio::spawn(async move {
                                         // inform the API that whenever the host wants to speak with
                                         // this peer, make sure to use the `token_id` as identifier and
-                                        // the correct port
+                                        // the new port
                                         if let Err(e) = sender.send(ug_data).await {
                                             log::error!(
                                                 "server backend failed to send upgrade message: {}",
@@ -179,8 +184,9 @@ async fn event_loop(
                                         }
                                     });
 
-                                    token_to_public
-                                        .insert(Token(token_id.into()), peer_key_type.clone());
+                                    let arc = token_to_public.clone();
+                                    let mut inner = arc.lock().unwrap();
+                                    inner.insert(Token(token_id.into()), peer_key_type.clone());
                                     log::info!("server backend updated register with new upgraded peer: {}", token_id);
                                 }
                             }

@@ -6,7 +6,7 @@ pub mod message;
 pub mod server_handle;
 pub mod udp_utils;
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct UpgradedPeerData(
     themis::keys::EcdsaPublicKey, // ID of message recipient
     String,                       // port to use to reach recipient
