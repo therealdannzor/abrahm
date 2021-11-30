@@ -151,7 +151,7 @@ pub async fn spawn_peer_discovery_listener(
         )
         .await;
 
-    log::info!("returning a list of the discovered peers");
+    log::info!("returning vector with found peers");
     peers_found
 }
 
@@ -161,7 +161,6 @@ async fn upgrade_server_backend(
     peers: Vec<ValidatedPeer>,
     server_port: String,
 ) {
-    log::info!("send peer-to-peer upgrade to all the peers' main backend");
     let socket = match UdpSocket::bind("127.0.0.1:0").await {
         Ok(socket) => socket,
         Err(e) => {
@@ -174,12 +173,13 @@ async fn upgrade_server_backend(
     for i in 0..peers.len() {
         let mut address = "127.0.0.1:".to_string();
         let port = peers[i].serv_port();
+        log::info!("send upgrade to {}", port);
         address.push_str(&port.clone());
         let mut message = "UPGRD".to_string();
         message.push_str(&server_port);
         let payload = create_p2p_message(pk.clone(), sk.clone(), &message);
         if let Err(e) = socket.send_to(&payload, address.clone()).await {
-            log::error!("ping message dispatch failed: {:?}", e);
+            log::error!("upgrade message dispatch failed: {:?}", e);
         }
     }
 }

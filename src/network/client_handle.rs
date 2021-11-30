@@ -176,10 +176,7 @@ async fn peer_loop(
                     drop(idc);
                 }
                 InternalMessage::FromServerEvent(FromServerEvent::NewClient(msg)) => {
-                    log::debug!(
-                        "client handle registered a new client event, id: {}",
-                        msg.1 .0
-                    );
+                    log::debug!("new client event: {:?}", msg);
                     let addr = "127.0.0.1:0".parse().unwrap();
                     let socket = match UdpSocket::bind(addr) {
                         Ok(sok) => sok,
@@ -222,10 +219,7 @@ async fn peer_loop(
                     if let Err(e) = socket.send_to(&full_msg, respond_to_socket) {
                         log::error!("failed to send ack response to peer: {}", e);
                     };
-                    log::info!(
-                        "client handle responded to new client with short id: {}",
-                        msg.1 .0
-                    );
+                    log::info!("responded to new client with short id: {}", msg.1 .0);
 
                     let arc = token_to_sock.clone();
                     let mut idc = arc.lock().await;
