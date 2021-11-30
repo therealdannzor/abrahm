@@ -12,6 +12,17 @@ pub struct UpgradedPeerData(
     String,                       // port to use to reach recipient
     mio::Token,                   // local ID of message sender for recipient
 );
+impl UpgradedPeerData {
+    pub fn key_type(&self) -> themis::keys::EcdsaPublicKey {
+        self.0.clone()
+    }
+    pub fn server_port(&self) -> String {
+        self.1.clone()
+    }
+    pub fn token(&self) -> mio::Token {
+        self.2.clone()
+    }
+}
 
 #[derive(Debug)]
 // Public key as plain text, the token assigned when connecting to the server,
