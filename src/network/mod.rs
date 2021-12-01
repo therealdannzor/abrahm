@@ -35,7 +35,7 @@ pub struct PeerInfo(String, mio::Token, std::net::SocketAddr, String);
 pub enum FromServerEvent {
     HostSocket(
         std::net::SocketAddr,
-        std::sync::Arc<tokio::sync::Mutex<mio::net::UdpSocket>>,
+        std::sync::Arc<std::sync::Mutex<mio::net::UdpSocket>>,
     ),
     GetHostPort(tokio::sync::oneshot::Sender<String>),
     NewClient(PeerInfo),

@@ -1,8 +1,7 @@
 use mio::net::UdpSocket;
 use mio::{Interest, Poll, Token};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub fn net_open() -> (Poll, Arc<Mutex<UdpSocket>>, SocketAddr) {
     let addr = "127.0.0.1:0".parse().unwrap();
@@ -30,4 +29,15 @@ pub fn next_token(current: &mut Token) -> Token {
     let next = current.0;
     current.0 += 1;
     Token(next)
+}
+
+pub fn any_udp_socket() -> UdpSocket {
+    let addr = "127.0.0.1:0".parse().unwrap();
+    let socket = match UdpSocket::bind(addr) {
+        Ok(s) => s,
+        Err(e) => {
+            panic!("error when opening a new mio socket: {}", e);
+        }
+    };
+    socket
 }
