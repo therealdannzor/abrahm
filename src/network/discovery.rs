@@ -188,13 +188,6 @@ impl Server {
         let notif = Notify::new();
 
         loop {
-            log::debug!(
-                "found: {}/{}, ready: {}/{}",
-                peers_confirmed.len(),
-                total_peers,
-                peers_ready.len(),
-                total_peers,
-            );
             if let Some(_) = self.stream_size {
                 let start = std::time::Instant::now();
 
@@ -252,6 +245,13 @@ impl Server {
             self.stream_size = Some(self.socket.recv(&mut self.buf).await?);
             log::debug!("fetch new message from stream");
             notif.notify_one();
+            log::debug!(
+                "found: {}/{}, ready: {}/{}",
+                peers_confirmed.len(),
+                total_peers,
+                peers_ready.len(),
+                total_peers,
+            );
         }
         log::info!("discovery completed, exiting");
         // alert api that discovery is finished

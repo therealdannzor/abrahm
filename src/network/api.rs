@@ -3,12 +3,13 @@ use super::{InternalMessage, OrdPayload, PayloadEvent, UpgradedPeerData};
 use crate::network::client_handle::{spawn_peer_listeners, MessagePeerHandle};
 use crate::network::common::{create_p2p_message, public_key_and_payload_to_vec};
 use crate::network::server_handle::spawn_server_accept_loop;
+use crate::network::udp_utils::any_udp_socket;
 use crate::swiss_knife::helper::hash_and_sign_message_digest;
+use mio::net::UdpSocket;
 use std::convert::TryInto;
 use std::error::Error;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
-use tokio::net::UdpSocket;
 use tokio::sync::{
     mpsc::{self, Receiver, Sender},
     oneshot::error::TryRecvError,
@@ -161,15 +162,10 @@ async fn upgrade_server_backend(
     peers: Vec<ValidatedPeer>,
     server_port: String,
 ) {
-    let socket = match UdpSocket::bind("127.0.0.1:0").await {
-        Ok(socket) => socket,
-        Err(e) => {
-            panic!("udp error when starting server connection phase: {}", e);
-        }
-    };
-
+    let socket = any_udp_socket();
     let synced_peers: Vec<String> = Vec::new();
-    let five_to_eight = create_rnd_number(5, 9).try_into().unwrap();
+    let random_num = create_rnd_number(2, 12).try_into().unwrap();
+
     for i in 0..peers.len() {
         let mut address = "127.0.0.1:".to_string();
         let port = peers[i].serv_port();
@@ -178,11 +174,11 @@ async fn upgrade_server_backend(
         message.push_str(&server_port);
         let payload = create_p2p_message(pk.clone(), sk.clone(), &message);
 
-        // sleep some random time between 5 and 8 seconds to not overflow the network
-        let dur = tokio::time::Duration::from_secs(five_to_eight);
+        // sleep some random time between to not overflow the network
+        let dur = tokio::time::Duration::from_secs(random_num);
         tokio::time::sleep(dur).await;
         log::info!("send upgrade to {}", port);
-        if let Err(e) = socket.send_to(&payload, address.clone()).await {
+        if let Err(e) = socket.send_to(&payload, address.parse().unwrap()) {
             log::error!("upgrade message dispatch failed: {:?}", e);
         }
     }
@@ -191,12 +187,8 @@ async fn upgrade_server_backend(
 async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
     log::info!("peer ready for connect phase");
     let five_to_eight = create_rnd_number(5, 9).try_into().unwrap();
-    let socket = match UdpSocket::bind("127.0.0.1:0").await {
-        Ok(socket) => socket,
-        Err(e) => {
-            panic!("udp error when starting discovery connected phase: {}", e);
-        }
-    };
+    let socket = any_udp_socket();
+
     for i in 0..peers.len() {
         let mut address = "127.0.0.1:".to_string();
         let port = peers[i].disc_port();
@@ -206,7 +198,7 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
         let dur = tokio::time::Duration::from_secs(five_to_eight);
         tokio::time::sleep(dur).await;
 
-        if let Err(e) = socket.send_to(&payload, address.clone()).await {
+        if let Err(e) = socket.send_to(&payload, address.parse().unwrap()) {
             log::error!("ready message dispatch failed: {:?}", e);
         }
     }

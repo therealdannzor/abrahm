@@ -126,7 +126,7 @@ async fn peer_loop(
     let token_to_sock: HashMap<Token, SocketAddr> = HashMap::new();
     let token_to_sock = Arc::new(Mutex::new(token_to_sock));
     let server_token = Token(1024);
-    let mut server_udp: Option<Arc<Mutex<UdpSocket>>> = None;
+    let mut server_udp: Option<Arc<std::sync::Mutex<UdpSocket>>> = None;
     loop {
         while let Some(msg) = rx.recv().await {
             let secret_key = sk.clone();
@@ -240,7 +240,7 @@ async fn peer_loop(
                         continue;
                     }
                     let arc = server_udp.clone().unwrap();
-                    let srv = arc.lock().await;
+                    let srv = arc.lock().unwrap();
                     match srv.send_to(&payload, *recipient_sock_addr) {
                         Ok(n) => {
                             if n != payload.len() {
