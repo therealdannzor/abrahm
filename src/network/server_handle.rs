@@ -9,15 +9,17 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use themis::keys::EcdsaPublicKey;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Notify;
 
 pub async fn spawn_server_accept_loop(
     tx_out: Sender<InternalMessage>,
     tx_in: Sender<PayloadEvent>,
     tx2_in: Sender<UpgradedPeerData>,
     validators: Vec<String>,
+    notify: Arc<Notify>,
 ) {
     let join = tokio::spawn(async move {
-        event_loop(tx_out, tx_in, tx2_in, validators).await;
+        event_loop(tx_out, tx_in, tx2_in, validators, notify).await;
     });
 
     let _ = join.await;
@@ -28,6 +30,7 @@ async fn event_loop(
     tx_in: Sender<PayloadEvent>,
     tx2_in: Sender<UpgradedPeerData>,
     validator_list: Vec<String>,
+    notify: Arc<Notify>,
 ) {
     const ECDSA_PUB_KEY_SIZE_BITS: usize = 90; // amount of characters the public key has (hexadecimal)
     const PEER_MESSAGE_MAX_LEN: usize = 248;
@@ -49,15 +52,18 @@ async fn event_loop(
         let _ = sender.send(whoami_socket_message).await;
     });
 
-    let peers_with_token: Vec<String> = Vec::new();
-    let peers_with_token = Arc::new(Mutex::new(peers_with_token));
-    let token_to_socket: HashMap<Token, UdpSocket> = HashMap::new();
-    let token_to_socket = Arc::new(Mutex::new(token_to_socket));
-    let token_to_public: HashMap<Token, EcdsaPublicKey> = HashMap::new();
-    let token_to_public = Arc::new(Mutex::new(token_to_public));
+    // peers stored as String
+    let registered_peers = Arc::new(Mutex::new(Vec::new()));
+    // map of 'Token' -> 'EcdsaPublicKey'
+    let token_to_public = Arc::new(Mutex::new(HashMap::new()));
+    // map of 'Token' -> 'UdpSocket' (protected by arc mutex)
+    let mut token_to_socket: HashMap<Token, Arc<Mutex<UdpSocket>>> = HashMap::new();
+
+    let sock = socket.clone();
+    notify.notify_one();
+
     tokio::spawn(async move {
-        let tmp = socket.clone();
-        let mut sok1 = tmp.lock().await;
+        let mut sok1 = sock.lock().unwrap();
         let tx2_out = tx_out.clone();
         let tx_ug = tx2_in.clone();
 
@@ -68,6 +74,7 @@ async fn event_loop(
             for event in events.iter() {
                 match event.token() {
                     Token(1024) => loop {
+                        counter += 1;
                         let mut buf = [0; PEER_MESSAGE_MAX_LEN];
                         match sok1.recv_from(&mut buf) {
                             Ok((_, source_address)) => {
@@ -79,6 +86,7 @@ async fn event_loop(
                                 let peer_key = hex::encode(peer_key_type.clone());
                                 if !validator_list.contains(&peer_key) {
                                     log::warn!("peer not in whitelist");
+                                    buf = [0; PEER_MESSAGE_MAX_LEN];
                                     continue;
                                 }
                                 if is_upgrade_syn_tag(buf.to_vec()) {
@@ -86,6 +94,15 @@ async fn event_loop(
                                         "received valid upgrade SYN message from {}",
                                         source_address.port()
                                     );
+                                    let arc = registered_peers.clone();
+                                    let mut inner = arc.lock().unwrap();
+                                    if inner.contains(&peer_key) {
+                                        log::warn!("already registered this peer with its own token, abort");
+                                        buf = [0; PEER_MESSAGE_MAX_LEN];
+                                        continue;
+                                    }
+                                    drop(inner);
+                                    drop(arc);
                                     let inc_serv_port = extract_server_port_field(buf.to_vec());
                                     let incoming_peer_server_port =
                                         match std::str::from_utf8(&inc_serv_port) {
@@ -95,6 +112,7 @@ async fn event_loop(
                                                 "could not convert incoming peer port to str: {}",
                                                 e
                                             );
+                                                buf = [0; PEER_MESSAGE_MAX_LEN];
                                                 continue;
                                             }
                                         };
@@ -103,6 +121,7 @@ async fn event_loop(
                                     // for p2p messages between these two peers
                                     let mut ug_socket = UdpSocket::bind(addr).unwrap();
                                     let ug_token = next_token(&mut unique_token);
+                                    log::warn!("new token generated: {}", ug_token.0);
                                     let ug_port = ug_socket.local_addr().unwrap();
                                     let _ = poller.registry().register(
                                         &mut ug_socket,
@@ -117,9 +136,7 @@ async fn event_loop(
                                     );
                                     let sender = tx2_out.clone();
                                     tokio::spawn(async move {
-                                        log::debug!(
-                                            "sending upgraded data to internal client handle"
-                                        );
+                                        log::debug!("send data to client handle");
                                         let new_client_message = InternalMessage::FromServerEvent(
                                             FromServerEvent::NewClient(peer_dat),
                                         );
@@ -131,20 +148,23 @@ async fn event_loop(
                                         }
                                     });
 
-                                    let arc = peers_with_token.clone();
-                                    let mut idc = arc.lock().unwrap();
-                                    idc.push(peer_key.clone());
-                                    drop(idc);
-                                    let arc = token_to_socket.clone();
-                                    let mut idc = arc.lock().unwrap();
-                                    idc.insert(ug_token, ug_socket);
+                                    let arc = registered_peers.clone();
+                                    let mut inner = arc.lock().unwrap();
+                                    inner.push(peer_key.clone());
+                                    drop(inner);
+                                    token_to_socket
+                                        .insert(ug_token, Arc::new(Mutex::new(ug_socket)));
+                                    log::debug!("updated tok-to-sok with token {}", ug_token.0,);
+
+                                    buf = [0; PEER_MESSAGE_MAX_LEN];
                                     continue;
                                 }
                                 let (is_valid, token_id) = is_upgrade_ack_tag(buf.to_vec());
                                 if is_valid {
                                     log::debug!(
-                                        "received valid upgraded ACK message from {} (short id: {})",
-                                        source_address.port(), token_id,
+                                        "received valid upgrade ACK message from {} (short id: {})",
+                                        source_address.port(),
+                                        token_id,
                                     );
                                     let arc = token_to_public.clone();
                                     let mut inner = arc.lock().unwrap();
@@ -153,6 +173,7 @@ async fn event_loop(
                                             "connection upgrade of token {} already confirmed",
                                             token_id
                                         );
+                                        buf = [0; PEER_MESSAGE_MAX_LEN];
                                         continue;
                                     }
                                     let new_port = extract_server_port_field(buf.to_vec());
@@ -163,6 +184,7 @@ async fn event_loop(
                                                 "could not convert new peer port to str: {}",
                                                 e
                                             );
+                                            buf = [0; PEER_MESSAGE_MAX_LEN];
                                             continue;
                                         }
                                     };
@@ -188,37 +210,47 @@ async fn event_loop(
                                     let mut inner = arc.lock().unwrap();
                                     inner.insert(Token(token_id.into()), peer_key_type.clone());
                                     log::info!("server backend updated register with new upgraded peer: {}", token_id);
+                                    buf = [0; PEER_MESSAGE_MAX_LEN];
+                                } else {
+                                    log::error!("upgrade ack message invalid, discard");
+                                    buf = [0; PEER_MESSAGE_MAX_LEN];
                                 }
                             }
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                                log::debug!("blocked, try again");
+                                buf = [0; PEER_MESSAGE_MAX_LEN];
                                 // this is normal, try again
                                 break;
                             }
                             Err(e) => {
+                                buf = [0; PEER_MESSAGE_MAX_LEN];
                                 // something went really wrong
                                 log::error!("server loop recv error: {:?}", e);
                             }
                         };
                     },
                     Token(tok) => loop {
-                        let arc = token_to_socket.clone();
-                        let idc = arc.lock().unwrap();
-                        let socket = idc.get(&Token(tok)).unwrap();
-                        let mut message_buf = [0; PEER_MESSAGE_MAX_LEN];
+                        log::info!("Token {} event", tok);
+                        let arc = token_to_socket.get(&Token(tok)).unwrap().clone();
+                        let socket = arc.lock().unwrap();
+                        let mut buf = [0; PEER_MESSAGE_MAX_LEN];
                         // message received from a known peer
-                        match socket.recv_from(&mut message_buf) {
+                        match socket.recv_from(&mut buf) {
                             Ok((size, _)) => {
                                 nonce += 1;
-                                let message = message_buf[..size].to_vec();
+                                let message = buf[..size].to_vec();
                                 log::info!("received message: {:?}, from: {}", message, tok);
                                 let ord_pay = OrdPayload(message, nonce);
                                 let new_message = PayloadEvent::StoreMessage(Token(tok), ord_pay);
                                 let _ = tx_in.send(new_message);
+                                buf = [0; PEER_MESSAGE_MAX_LEN];
                             }
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                                buf = [0; PEER_MESSAGE_MAX_LEN];
                                 break;
                             }
                             Err(e) => {
+                                buf = [0; PEER_MESSAGE_MAX_LEN];
                                 log::error!("server loop error ocurred: {:?}", e);
                             }
                         };
