@@ -1,4 +1,5 @@
 use super::common::{create_p2p_message, extract_server_port_field};
+use super::udp_utils::any_udp_socket;
 use super::{
     DialEvent, FromServerEvent, InternalMessage, OrdPayload, PayloadEvent, UpgradedPeerData,
 };
@@ -158,13 +159,7 @@ async fn peer_loop(
                 }
                 InternalMessage::FromServerEvent(FromServerEvent::NewClient(msg)) => {
                     log::debug!("new client event: {:?}", msg);
-                    let addr = "127.0.0.1:0".parse().unwrap();
-                    let socket = match UdpSocket::bind(addr) {
-                        Ok(sok) => sok,
-                        Err(e) => {
-                            panic!("udp socket error respond to new client event: {}", e);
-                        }
-                    };
+                    let socket = any_udp_socket();
 
                     // Create a message that tells the peer, who recently connected, that
                     // we have accepted your connection, given you a new short id (Token),
@@ -197,10 +192,19 @@ async fn peer_loop(
                     let respond_to_socket =
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), response_port);
 
-                    if let Err(e) = socket.send_to(&full_msg, respond_to_socket) {
-                        log::error!("failed to send ack response to peer: {}", e);
+                    let msg_len = full_msg.len();
+                    match socket.send_to(&full_msg, respond_to_socket) {
+                        Ok(n) => {
+                            if n == msg_len {
+                                log::debug!("responded to new client with id: {}", msg.1 .0);
+                            } else {
+                                log::error!("failed to send ack response to id: {}", msg.1 .0);
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("upgrade message dispatch failed: {:?}", e);
+                        }
                     };
-                    log::info!("responded to new client with short id: {}", msg.1 .0);
 
                     let arc = token_to_sock.clone();
                     let mut idc = arc.lock().await;
@@ -214,8 +218,10 @@ async fn peer_loop(
                         );
                     }
                     let arc = hex_key_to_token.clone();
-                    let mut idc = arc.lock().await;
-                    idc.insert(msg.0, msg.1);
+                    let mut inner = arc.lock().await;
+                    inner.insert(msg.0, msg.1);
+                    log::debug!("stored public key of token {}", msg.1 .0);
+                    drop(socket);
                 }
                 InternalMessage::DialEvent(DialEvent::DispatchMessage(
                     send_to,
