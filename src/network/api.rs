@@ -1,5 +1,5 @@
 use super::discovery::{create_rnd_number, spawn_peer_discovery_loop, ValidatedPeer};
-use super::{InternalMessage, OrdPayload, PayloadEvent, UpgradedPeerData};
+use super::{FromServerEvent, OrdPayload, PayloadEvent, UpgradedPeerData};
 use crate::network::client_handle::{spawn_peer_listeners, MessagePeerHandle};
 use crate::network::common::{create_p2p_message, public_key_and_payload_to_vec};
 use crate::network::server_handle::spawn_server_accept_loop;
@@ -44,23 +44,6 @@ impl Networking {
         self.peers.clone()
     }
 
-    pub async fn send_payload_to(&self, payload: String, recipient: mio::Token) -> usize {
-        let res = self
-            .handle
-            .as_ref()
-            .unwrap()
-            .send_payload(payload.into_bytes(), recipient)
-            .await;
-
-        match res.await {
-            Ok(v) => v,
-            Err(e) => {
-                log::error!("could not send payload: {}", e);
-                return 0;
-            }
-        }
-    }
-
     pub async fn get_messages_from(
         &self,
         target: mio::Token,
@@ -84,7 +67,8 @@ pub async fn spawn_peer_discovery_listener(
     sk: EcdsaPrivateKey,
     server_port: String,
     mut validator_list: Vec<String>,
-) -> Vec<ValidatedPeer> {
+    mut rx: Receiver<UpgradedPeerData>,
+) -> Vec<UpgradedPeerData> {
     let (tx_peer_discv, mut rx_peer_discv): (Sender<ValidatedPeer>, Receiver<ValidatedPeer>) =
         mpsc::channel(128);
 
@@ -140,20 +124,40 @@ pub async fn spawn_peer_discovery_listener(
 
     while let Some(msg) = kill_rx.recv().await {
         if msg == true {
+            not.notify_one();
             break;
         }
     }
 
+    not.notified().await;
     let pf = peers_found.clone();
     let serv_port = server_port.clone();
     let join =
         tokio::spawn(
             async move { upgrade_server_backend(pk.clone(), sk.clone(), pf, serv_port).await },
-        )
-        .await;
+        );
 
-    log::debug!("peer discovery finished, returning peers");
-    peers_found
+    let _ = join.await;
+
+    let mut ug_peers: Vec<UpgradedPeerData> = Vec::new();
+    while let Some(msg) = rx.recv().await {
+        if !ug_peers.contains(&msg) {
+            ug_peers.push(msg);
+            log::debug!(
+                "added {}/{} upgraded peers",
+                ug_peers.len(),
+                peers_found.len()
+            );
+        }
+        if ug_peers.len() == peers_found.len() {
+            not.notify_one();
+            break;
+        }
+    }
+
+    not.notified().await;
+    log::info!("peer discovery protocol finished, all peers upgraded");
+    ug_peers
 }
 
 async fn upgrade_server_backend(
@@ -162,13 +166,13 @@ async fn upgrade_server_backend(
     peers: Vec<ValidatedPeer>,
     server_port: String,
 ) {
-    let socket = any_udp_socket();
+    let socket = any_udp_socket().await;
     let synced_peers: Vec<String> = Vec::new();
-    let random_num = create_rnd_number(2, 12).try_into().unwrap();
+    let random_num = create_rnd_number(4, 12).try_into().unwrap();
 
-    for i in 0..peers.len() {
+    for i in 0..3 * peers.len() {
         let mut address = "127.0.0.1:".to_string();
-        let port = peers[i].serv_port();
+        let port = peers[i % peers.len()].serv_port();
         address.push_str(&port.clone());
         let mut message = "UPGRD".to_string();
         message.push_str(&server_port);
@@ -177,9 +181,19 @@ async fn upgrade_server_backend(
         // sleep some random time between to not overflow the network
         let dur = tokio::time::Duration::from_secs(random_num);
         tokio::time::sleep(dur).await;
-        log::info!("send upgrade to {}", port);
-        if let Err(e) = socket.send_to(&payload, address.parse().unwrap()) {
-            log::error!("upgrade message dispatch failed: {:?}", e);
+
+        let bytes_to_send = payload.len();
+        match socket.send_to(&payload, address).await {
+            Ok(n) => {
+                if n == bytes_to_send {
+                    log::debug!("sent upgrade message to: {}", port);
+                } else {
+                    log::error!("failed to send full message to: {}", port);
+                }
+            }
+            Err(e) => {
+                log::error!("upgrade message dispatch failed: {:?}", e);
+            }
         }
     }
 }
@@ -187,7 +201,7 @@ async fn upgrade_server_backend(
 async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
     log::info!("peer ready for connect phase");
     let five_to_eight = create_rnd_number(5, 9).try_into().unwrap();
-    let socket = any_udp_socket();
+    let socket = any_udp_socket().await;
 
     for i in 0..peers.len() {
         let mut address = "127.0.0.1:".to_string();
@@ -198,7 +212,7 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
         let dur = tokio::time::Duration::from_secs(five_to_eight);
         tokio::time::sleep(dur).await;
 
-        if let Err(e) = socket.send_to(&payload, address.parse().unwrap()) {
+        if let Err(e) = socket.send_to(&payload, address).await {
             log::error!("ready message dispatch failed: {:?}", e);
         }
     }
@@ -210,28 +224,31 @@ pub async fn spawn_io_listeners(
     val_set: Vec<String>,
 ) -> (String, MessagePeerHandle, Receiver<UpgradedPeerData>) {
     // out channels correpond to communication outside the host, i.e. with other peers
-    let (tx_out, rx_out): (Sender<InternalMessage>, Receiver<InternalMessage>) = mpsc::channel(128);
+    let (tx_out, rx_out): (Sender<FromServerEvent>, Receiver<FromServerEvent>) = mpsc::channel(128);
     let tx_out_2 = tx_out.clone();
     // in channels correspond to communication within the host, i.e. deals with payloads received
     let (tx_in, rx_in): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = mpsc::channel(64);
     let tx_in_2 = tx_in.clone();
 
-    let (tx_ug, rx_ug): (Sender<UpgradedPeerData>, Receiver<UpgradedPeerData>) = mpsc::channel(8);
+    let (tx_ug, rx_ug): (Sender<UpgradedPeerData>, Receiver<UpgradedPeerData>) = mpsc::channel(64);
     // sempahores
     let notif = Arc::new(Notify::new());
+    let notif1 = notif.clone();
     let notif2 = notif.clone();
 
     // peer loop
     tokio::spawn(async move {
         // semaphore moved to loop to make setup is completed before giving green light
-        spawn_peer_listeners(pk, sk, rx_out, rx_in, notif2).await;
+        spawn_peer_listeners(pk, sk, rx_out, rx_in, notif1).await;
     });
     // new connections loop
     tokio::spawn(async move {
-        spawn_server_accept_loop(tx_out, tx_in, tx_ug, val_set).await;
+        spawn_server_accept_loop(tx_out, tx_in, tx_ug, val_set, notif2).await;
     });
     // stop sign, wait for green light
     notif.notified().await;
+    notif.notified().await;
+
     let mph = MessagePeerHandle::new(tx_out_2, tx_in_2);
     // receive answer from backend on which port the new conn loop listens to
     let port = mph.get_host_port().await;
