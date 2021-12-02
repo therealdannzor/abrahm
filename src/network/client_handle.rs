@@ -146,18 +146,27 @@ async fn peer_loop(
                     resp_address.push_str(&msg.2);
 
                     let msg_len = full_msg.len();
-                    match socket.send_to(&full_msg, resp_address).await {
-                        Ok(n) => {
-                            if n == msg_len {
-                                log::debug!("response to new client with id: {}", msg.1);
-                            } else {
-                                log::error!("failed to send ack response to id: {}", msg.1);
+                    let new_client_id = msg.1.clone();
+                    tokio::spawn(async move {
+                        match socket.send_to(&full_msg, resp_address).await {
+                            Ok(n) => {
+                                if n == msg_len {
+                                    log::debug!(
+                                        "response to new client with id: {}",
+                                        new_client_id
+                                    );
+                                } else {
+                                    log::error!(
+                                        "failed to send ack response to id: {}",
+                                        new_client_id
+                                    );
+                                }
                             }
-                        }
-                        Err(e) => {
-                            log::error!("upgrade message dispatch failed: {:?}", e);
-                        }
-                    };
+                            Err(e) => {
+                                log::error!("upgrade message dispatch failed: {:?}", e);
+                            }
+                        };
+                    });
 
                     let arc = hex_key_to_id.clone();
                     let mut inner = arc.lock().await;
