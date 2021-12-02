@@ -16,7 +16,7 @@ pub async fn get_udp_and_addr() -> (UdpSocket, String) {
 pub async fn any_udp_socket() -> UdpSocket {
     let socket = match UdpSocket::bind("127.0.0.1:0").await {
         Ok(s) => s,
-        Err(e) => panic!("error when opening a new mio socket: {}", e),
+        Err(e) => panic!("error when opening a new socket: {}", e),
     };
     socket
 }

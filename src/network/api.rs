@@ -5,7 +5,6 @@ use crate::network::common::{create_p2p_message, public_key_and_payload_to_vec};
 use crate::network::server_handle::spawn_server_accept_loop;
 use crate::network::udp_utils::any_udp_socket;
 use crate::swiss_knife::helper::hash_and_sign_message_digest;
-use mio::net::UdpSocket;
 use std::convert::TryInto;
 use std::error::Error;
 use std::sync::Arc;
@@ -42,19 +41,6 @@ impl Networking {
 
     pub fn get_registered_peers(&self) -> Vec<UpgradedPeerData> {
         self.peers.clone()
-    }
-
-    pub async fn get_messages_from(
-        &self,
-        target: mio::Token,
-    ) -> Result<Vec<OrdPayload>, TryRecvError> {
-        Ok(self
-            .handle
-            .as_ref()
-            .unwrap()
-            .send_get(target)
-            .await
-            .try_recv()?)
     }
 }
 
