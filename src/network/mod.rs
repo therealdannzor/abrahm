@@ -45,10 +45,10 @@ pub enum PayloadEvent {
     // Token: identifies the peer
     // Vec<u8>: payload data
     // u32: nonce
-    StoreMessage(mio::Token, OrdPayload),
+    StoreMessage(u32, OrdPayload),
 
     // Get returns messages that have been sent by a certain peer, stored in the mailbox
     // Token: peer identifier
     // Sender: response channel
-    Get(mio::Token, tokio::sync::oneshot::Sender<Vec<OrdPayload>>),
+    Get(u32, tokio::sync::oneshot::Sender<Vec<OrdPayload>>),
 }
