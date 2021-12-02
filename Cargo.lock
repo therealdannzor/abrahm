@@ -14,7 +14,6 @@ dependencies = [
  "hex",
  "libp2p",
  "log",
- "mio",
  "once_cell",
  "pretty_env_logger",
  "rand 0.8.3",
