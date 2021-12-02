@@ -10,7 +10,7 @@ pub mod udp_utils;
 pub struct UpgradedPeerData(
     themis::keys::EcdsaPublicKey, // ID of message recipient
     String,                       // port to use to reach recipient
-    mio::Token,                   // local ID of message sender for recipient
+    u32,                          // local ID of message sender for recipient
 );
 impl UpgradedPeerData {
     pub fn key_type(&self) -> themis::keys::EcdsaPublicKey {
@@ -19,24 +19,19 @@ impl UpgradedPeerData {
     pub fn server_port(&self) -> String {
         self.1.clone()
     }
-    pub fn token(&self) -> mio::Token {
+    pub fn id(&self) -> u32 {
         self.2.clone()
     }
 }
 
 #[derive(Debug)]
-// Public key as plain text, the token assigned when connecting to the server,
-// the new port to use from now on (when only using the token as ID), and the
-// token id's own server port to repond to.
-pub struct PeerInfo(String, mio::Token, std::net::SocketAddr, String);
+// Public key as plain text, the new short ID for this peer, and the peer's server port
+pub struct PeerInfo(String, u32, String);
 
 #[derive(Debug)]
 // FromServerEvent is the event type emitted from the server when a new peer connects succesfully
 pub enum FromServerEvent {
-    HostSocket(
-        std::net::SocketAddr,
-        std::sync::Arc<std::sync::Mutex<mio::net::UdpSocket>>,
-    ),
+    HostSocket(String),
     GetHostPort(tokio::sync::oneshot::Sender<String>),
     NewClient(PeerInfo),
 }
@@ -56,21 +51,4 @@ pub enum PayloadEvent {
     // Token: peer identifier
     // Sender: response channel
     Get(mio::Token, tokio::sync::oneshot::Sender<Vec<OrdPayload>>),
-}
-
-#[derive(Debug)]
-// DialEvent is when the server attempts to reach out to a peer
-pub enum DialEvent {
-    // DispatchMessage is the format in which the host "dials" up another peer
-    // Token: identifies the peer
-    // Vec<u8>: data to send
-    // Sender: response channel (0 if something went wrong)
-    DispatchMessage(mio::Token, Vec<u8>, tokio::sync::oneshot::Sender<usize>),
-}
-
-#[derive(Debug)]
-// Messages sent between the backend loops
-pub enum InternalMessage {
-    FromServerEvent(FromServerEvent),
-    DialEvent(DialEvent),
 }
