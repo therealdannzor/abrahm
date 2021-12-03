@@ -142,7 +142,7 @@ pub async fn spawn_peer_discovery_listener(
     }
 
     not.notified().await;
-    log::info!("peer discovery protocol finished, all peers upgraded");
+    log::info!("full upgrade of peer protocol done");
     ug_peers
 }
 
@@ -154,7 +154,7 @@ async fn upgrade_server_backend(
 ) {
     let socket = any_udp_socket().await;
     let synced_peers: Vec<String> = Vec::new();
-    let random_num = create_rnd_number(4, 12).try_into().unwrap();
+    let random_num = create_rnd_number(4, 10).try_into().unwrap();
 
     for i in 0..3 * peers.len() {
         let mut address = "127.0.0.1:".to_string();
@@ -172,7 +172,6 @@ async fn upgrade_server_backend(
         match socket.send_to(&payload, address).await {
             Ok(n) => {
                 if n == bytes_to_send {
-                    log::debug!("sent upgrade message to: {}", port);
                 } else {
                     log::error!("failed to send full message to: {}", port);
                 }

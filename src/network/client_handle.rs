@@ -115,9 +115,6 @@ async fn peer_loop(
                     }
                 }
                 FromServerEvent::NewClient(msg) => {
-                    log::debug!("new client event: {:?}", msg);
-                    let socket = any_udp_socket().await;
-
                     // Create a message that tells the peer, who recently connected, that
                     // we have accepted your connection, given you a new short id (Token),
                     // and that you will be able to send messages without having to write
@@ -142,19 +139,20 @@ async fn peer_loop(
                     // between the two
                     let full_msg = create_p2p_message(public_key, secret_key, &payload);
 
-                    let mut resp_address = "127.0.0.1:".to_string();
-                    resp_address.push_str(&msg.2);
+                    let mut resp = "127.0.0.1:".to_string();
+                    resp.push_str(&msg.2);
 
                     let msg_len = full_msg.len();
                     let new_client_id = msg.1.clone();
-                    tokio::spawn(async move {
-                        match socket.send_to(&full_msg, resp_address).await {
+                    let socket = any_udp_socket().await;
+
+                    // send each upgrade ACK message 5 times to make sure it hits home
+                    for _ in 0..5 {
+                        let resp_address = resp.clone();
+                        let payload = full_msg.clone();
+                        match socket.send_to(&payload, resp_address).await {
                             Ok(n) => {
                                 if n == msg_len {
-                                    log::debug!(
-                                        "response to new client with id: {}",
-                                        new_client_id
-                                    );
                                 } else {
                                     log::error!(
                                         "failed to send ack response to id: {}",
@@ -166,11 +164,11 @@ async fn peer_loop(
                                 log::error!("upgrade message dispatch failed: {:?}", e);
                             }
                         };
-                    });
+                    }
 
                     let arc = hex_key_to_id.clone();
                     let mut inner = arc.lock().await;
-                    let key_slice = msg.0.clone()[..9].to_string();
+                    let key_slice = msg.0.clone()[80..89].to_string();
                     inner.insert(msg.0, msg.1);
                     log::debug!("key ({}..) linked to id {}", key_slice, msg.1.to_string());
                 }

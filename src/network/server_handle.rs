@@ -54,11 +54,14 @@ async fn event_loop(
     let tx_ug = tx2_in.clone();
     let mut nonce: u32 = 0;
     loop {
-        if let Some(_) = stream_size {
-            let start = std::time::Instant::now();
-            log::warn!("stream is Some...");
-            notify.notified().await;
+        buf = [0; PEER_MESSAGE_MAX_LEN];
+        let (ss, fa) = socket.recv_from(&mut buf).await?;
+        stream_size = Some(ss);
+        from_addr = Some(fa);
 
+        log::debug!("fetch new message from stream");
+
+        if let Some(_) = stream_size {
             let (valid, peer_key_type) = verify_p2p_message(buf.to_vec());
             if !valid {
                 log::error!("server backend failed to verify message, discard");
@@ -75,7 +78,7 @@ async fn event_loop(
                     from_addr.unwrap().port().to_string()
                 );
                 if registered_peers.contains(&peer_key) {
-                    log::warn!("already registered this peer with its own token, abort");
+                    log::warn!("peer SYN upgrade already registered, abort");
                     continue;
                 }
                 let inc_serv_port = extract_server_port_field(buf.to_vec());
@@ -87,21 +90,16 @@ async fn event_loop(
                     }
                 };
                 nonce += 1;
-                log::debug!("send peer with id {} to task", nonce);
                 let pi = PeerInfo(peer_key.clone(), nonce, inc_serv_port);
                 let sender = tx_out.clone();
-                tokio::spawn(async move {
-                    log::debug!("sent data to client handle");
-                    let new_client_message = FromServerEvent::NewClient(pi);
-                    if let Err(e) = sender.send(new_client_message).await {
-                        log::error!("server backend failed to send internal message: {}", e);
-                    }
-                });
+                let new_client_message = FromServerEvent::NewClient(pi);
+                if let Err(e) = sender.send(new_client_message).await {
+                    log::error!("server backend failed to send internal message: {}", e);
+                    continue;
+                }
 
                 registered_peers.push(peer_key.clone());
                 log::debug!("register peer with id {} as seen", nonce);
-
-                continue;
             }
             let (is_valid, peer_id) = is_upgrade_ack_tag(buf.to_vec());
             if is_valid {
@@ -129,20 +127,9 @@ async fn event_loop(
                     }
                 });
             } else {
-                log::error!("upgrade ack message invalid, discard");
-            }
-
-            let elapsed_time = start.elapsed();
-            if let Some(time) = wait_time.checked_sub(elapsed_time) {
-                tokio::time::sleep(time).await;
+                log::error!("upgrade ACK message invalid, discard");
             }
         }
-        buf = [0; PEER_MESSAGE_MAX_LEN];
-        let (ss, fa) = socket.recv_from(&mut buf).await?;
-        stream_size = Some(ss);
-        from_addr = Some(fa);
-        log::debug!("fetch new message from stream");
-        notify.notify_one();
     }
 
     panic!("server loop exited, this should not happen");
