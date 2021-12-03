@@ -6,13 +6,13 @@ use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use themis::keys::EcdsaPublicKey;
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{Sender, UnboundedSender};
 use tokio::sync::Notify;
 
 pub async fn spawn_server_accept_loop(
     tx_out: Sender<FromServerEvent>,
     tx_in: Sender<PayloadEvent>,
-    tx2_in: Sender<UpgradedPeerData>,
+    tx2_in: UnboundedSender<UpgradedPeerData>,
     validators: Vec<String>,
     notify: Arc<Notify>,
 ) {
@@ -26,7 +26,7 @@ pub async fn spawn_server_accept_loop(
 async fn event_loop(
     tx_out: Sender<FromServerEvent>,
     tx_in: Sender<PayloadEvent>,
-    tx2_in: Sender<UpgradedPeerData>,
+    tx2_in: UnboundedSender<UpgradedPeerData>,
     validator_list: Vec<String>,
     notify: Arc<Notify>,
 ) -> Result<(), std::io::Error> {
@@ -47,7 +47,10 @@ async fn event_loop(
     });
 
     // peers stored as String
-    let mut registered_peers = Vec::new();
+    let mut registered_peers: Vec<String> = Vec::new();
+    let mut upgraded_peers: Vec<String> = Vec::new();
+    let mut registry_done = false;
+    let mut upgrade_done = false;
 
     notify.notify_one();
 
@@ -55,84 +58,78 @@ async fn event_loop(
     let mut nonce: u32 = 0;
     loop {
         buf = [0; PEER_MESSAGE_MAX_LEN];
-        let (ss, fa) = socket.recv_from(&mut buf).await?;
-        stream_size = Some(ss);
-        from_addr = Some(fa);
-
-        log::debug!("fetch new message from stream");
+        // unwrapping here not the most pretty but let is pass for now
+        let stream_size = Some(socket.recv(&mut buf).await?);
 
         if let Some(_) = stream_size {
-            let (valid, peer_key_type) = verify_p2p_message(buf.to_vec());
-            if !valid {
-                log::error!("server backend failed to verify message, discard");
-                continue;
-            }
-            let peer_key = hex::encode(peer_key_type.clone());
-            if !validator_list.contains(&peer_key) {
-                log::warn!("peer not in whitelist");
-                continue;
-            }
-            if is_upgrade_syn_tag(buf.to_vec()) {
-                log::debug!(
-                    "received valid upgrade SYN message from {}",
-                    from_addr.unwrap().port().to_string()
-                );
-                if registered_peers.contains(&peer_key) {
-                    log::warn!("peer SYN upgrade already registered, abort");
+            if !upgrade_done {
+                let (valid, peer_key_type) = verify_p2p_message(buf.to_vec());
+                if !valid {
+                    log::error!("server backend failed to verify message, discard");
                     continue;
                 }
-                let inc_serv_port = extract_server_port_field(buf.to_vec());
-                let inc_serv_port = match std::str::from_utf8(&inc_serv_port) {
-                    Ok(s) => s.to_string(),
-                    Err(e) => {
-                        log::error!("could not convert incoming peer port to str: {}", e);
+                let peer_key = hex::encode(peer_key_type.clone());
+                let in_registered_list = registered_peers.contains(&peer_key);
+                let in_upgraded_list = upgraded_peers.contains(&peer_key);
+                if !validator_list.contains(&peer_key) {
+                    log::warn!("peer not in whitelist");
+                    continue;
+                }
+                if is_upgrade_syn_tag(buf.to_vec()) && !registry_done && !in_registered_list {
+                    log::debug!("received valid upgrade SYN message",);
+                    let inc_serv_port = extract_server_port_field(buf.to_vec());
+                    let inc_serv_port = match std::str::from_utf8(&inc_serv_port) {
+                        Ok(s) => s.to_string(),
+                        Err(e) => {
+                            log::error!("could not convert incoming peer port to str: {}", e);
+                            continue;
+                        }
+                    };
+                    nonce += 1;
+                    let pi = PeerInfo(peer_key.clone(), nonce, inc_serv_port);
+                    let sender = tx_out.clone();
+                    let new_client_message = FromServerEvent::NewClient(pi);
+                    if let Err(e) = sender.send(new_client_message).await {
+                        log::error!("server backend failed to send internal message: {}", e);
                         continue;
                     }
-                };
-                nonce += 1;
-                let pi = PeerInfo(peer_key.clone(), nonce, inc_serv_port);
-                let sender = tx_out.clone();
-                let new_client_message = FromServerEvent::NewClient(pi);
-                if let Err(e) = sender.send(new_client_message).await {
-                    log::error!("server backend failed to send internal message: {}", e);
-                    continue;
-                }
 
-                registered_peers.push(peer_key.clone());
-                log::debug!("register peer with id {} as seen", nonce);
-            }
-            let (is_valid, peer_id) = is_upgrade_ack_tag(buf.to_vec());
-            if is_valid {
-                log::debug!(
-                    "received valid upgrade ACK message from {}, id: {}",
-                    from_addr.unwrap().port().to_string(),
-                    peer_id,
-                );
-                let new_port = extract_server_port_field(buf.to_vec());
-                let new_port = match std::str::from_utf8(&new_port) {
-                    Ok(s) => s.to_string(),
-                    Err(e) => {
-                        log::error!("could not convert new peer port to str: {}", e);
-                        continue;
-                    }
-                };
-                let ug_data = UpgradedPeerData(peer_key_type.clone(), new_port, peer_id.into());
-                let sender = tx_ug.clone();
-                tokio::spawn(async move {
+                    registered_peers.push(peer_key.clone());
+                    log::debug!("register peer with id {} as seen", nonce);
+                    registry_done = registered_peers.len() == validator_list.len();
+                }
+                let (is_valid, peer_id) = is_upgrade_ack_tag(buf.to_vec());
+                if is_valid && !upgrade_done && !in_upgraded_list {
+                    log::debug!("received valid upgrade ACK message from id: {}", peer_id,);
+                    let new_port = extract_server_port_field(buf.to_vec());
+                    let new_port = match std::str::from_utf8(&new_port) {
+                        Ok(s) => s.to_string(),
+                        Err(e) => {
+                            log::error!("could not convert new peer port to str: {}", e);
+                            continue;
+                        }
+                    };
+                    let ug_data = UpgradedPeerData(peer_key_type.clone(), new_port, peer_id.into());
+                    let sender = tx_ug.clone();
                     // inform the API that whenever the host wants to speak with
                     // this peer, make sure to use the `token_id` as identifier and
                     // the new port
-                    if let Err(e) = sender.send(ug_data).await {
-                        log::error!("server backend failed to send upgrade message: {}", e);
-                    }
-                });
+                    let _ = sender.send(ug_data);
+                    upgraded_peers.push(peer_key.clone());
+                    upgrade_done = upgraded_peers.len() == validator_list.len() - 1;
+                    log::debug!(
+                        "upgrades done: {}/{}",
+                        upgraded_peers.len(),
+                        validator_list.len() - 1
+                    );
+                } else {
+                    log::error!("upgrade ACK message rejected, discard");
+                }
             } else {
-                log::error!("upgrade ACK message invalid, discard");
+                log::debug!("normal mode, wait for consensus message");
             }
         }
     }
-
-    panic!("server loop exited, this should not happen");
 
     Ok(())
 }

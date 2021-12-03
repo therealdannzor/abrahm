@@ -1,7 +1,9 @@
 use super::common::{create_p2p_message, extract_server_port_field};
+use super::discovery::create_rnd_number;
 use super::udp_utils::any_udp_socket;
 use super::{FromServerEvent, OrdPayload, PayloadEvent, UpgradedPeerData};
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
@@ -146,24 +148,17 @@ async fn peer_loop(
                     let new_client_id = msg.1.clone();
                     let socket = any_udp_socket().await;
 
-                    // send each upgrade ACK message 5 times to make sure it hits home
-                    for _ in 0..5 {
+                    // send each upgrade ACK message 6 times to make sure it hits home
+                    for _ in 0..6 {
                         let resp_address = resp.clone();
                         let payload = full_msg.clone();
-                        match socket.send_to(&payload, resp_address).await {
-                            Ok(n) => {
-                                if n == msg_len {
-                                } else {
-                                    log::error!(
-                                        "failed to send ack response to id: {}",
-                                        new_client_id
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                log::error!("upgrade message dispatch failed: {:?}", e);
-                            }
-                        };
+
+                        let random_num = create_rnd_number(4, 10).try_into().unwrap();
+                        // sleep some random time between to not overflow the network
+                        let dur = tokio::time::Duration::from_secs(random_num);
+                        tokio::time::sleep(dur).await;
+
+                        let _ = socket.send_to(&payload, resp_address).await;
                     }
 
                     let arc = hex_key_to_id.clone();

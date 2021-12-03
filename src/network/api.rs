@@ -10,7 +10,7 @@ use std::error::Error;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::sync::{
-    mpsc::{self, Receiver, Sender},
+    mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender},
     oneshot::error::TryRecvError,
     Notify,
 };
@@ -53,7 +53,7 @@ pub async fn spawn_peer_discovery_listener(
     sk: EcdsaPrivateKey,
     server_port: String,
     mut validator_list: Vec<String>,
-    mut rx: Receiver<UpgradedPeerData>,
+    mut ug_rx: UnboundedReceiver<UpgradedPeerData>,
 ) -> Vec<UpgradedPeerData> {
     let (tx_peer_discv, mut rx_peer_discv): (Sender<ValidatedPeer>, Receiver<ValidatedPeer>) =
         mpsc::channel(128);
@@ -126,7 +126,7 @@ pub async fn spawn_peer_discovery_listener(
     let _ = join.await;
 
     let mut ug_peers: Vec<UpgradedPeerData> = Vec::new();
-    while let Some(msg) = rx.recv().await {
+    while let Some(msg) = ug_rx.recv().await {
         if !ug_peers.contains(&msg) {
             ug_peers.push(msg);
             log::debug!(
@@ -154,7 +154,6 @@ async fn upgrade_server_backend(
 ) {
     let socket = any_udp_socket().await;
     let synced_peers: Vec<String> = Vec::new();
-    let random_num = create_rnd_number(4, 10).try_into().unwrap();
 
     for i in 0..3 * peers.len() {
         let mut address = "127.0.0.1:".to_string();
@@ -164,22 +163,12 @@ async fn upgrade_server_backend(
         message.push_str(&server_port);
         let payload = create_p2p_message(pk.clone(), sk.clone(), &message);
 
+        let random_num = create_rnd_number(4, 10).try_into().unwrap();
         // sleep some random time between to not overflow the network
         let dur = tokio::time::Duration::from_secs(random_num);
         tokio::time::sleep(dur).await;
 
-        let bytes_to_send = payload.len();
-        match socket.send_to(&payload, address).await {
-            Ok(n) => {
-                if n == bytes_to_send {
-                } else {
-                    log::error!("failed to send full message to: {}", port);
-                }
-            }
-            Err(e) => {
-                log::error!("upgrade message dispatch failed: {:?}", e);
-            }
-        }
+        let _ = socket.send_to(&payload, address).await;
     }
 }
 
@@ -207,15 +196,22 @@ pub async fn spawn_io_listeners(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     val_set: Vec<String>,
-) -> (String, MessagePeerHandle, Receiver<UpgradedPeerData>) {
+) -> (
+    String,
+    MessagePeerHandle,
+    UnboundedReceiver<UpgradedPeerData>,
+) {
     // out channels correpond to communication outside the host, i.e. with other peers
-    let (tx_out, rx_out): (Sender<FromServerEvent>, Receiver<FromServerEvent>) = mpsc::channel(128);
+    let (tx_out, rx_out): (Sender<FromServerEvent>, Receiver<FromServerEvent>) = mpsc::channel(500);
     let tx_out_2 = tx_out.clone();
     // in channels correspond to communication within the host, i.e. deals with payloads received
-    let (tx_in, rx_in): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = mpsc::channel(64);
+    let (tx_in, rx_in): (Sender<PayloadEvent>, Receiver<PayloadEvent>) = mpsc::channel(500);
     let tx_in_2 = tx_in.clone();
 
-    let (tx_ug, rx_ug): (Sender<UpgradedPeerData>, Receiver<UpgradedPeerData>) = mpsc::channel(64);
+    let (tx_ug, rx_ug): (
+        UnboundedSender<UpgradedPeerData>,
+        UnboundedReceiver<UpgradedPeerData>,
+    ) = mpsc::unbounded_channel();
     // sempahores
     let notif = Arc::new(Notify::new());
     let notif1 = notif.clone();
