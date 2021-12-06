@@ -132,8 +132,10 @@ pub async fn start_listeners(
     sk: EcdsaPrivateKey,
     peers: Vec<String>,
     notify: Arc<Notify>,
+    root_hash: String,
 ) -> Networking {
-    let (port, mut mph, rx_ug) = spawn_io_listeners(pk.clone(), sk.clone(), peers.clone()).await;
+    let (port, mut mph, rx_ug) =
+        spawn_io_listeners(pk.clone(), sk.clone(), peers.clone(), root_hash).await;
     log::debug!("server backend port is: {}", port);
     let upgraded_peers =
         spawn_peer_discovery_listener(pk.clone(), sk.clone(), port, peers.clone(), rx_ug).await;

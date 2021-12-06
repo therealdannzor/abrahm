@@ -203,6 +203,7 @@ pub async fn spawn_io_listeners(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     val_set: Vec<String>,
+    root_hash: String,
 ) -> (
     String,
     MessagePeerHandle,
@@ -231,7 +232,7 @@ pub async fn spawn_io_listeners(
     });
     // new connections loop
     tokio::spawn(async move {
-        spawn_server_accept_loop(tx_out, tx_in, tx_ug, val_set, notif2).await;
+        spawn_server_accept_loop(tx_out, tx_in, tx_ug, val_set, notif2, root_hash).await;
     });
     // stop sign, wait for green light
     notif.notified().await;

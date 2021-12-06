@@ -18,7 +18,7 @@ pub async fn spawn_server_accept_loop(
     root_hash: String,
 ) {
     let join = tokio::spawn(async move {
-        event_loop(tx_out, tx_in, tx2_in, validators, notify).await;
+        event_loop(tx_out, tx_in, tx2_in, validators, notify, root_hash).await;
     });
 
     let _ = join.await;
