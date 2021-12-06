@@ -42,6 +42,13 @@ impl Networking {
     pub fn get_registered_peers(&self) -> Vec<UpgradedPeerData> {
         self.peers.clone()
     }
+
+    pub fn get_handle(&self) -> MessagePeerHandle {
+        if self.handle.is_none() {
+            panic!("handle setup not done correctly, this should not happen");
+        }
+        self.handle.clone().unwrap()
+    }
 }
 
 // spawn_peer_discovery_listener finds the other peers on the same network.

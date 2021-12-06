@@ -1,7 +1,7 @@
-use super::common::{create_p2p_message, extract_server_port_field};
+use super::common::{create_p2p_message, create_short_message, extract_server_port_field};
 use super::discovery::create_rnd_number;
 use super::udp_utils::any_udp_socket;
-use super::{FromServerEvent, OrdPayload, PayloadEvent, UpgradedPeerData};
+use super::{FromServerEvent, OrdPayload, PayloadEvent, PeerShortId, UpgradedPeerData};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -13,11 +13,14 @@ use tokio::sync::{
     oneshot, Mutex,
 };
 
+#[derive(Clone)]
 pub struct MessagePeerHandle(
     // transmit channel to send messages to other peers
     Sender<FromServerEvent>,
     // transmit channel to request messages received from other peers
     Sender<PayloadEvent>,
+    // keep track of payloads sent
+    u32,
 );
 
 impl MessagePeerHandle {
@@ -25,6 +28,7 @@ impl MessagePeerHandle {
         Self {
             0: tx_outbound,
             1: tx_inbound,
+            2: 0,
         }
     }
 
@@ -41,6 +45,14 @@ impl MessagePeerHandle {
         };
 
         res
+    }
+
+    pub async fn send_payload(&mut self, msg: String, my_id_at_recipient: usize) {
+        self.2 += 1;
+        let id = PeerShortId(my_id_at_recipient);
+        let p = OrdPayload(msg.as_bytes().to_vec(), self.2);
+        let sender = self.1.clone();
+        let _ = sender.send(PayloadEvent::StoreMessage(id, p)).await;
     }
 }
 
@@ -63,7 +75,7 @@ pub async fn spawn_peer_listeners(
 
 // peer_upgraded_loop supports the reception and storage of p2p messages after full completed handshake
 async fn peer_upgraded_loop(mut rx: Receiver<PayloadEvent>) {
-    let id_to_ord_payload: HashMap<u32, Vec<OrdPayload>> = HashMap::new();
+    let id_to_ord_payload: HashMap<usize, Vec<OrdPayload>> = HashMap::new();
     let id_to_ord_payload = Arc::new(Mutex::new(id_to_ord_payload));
     loop {
         while let Some(msg) = rx.recv().await {
@@ -71,15 +83,15 @@ async fn peer_upgraded_loop(mut rx: Receiver<PayloadEvent>) {
                 PayloadEvent::StoreMessage(i, ord_payload) => {
                     let arc = id_to_ord_payload.clone();
                     let mut inner = arc.lock().await;
-                    if inner.get(&i).is_none() {
-                        inner.insert(i, Vec::new());
+                    if inner.get(&i.0).is_none() {
+                        inner.insert(i.0, Vec::new());
                     }
-                    inner.get(&i).unwrap().clone().push(ord_payload);
+                    inner.get(&i.0).unwrap().clone().push(ord_payload);
                 }
                 PayloadEvent::Get(i, sender) => {
                     let arc = id_to_ord_payload.clone();
                     let mut inner = arc.lock().await;
-                    let payload = match inner.get(&i) {
+                    let payload = match inner.get(&i.0) {
                         Some(p) => sender.send(p.to_vec()),
                         None => sender.send(vec![OrdPayload(vec![0], 0)]),
                     };
@@ -96,8 +108,8 @@ async fn peer_loop(
     mut rx: Receiver<FromServerEvent>,
     notify: Arc<Notify>,
 ) {
-    let hex_key_to_id: HashMap<String, u32> = HashMap::new();
-    let hex_key_to_id = Arc::new(Mutex::new(hex_key_to_id));
+    // String -> usize
+    let hex_key_to_id = Arc::new(Mutex::new(HashMap::new()));
     let mut server_port: Option<String> = None;
     loop {
         while let Some(msg) = rx.recv().await {
@@ -148,24 +160,24 @@ async fn peer_loop(
                     let new_client_id = msg.1.clone();
                     let socket = any_udp_socket().await;
 
+                    let arc = hex_key_to_id.clone();
+                    let mut inner = arc.lock().await;
+                    let key_slice = msg.0.clone()[80..89].to_string();
+                    inner.insert(msg.0, msg.1);
+                    log::debug!("key ({}..) linked to id {}", key_slice, msg.1.to_string());
+
                     // send each upgrade ACK message 6 times to make sure it hits home
                     for _ in 0..6 {
                         let resp_address = resp.clone();
                         let payload = full_msg.clone();
 
-                        let random_num = create_rnd_number(4, 10).try_into().unwrap();
+                        let random_num = create_rnd_number(3, 6).try_into().unwrap();
                         // sleep some random time between to not overflow the network
                         let dur = tokio::time::Duration::from_secs(random_num);
                         tokio::time::sleep(dur).await;
 
                         let _ = socket.send_to(&payload, resp_address).await;
                     }
-
-                    let arc = hex_key_to_id.clone();
-                    let mut inner = arc.lock().await;
-                    let key_slice = msg.0.clone()[80..89].to_string();
-                    inner.insert(msg.0, msg.1);
-                    log::debug!("key ({}..) linked to id {}", key_slice, msg.1.to_string());
                 }
             }
         }

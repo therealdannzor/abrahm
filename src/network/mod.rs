@@ -26,7 +26,7 @@ impl UpgradedPeerData {
 
 #[derive(Debug)]
 // Public key as plain text, the new short ID for this peer, and the peer's server port
-pub struct PeerInfo(String, u32, String);
+pub struct PeerInfo(String, usize, String);
 
 #[derive(Debug)]
 // FromServerEvent is the event type emitted from the server when a new peer connects succesfully
@@ -39,16 +39,18 @@ pub enum FromServerEvent {
 #[derive(Clone)]
 pub struct OrdPayload(Vec<u8>, u32);
 
+pub struct PeerShortId(usize);
+
 // PayloadEvent includes all invents concerning payload messages from peers
 pub enum PayloadEvent {
     // StoreMessage is the format in which other peers send messages to the host
     // Token: identifies the peer
     // Vec<u8>: payload data
     // u32: nonce
-    StoreMessage(u32, OrdPayload),
+    StoreMessage(PeerShortId, OrdPayload),
 
     // Get returns messages that have been sent by a certain peer, stored in the mailbox
     // Token: peer identifier
     // Sender: response channel
-    Get(u32, tokio::sync::oneshot::Sender<Vec<OrdPayload>>),
+    Get(PeerShortId, tokio::sync::oneshot::Sender<Vec<OrdPayload>>),
 }
