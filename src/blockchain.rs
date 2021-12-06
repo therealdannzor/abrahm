@@ -6,13 +6,17 @@ use crate::ledger::bootstrap::BootStrap;
 use crate::ledger::state_db::{KeyValueIO, StateDB};
 use crate::network::api::{spawn_io_listeners, spawn_peer_discovery_listener, Networking};
 use crate::network::client_handle::MessagePeerHandle;
-use crate::network::discovery::ValidatedPeer;
+use crate::network::common::create_short_message;
+use crate::network::discovery::{create_rnd_number, ValidatedPeer};
+use crate::network::udp_utils::any_udp_socket;
+use crate::network::UpgradedPeerData;
 use crate::types::{block::Block, pool::TxPool};
+use std::convert::TryInto;
 use std::sync::Arc;
 use std::vec::Vec;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
-use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, Receiver};
+use tokio::sync::Notify;
 
 pub struct Blockchain {
     // contiguous link of blocks
@@ -29,9 +33,6 @@ pub struct Blockchain {
 
     // consensus backend
     consensus: ConsensusChain,
-
-    // network io
-    net: Networking,
 }
 
 impl Blockchain {
@@ -81,25 +82,7 @@ impl Blockchain {
                 pub_key_type,         // set local id as initial proposer
                 blockchain_channel,
             ),
-            net: Networking::new(),
         }
-    }
-
-    pub async fn start_listeners(&mut self) {
-        let (port, mut mph) =
-            spawn_io_listeners(self.public_type(), self.secret_type(), self.peers_str()).await;
-        let disc_peers = spawn_peer_discovery_listener(
-            self.public_type(),
-            self.secret_type(),
-            port,
-            self.peers_str(),
-        )
-        .await;
-
-        let ug_peers = mph.recv_all_upgraded_peers(disc_peers.len()).await;
-
-        self.net.set_peers(ug_peers);
-        self.net.set_handler(mph);
     }
 
     // append_block appends a block `b` which is assumed to have:
@@ -136,6 +119,59 @@ impl Blockchain {
 
     pub fn peers_str(&self) -> Vec<String> {
         self.bootstrap.get_peers_str()
+    }
+
+    pub fn root_hash(&self) -> String {
+        self.account_db.get_root_hash()
+    }
+}
+
+pub async fn start_listeners(
+    mut net: Networking,
+    pk: EcdsaPublicKey,
+    sk: EcdsaPrivateKey,
+    peers: Vec<String>,
+    notify: Arc<Notify>,
+) -> Networking {
+    let (port, mut mph, rx_ug) = spawn_io_listeners(pk.clone(), sk.clone(), peers.clone()).await;
+    log::debug!("server backend port is: {}", port);
+    let upgraded_peers =
+        spawn_peer_discovery_listener(pk.clone(), sk.clone(), port, peers.clone(), rx_ug).await;
+
+    net.set_handler(mph);
+    net.set_peers(upgraded_peers);
+    log::info!("listener api kickstarted, now listening for events");
+
+    notify.notify_one();
+
+    net
+}
+
+pub async fn broadcast_root_hash(root_hash: String, net: Networking, secret: EcdsaPrivateKey) {
+    log::info!("start broadcast root hash");
+
+    let mut message = "RTHASH".to_string();
+    message.push_str(&root_hash);
+    let ug_peers = net.get_registered_peers();
+    let socket = any_udp_socket().await;
+
+    for _ in 0..6 {
+        for peer in ug_peers.iter() {
+            let peer_port = peer.server_port();
+            let mut addr = "127.0.0.1:".to_string();
+            addr.push_str(&peer_port);
+            let my_id_at_peer = peer.id();
+            let payload = create_short_message(my_id_at_peer, secret.clone(), &message);
+
+            let resp_address = addr.clone();
+            let p = payload.clone();
+            let random_num = create_rnd_number(3, 6).try_into().unwrap();
+            // sleep some random time between to not overflow the network
+            let dur = tokio::time::Duration::from_secs(random_num);
+            tokio::time::sleep(dur).await;
+
+            let _ = socket.send_to(&p, resp_address).await;
+        }
     }
 }
 
