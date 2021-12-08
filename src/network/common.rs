@@ -65,23 +65,30 @@ pub fn create_p2p_message(
 
 pub fn create_short_message(id: u32, secret: EcdsaPrivateKey, msg: &str) -> Vec<u8> {
     let mut first_half = token_and_payload_to_vec(id, msg);
+    log::warn!(
+        "first half (token and PL): {:?}, len: {}",
+        first_half,
+        first_half.len()
+    );
     let second_half = hash_and_sign_message_digest(secret, first_half.clone());
     first_half.extend(second_half);
+    log::warn!("short message: {:?}, len: {}", first_half, first_half.len());
     first_half
 }
 
 pub fn verify_p2p_message(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
     let (_, dummy_pk) = themis::keygen::gen_ec_key_pair().split();
+    let default_err_resp = (false, dummy_pk);
     let full_length = message.len();
     if full_length > 248 || full_length < 246 {
         log::error!("message length not between 246 and 248");
-        return (false, dummy_pk);
+        return default_err_resp;
     }
     let public_key = match extract_pub_key_field(message.clone()) {
         Ok(k) => k,
         Err(e) => {
             log::error!("key extraction failed: {}", e);
-            return (false, dummy_pk);
+            return default_err_resp;
         }
     };
 
@@ -89,7 +96,7 @@ pub fn verify_p2p_message(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
         Ok(k) => k,
         Err(e) => {
             log::error!("could not restore public key from slice: {}", e);
-            return (false, dummy_pk);
+            return default_err_resp;
         }
     };
 
@@ -98,7 +105,7 @@ pub fn verify_p2p_message(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
         Ok(s) => s.to_string(),
         Err(e) => {
             log::error!("failure to convert discv port from utf-8 to string: {}", e);
-            return (false, dummy_pk);
+            return default_err_resp;
         }
     };
 
@@ -107,7 +114,7 @@ pub fn verify_p2p_message(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
         Ok(s) => s.to_string(),
         Err(e) => {
             log::error!("failure to convert server port from utf-8 to string: {}", e);
-            return (false, dummy_pk);
+            return default_err_resp;
         }
     };
 
@@ -126,6 +133,38 @@ pub fn verify_p2p_message(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
     (auth_ok, public_key)
 }
 
+pub fn verify_root_hash_sync_message(
+    message: Vec<u8>,
+    local_root_hash: String,
+    verif_key: EcdsaPublicKey,
+) -> (bool, u8) {
+    let default_err_resp = (false, 0);
+    let short_id = message.to_vec()[0];
+    if short_id < 48 || short_id > 57 {
+        log::error!("incorrect id, must be between 0 and 9");
+        return default_err_resp;
+    }
+    let root_hash_tag_len = 6;
+    let expected_tag = "RTHASH".to_string().as_bytes().to_vec();
+    if message[1..1 + root_hash_tag_len] != expected_tag {
+        log::error!("incorrect message format, missing root hash tag");
+        return default_err_resp;
+    }
+    let msg_root_hash = extract_root_hash_field(message.clone());
+    if msg_root_hash != local_root_hash.as_bytes().to_vec() {
+        log::error!("local root hash is not the same as in the message");
+        return default_err_resp;
+    }
+    let plain_message = extract_root_hash_field(message.clone());
+    let signed_message = extract_signed_root_hash(message);
+    if !cmp_message_with_signed_digest(verif_key, plain_message, signed_message) {
+        log::error!("could not verify root sync message");
+        return default_err_resp;
+    }
+
+    (true, short_id)
+}
+
 const PUB_KEY_LEN: usize = 90;
 const SRV_PORT_LEN: usize = 5;
 
@@ -140,6 +179,11 @@ pub fn extract_discv_port_field(v: Vec<u8>) -> Vec<u8> {
 
 pub fn extract_server_port_field(v: Vec<u8>) -> Vec<u8> {
     v[PUB_KEY_LEN + SRV_PORT_LEN..PUB_KEY_LEN + 2 * SRV_PORT_LEN].to_vec()
+}
+
+pub fn extract_root_hash_field(v: Vec<u8>) -> Vec<u8> {
+    let rh_len = 6 + 64;
+    v[1..1 + rh_len].to_vec()
 }
 
 pub fn u8_to_ascii_decimal(input: u8) -> Vec<u8> {
@@ -185,15 +229,24 @@ pub fn token_and_payload_to_vec(token: u32, msg: &str) -> Vec<u8> {
     tok
 }
 
-// same length as both port and READY message
-const MSG_LEN: usize = 10;
 pub fn extract_signed_message(v: Vec<u8>) -> Vec<u8> {
+    // same length as both port and READY message
+    let msg_len: usize = 10;
+
     let size = v.len();
     // a hack to make sure that the signed message does not include
     // zeros that the peer never intended to be part of the message
     let last_three_elements = v[size - 3..].to_vec();
     let trailing_zeros = check_zeros(last_three_elements);
-    v[PUB_KEY_LEN + MSG_LEN..size - trailing_zeros].to_vec()
+    v[PUB_KEY_LEN + msg_len..size - trailing_zeros].to_vec()
+}
+
+pub fn extract_signed_root_hash(v: Vec<u8>) -> Vec<u8> {
+    let slice = v[71..219].to_vec();
+    let size = slice.len();
+    let last_three_elements = slice[size - 3..].to_vec();
+    let trailing_zeros = check_zeros(last_three_elements);
+    v[71..219 - trailing_zeros].to_vec()
 }
 
 fn check_zeros(v: Vec<u8>) -> usize {
