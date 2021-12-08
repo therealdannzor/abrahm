@@ -1,4 +1,4 @@
-use super::common::{extract_server_port_field, verify_p2p_message};
+use super::common::{extract_server_port_field, verify_p2p_message, verify_root_hash_sync_message};
 use super::udp_utils::get_udp_and_addr;
 use super::{FromServerEvent, OrdPayload, PayloadEvent, PeerInfo, PeerShortId, UpgradedPeerData};
 use std::collections::HashMap;
@@ -37,6 +37,7 @@ async fn event_loop(
     let mut from_addr: Option<SocketAddr> = None;
     let mut buf = [0; PEER_MESSAGE_MAX_LEN];
     let wait_time = std::time::Duration::from_secs(2);
+    let total_other_peers = validator_list.len() - 1;
 
     // create listening server and register it will poll to receive events
     let (socket, port) = get_udp_and_addr().await;
@@ -48,22 +49,29 @@ async fn event_loop(
         let _ = sender.send(host_port_msg).await;
     });
 
-    // peers stored as String
+    // peers registered in initial discovery mode
     let mut registered_peers: Vec<String> = Vec::new();
+    // peers upgraded to commynicate with server handle
     let mut upgraded_peers: Vec<String> = Vec::new();
+    // peers with synchronized root hash
+    let mut sync_hash_peers: Vec<EcdsaPublicKey> = Vec::new();
+    // when all peers have been registered
     let mut registry_done = false;
+    // when all peers have been upgraded
     let mut upgrade_done = false;
+    // when all peers have the same initial root hash
     let mut root_hash_confirmed = false;
-    let mut root_hash_peers: Vec<String> = Vec::new();
 
-    // Public key mapped to short ID: String -> 'usize'
-    let hex_key_to_id = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+    // Public key mapped to short ID: usize -> String
+    let short_id_to_hex_key = Arc::new(Mutex::new(HashMap::<usize, EcdsaPublicKey>::new()));
 
     notify.notify_one();
 
     let tx_ug = tx2_in.clone();
     let mut nonce: usize = 0;
+    let rhc = root_hash.clone();
     loop {
+        let root_hash = rhc.clone();
         buf = [0; PEER_MESSAGE_MAX_LEN];
         let stream_size = Some(socket.recv(&mut buf).await?);
 
@@ -77,7 +85,6 @@ async fn event_loop(
                 let peer_key = hex::encode(peer_key_type.clone());
                 let in_registered_list = registered_peers.contains(&peer_key);
                 let in_upgraded_list = upgraded_peers.contains(&peer_key);
-                let in_root_list = root_hash_peers.contains(&peers_key);
                 if !validator_list.contains(&peer_key) {
                     log::warn!("peer not in whitelist");
                     continue;
@@ -102,11 +109,11 @@ async fn event_loop(
                     }
 
                     registered_peers.push(peer_key.clone());
-                    let arc = hex_key_to_id.clone();
+                    let arc = short_id_to_hex_key.clone();
                     let mut inner = arc.lock().await;
-                    inner.insert(peer_key.clone(), nonce);
+                    inner.insert(nonce, peer_key_type);
                     log::debug!("register peer with id {} as seen", nonce);
-                    registry_done = registered_peers.len() == validator_list.len();
+                    registry_done = registered_peers.len() == total_other_peers;
                     continue;
                 }
                 let (is_valid, peer_id) = is_upgrade_ack_tag(buf.to_vec());
@@ -127,36 +134,51 @@ async fn event_loop(
                     // the new port
                     let _ = sender.send(ug_data);
                     upgraded_peers.push(peer_key.clone());
-                    upgrade_done = upgraded_peers.len() == validator_list.len() - 1;
+                    upgrade_done = upgraded_peers.len() == total_other_peers;
                     log::debug!(
                         "upgrades done: {}/{}",
                         upgraded_peers.len(),
-                        validator_list.len() - 1
+                        total_other_peers,
                     );
+                    continue;
                 } else {
                     log::error!("upgrade ACK message rejected, discard");
                 }
                 continue;
             }
             let (is_valid, peer_id) = is_root_hash_tag(buf.to_vec());
-            if is_valid && !root_hash_confirmed && !in_root_list {
-                let hash = extract_root_hash(buf.to_vec());
-                if hash.is_none() {
-                    log::error!("incorrect root hash, discard message");
-                    continue;
+            if !is_valid {
+                let slice = &buf[..7].to_vec();
+                let msg_snip = match std::str::from_utf8(slice) {
+                    Ok(s) => s,
+                    Err(_) => "parse error",
+                };
+                log::error!("waiting for root message");
+            } else if !root_hash_confirmed {
+                let arc = short_id_to_hex_key.clone();
+                let inner = arc.lock().await;
+                let peer_id = peer_id as usize;
+                let key = match inner.get(&peer_id) {
+                    Some(k) => k.clone(),
+                    None => {
+                        log::error!("cannot find peer as upgraded, skip");
+                        continue;
+                    }
+                };
+                let in_root_list = sync_hash_peers.contains(&key);
+                let (ok, id) = verify_root_hash_sync_message(buf.to_vec(), root_hash, key.clone());
+                if ok && !in_root_list {
+                    sync_hash_peers.push(key.clone());
+                    log::debug!(
+                        "root hash synched: {}/{}",
+                        sync_hash_peers.len(),
+                        total_other_peers,
+                    );
                 }
-                let hash = hash.unwrap();
-                if hash == root_hash {
-                    root_hash_peers.push(peer_key);
-                    log::info!(
-                        "peer {} synced with local root hash, {} left",
-                        peer_id,
-                        validator_list.len() - 1 - root_hash_peers.len(),
-                    )
-                }
-            } else {
-                log::debug!("waiting for consensus message..");
+                root_hash_confirmed = sync_hash_peers.len() == total_other_peers;
             }
+        } else if root_hash_confirmed {
+            log::debug!("waiting for consensus message..");
         }
     }
 
