@@ -135,8 +135,9 @@ pub async fn start_listeners(
     root_hash: String,
 ) -> Networking {
     let (port, mut mph, rx_ug) =
-        spawn_io_listeners(pk.clone(), sk.clone(), peers.clone(), root_hash).await;
-    log::debug!("server backend port is: {}", port);
+        spawn_io_listeners(pk.clone(), sk.clone(), peers.clone(), root_hash.clone()).await;
+    log::debug!("Server port: {}", port);
+    log::debug!("Root hash: {}", root_hash);
     let upgraded_peers =
         spawn_peer_discovery_listener(pk.clone(), sk.clone(), port, peers.clone(), rx_ug).await;
 
@@ -164,7 +165,6 @@ pub async fn broadcast_root_hash(root_hash: String, net: Networking, secret: Ecd
             addr.push_str(&peer_port);
             let my_id_at_peer = peer.id();
             let payload = create_short_message(my_id_at_peer, secret.clone(), &message);
-
             let resp_address = addr.clone();
             let p = payload.clone();
             let random_num = create_rnd_number(3, 6).try_into().unwrap();
