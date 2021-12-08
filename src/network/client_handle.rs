@@ -166,8 +166,8 @@ async fn peer_loop(
                     inner.insert(msg.0, msg.1);
                     log::debug!("key ({}..) linked to id {}", key_slice, msg.1.to_string());
 
-                    // send each upgrade ACK message 6 times to make sure it hits home
-                    for _ in 0..6 {
+                    // send each upgrade ACK message a couple of times to make sure it hits home
+                    for _ in 0..8 {
                         let resp_address = resp.clone();
                         let payload = full_msg.clone();
 
