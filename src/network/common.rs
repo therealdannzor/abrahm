@@ -65,14 +65,8 @@ pub fn create_p2p_message(
 
 pub fn create_short_message(id: u32, secret: EcdsaPrivateKey, msg: &str) -> Vec<u8> {
     let mut first_half = token_and_payload_to_vec(id, msg);
-    log::warn!(
-        "first half (token and PL): {:?}, len: {}",
-        first_half,
-        first_half.len()
-    );
     let second_half = hash_and_sign_message_digest(secret, first_half.clone());
     first_half.extend(second_half);
-    log::warn!("short message: {:?}, len: {}", first_half, first_half.len());
     first_half
 }
 
@@ -150,12 +144,14 @@ pub fn verify_root_hash_sync_message(
         log::error!("incorrect message format, missing root hash tag");
         return default_err_resp;
     }
-    let msg_root_hash = extract_root_hash_field(message.clone());
-    if msg_root_hash != local_root_hash.as_bytes().to_vec() {
-        log::error!("local root hash is not the same as in the message");
+    let full_plaintext = extract_plain_root_field(message.clone());
+    // id is 1 field, expected tag is 6 fields
+    let just_root = full_plaintext[1 + expected_tag.len()..].to_vec();
+    if just_root != local_root_hash.as_bytes().to_vec() {
+        log::error!("local root hash different as to one local");
         return default_err_resp;
     }
-    let plain_message = extract_root_hash_field(message.clone());
+    let plain_message = extract_plain_root_field(message.clone());
     let signed_message = extract_signed_root_hash(message);
     if !cmp_message_with_signed_digest(verif_key, plain_message, signed_message) {
         log::error!("could not verify root sync message");
@@ -181,9 +177,11 @@ pub fn extract_server_port_field(v: Vec<u8>) -> Vec<u8> {
     v[PUB_KEY_LEN + SRV_PORT_LEN..PUB_KEY_LEN + 2 * SRV_PORT_LEN].to_vec()
 }
 
-pub fn extract_root_hash_field(v: Vec<u8>) -> Vec<u8> {
-    let rh_len = 6 + 64;
-    v[1..1 + rh_len].to_vec()
+pub fn extract_plain_root_field(v: Vec<u8>) -> Vec<u8> {
+    let id_len = 1;
+    let rh_tag = 6;
+    let rh_len = 64;
+    v[..id_len + rh_tag + rh_len].to_vec()
 }
 
 pub fn u8_to_ascii_decimal(input: u8) -> Vec<u8> {
@@ -242,11 +240,13 @@ pub fn extract_signed_message(v: Vec<u8>) -> Vec<u8> {
 }
 
 pub fn extract_signed_root_hash(v: Vec<u8>) -> Vec<u8> {
-    let slice = v[71..219].to_vec();
+    let plain_index_up_to = 1 + 6 + 64;
+    let signed_and_hash_len_max = 148;
+    let slice = v[plain_index_up_to..plain_index_up_to + signed_and_hash_len_max].to_vec();
     let size = slice.len();
     let last_three_elements = slice[size - 3..].to_vec();
     let trailing_zeros = check_zeros(last_three_elements);
-    v[71..219 - trailing_zeros].to_vec()
+    v[plain_index_up_to..plain_index_up_to + signed_and_hash_len_max - trailing_zeros].to_vec()
 }
 
 fn check_zeros(v: Vec<u8>) -> usize {
