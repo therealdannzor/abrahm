@@ -18,6 +18,7 @@ use crate::consensus::transition::{Transact, Transition};
 use crate::hashed;
 use crate::swiss_knife::helper::generate_hash_from_input;
 
+#[derive(Clone)]
 pub struct MessageWorker {
     public_key: EcdsaPublicKey,
     secret_key: EcdsaPrivateKey,

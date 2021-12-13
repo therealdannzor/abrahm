@@ -1,12 +1,14 @@
 use super::common::{extract_server_port_field, verify_p2p_message, verify_root_hash_sync_message};
+use super::message::MessageWorker;
 use super::udp_utils::get_udp_and_addr;
 use super::{FromServerEvent, OrdPayload, PayloadEvent, PeerInfo, PeerShortId, UpgradedPeerData};
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use themis::keys::EcdsaPublicKey;
-use tokio::sync::mpsc::{Sender, UnboundedSender};
+use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
+use tokio::net::UdpSocket;
+use tokio::sync::mpsc::{self, Sender, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{Mutex, Notify};
 
 pub async fn spawn_server_accept_loop(
@@ -16,9 +18,14 @@ pub async fn spawn_server_accept_loop(
     validators: Vec<String>,
     notify: Arc<Notify>,
     root_hash: String,
+    public: EcdsaPublicKey,
+    secret: EcdsaPrivateKey,
 ) {
     let join = tokio::spawn(async move {
-        event_loop(tx_out, tx_in, tx2_in, validators, notify, root_hash).await;
+        event_loop(
+            tx_out, tx_in, tx2_in, validators, notify, root_hash, public, secret,
+        )
+        .await;
     });
 
     let _ = join.await;
@@ -31,6 +38,8 @@ async fn event_loop(
     validator_list: Vec<String>,
     notify: Arc<Notify>,
     root_hash: String,
+    public: EcdsaPublicKey,
+    secret: EcdsaPrivateKey,
 ) -> Result<(), std::io::Error> {
     const PEER_MESSAGE_MAX_LEN: usize = 248;
     let mut stream_size: Option<usize> = None;
@@ -43,8 +52,9 @@ async fn event_loop(
     let (socket, port) = get_udp_and_addr().await;
     let sender = tx_out.clone();
     // spawn thread to not make Arc become mad
+    let p = port.clone();
     tokio::spawn(async move {
-        let host_port_msg = FromServerEvent::HostSocket(port);
+        let host_port_msg = FromServerEvent::HostSocket(p);
         // inform the peer loop about where the server backend listens to
         let _ = sender.send(host_port_msg).await;
     });
@@ -52,7 +62,7 @@ async fn event_loop(
     // peers registered in initial discovery mode
     let mut registered_peers: Vec<String> = Vec::new();
     // peers upgraded to commynicate with server handle
-    let mut upgraded_peers: Vec<String> = Vec::new();
+    let mut upgraded_peers: HashMap<u8, EcdsaPublicKey> = HashMap::new();
     // peers with synchronized root hash
     let mut sync_hash_peers: Vec<EcdsaPublicKey> = Vec::new();
     // when all peers have been registered
@@ -84,7 +94,7 @@ async fn event_loop(
                 }
                 let peer_key = hex::encode(peer_key_type.clone());
                 let in_registered_list = registered_peers.contains(&peer_key);
-                let in_upgraded_list = upgraded_peers.contains(&peer_key);
+                let in_upgraded_list = upgraded_peers.values().any(|x| *x == peer_key_type);
                 if !validator_list.contains(&peer_key) {
                     log::warn!("peer not in whitelist");
                     continue;
@@ -133,7 +143,7 @@ async fn event_loop(
                     // this peer, make sure to use the `token_id` as identifier and
                     // the new port
                     let _ = sender.send(ug_data);
-                    upgraded_peers.push(peer_key.clone());
+                    upgraded_peers.insert(peer_id, peer_key_type);
                     upgrade_done = upgraded_peers.len() == total_other_peers;
                     log::debug!(
                         "upgrades done: {}/{}",
@@ -148,12 +158,8 @@ async fn event_loop(
             }
             let (is_valid, peer_id) = is_root_hash_tag(buf.to_vec());
             if !is_valid {
-                let slice = &buf[..7].to_vec();
-                let msg_snip = match std::str::from_utf8(slice) {
-                    Ok(s) => s,
-                    Err(_) => "parse error",
-                };
                 log::error!("waiting for root message");
+                continue;
             } else if !root_hash_confirmed {
                 let arc = short_id_to_hex_key.clone();
                 let inner = arc.lock().await;
@@ -176,9 +182,64 @@ async fn event_loop(
                     );
                 }
                 root_hash_confirmed = sync_hash_peers.len() == total_other_peers;
+                if root_hash_confirmed {
+                    tokio::spawn(async move {
+                        server_consensus_loop(port, upgraded_peers, public, secret).await;
+                    });
+                    // exit this loop and only serv consensus messages from now on
+                    break;
+                }
             }
         } else if root_hash_confirmed {
             log::debug!("waiting for consensus message..");
+        }
+    }
+
+    Ok(())
+}
+
+async fn server_consensus_loop(
+    serv_port: String,
+    ug_peers: HashMap<u8, EcdsaPublicKey>,
+    public: EcdsaPublicKey,
+    secret: EcdsaPrivateKey,
+) -> Result<(), std::io::Error> {
+    let mut addr = "127.0.0.1:".to_string();
+    addr.push_str(&serv_port);
+    let socket = UdpSocket::bind(addr).await.unwrap();
+    let mut messages = Vec::<Vec<u8>>::new();
+    let mut buf = [0; 250];
+    let (tx, mut rx): (UnboundedSender<Vec<u8>>, UnboundedReceiver<Vec<u8>>) =
+        mpsc::unbounded_channel();
+    let message_worker = MessageWorker::new(ug_peers, secret, public);
+
+    let m = message_worker.clone();
+    tokio::spawn(async move {
+        loop {
+            buf = [0; 250];
+            let bytes_recv = match socket.recv(&mut buf).await {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            // uh, let's circle back on this exact value a bit later (TODO)
+            if bytes_recv > 200 {
+                let v = buf.to_vec();
+                match m.validate_received(v.clone()) {
+                    Ok(_) => {
+                        let _ = tx.send(v);
+                    }
+                    Err(e) => {
+                        log::error!("{}", e);
+                        continue;
+                    }
+                }
+            }
+        }
+    });
+
+    loop {
+        while let Some(msg) = rx.recv().await {
+            messages.push(msg);
         }
     }
 
