@@ -24,11 +24,15 @@ pub struct MessageWorker {
     peer_shortnames: HashMap<u8, EcdsaPublicKey>,
 }
 impl MessageWorker {
-    pub fn new(secret_key: EcdsaPrivateKey, public_key: EcdsaPublicKey) -> Self {
+    pub fn new(
+        peer_shortnames: HashMap<u8, EcdsaPublicKey>,
+        secret_key: EcdsaPrivateKey,
+        public_key: EcdsaPublicKey,
+    ) -> Self {
         Self {
             public_key,
             secret_key,
-            peer_shortnames: HashMap::new(),
+            peer_shortnames,
         }
     }
 
@@ -282,10 +286,13 @@ mod tests {
     #[test]
     fn outgoing_message_serialize_request_struct_and_verify_authenticity() {
         let (sk, pk) = keygen::gen_ec_key_pair().split();
-        let mut mw = MessageWorker::new(sk.clone(), pk.clone());
-        mw.insert_peer(49 /* corresponds to 1 */, pk.clone());
         let (_, bob_pk) = keygen::gen_ec_key_pair().split();
-        mw.insert_peer(2, bob_pk.clone());
+
+        let mut peer_map: HashMap<u8, EcdsaPublicKey> = HashMap::new();
+        peer_map.insert(49 /* corresponds to 1 */, pk.clone());
+        peer_map.insert(2, bob_pk.clone());
+
+        let mut mw = MessageWorker::new(peer_map, sk.clone(), pk.clone());
 
         let request = create_request_type("0x", 1, 2, 1);
 
@@ -323,22 +330,23 @@ mod tests {
     #[test]
     fn go_through_all_error_paths_for_message_cmp_method() {
         let (first_sk, first_pk) = keygen::gen_ec_key_pair().split();
-        let mut mw = MessageWorker::new(first_sk, first_pk.clone());
+        let (other_sk, other_pk) = keygen::gen_ec_key_pair().split();
+        let mut peer_map: HashMap<u8, EcdsaPublicKey> = HashMap::new();
+        peer_map.insert(2, other_pk);
+        peer_map.insert(8, first_pk.clone());
+        let mut mw = MessageWorker::new(peer_map, first_sk, first_pk.clone());
 
         let too_short_message = vec![60, 60, 60];
         let actual = mw.validate_received(too_short_message);
         // check that we receive error for incorrect message length
         assert_err!(actual);
 
-        let (other_sk, other_pk) = keygen::gen_ec_key_pair().split();
         let good_enough_len = vec![1; 152];
-        mw.insert_peer(2, other_pk);
         let actual = mw.validate_received(good_enough_len);
         // check that we receive error for missing entry of peer public key (inserted id=2 but we
         // have id=1)
         assert_err!(actual);
 
-        mw.insert_peer(8, first_pk.clone());
         let mut message = vec![
             8,  /* peer id */
             9,  /* incorrect consensus val */
@@ -376,8 +384,9 @@ mod tests {
     #[test]
     fn edge_cases() {
         let (sk, pk) = keygen::gen_ec_key_pair().split();
-        let mut mw = MessageWorker::new(sk, pk.clone());
-        mw.insert_peer(1, pk.clone());
+        let mut peer_map: HashMap<u8, EcdsaPublicKey> = HashMap::new();
+        peer_map.insert(1, pk.clone());
+        let mut mw = MessageWorker::new(peer_map, sk, pk.clone());
 
         let mut message = vec![1, 1];
         let payload = vec![3; 500]; // too long payload
@@ -397,8 +406,9 @@ mod tests {
         // Setup the client signation and known information about a supposed foreign peer
         // (in this case we use the client's public key as the foreign peer's identity for brevity)
         let (sk, pk) = keygen::gen_ec_key_pair().split();
-        let mut mw = MessageWorker::new(sk.clone(), pk.clone());
-        mw.insert_peer(1, pk.clone());
+        let peer_map: HashMap<u8, EcdsaPublicKey> = HashMap::new();
+        peer_map.insert(1, pk.clone());
+        let mut mw = MessageWorker::new(peer_map, sk.clone(), pk.clone());
 
         // Sign a secret message with shortest possible length
         let signed = hash_and_sign_message_digest(sk.clone(), vec![49]);
