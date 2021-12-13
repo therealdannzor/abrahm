@@ -225,14 +225,16 @@ pub async fn spawn_io_listeners(
     let notif1 = notif.clone();
     let notif2 = notif.clone();
 
+    let public = pk.clone();
+    let secret = sk.clone();
     // peer loop
     tokio::spawn(async move {
         // semaphore moved to loop to make setup is completed before giving green light
-        spawn_peer_listeners(pk, sk, rx_out, rx_in, notif1).await;
+        spawn_peer_listeners(public, secret, rx_out, rx_in, notif1).await;
     });
     // new connections loop
     tokio::spawn(async move {
-        spawn_server_accept_loop(tx_out, tx_in, tx_ug, val_set, notif2, root_hash).await;
+        spawn_server_accept_loop(tx_out, tx_in, tx_ug, val_set, notif2, root_hash, pk, sk).await;
     });
     // stop sign, wait for green light
     notif.notified().await;
