@@ -1,5 +1,5 @@
 # Abrahm Chain
-Abrahm is a permissioned Rust blockchain created for educational purposes. It is inspired by the [go-ethereum](https://github.com/ethereum/go-ethereum) and [diem](https://github.com/diem/diem) clients. A similarity with Ethereum is that it uses the account-based transaction model, mainly for simplicity. Transaction finality is done through PBFT consensus (Castro and Liskov, 1999). Diem has been used as a reference to better understand designs of Rust blockchains and as an example of how you produce excellent documentation. A significant part of the drive for this project is to implement the PBFT three-phase consensus protocol from its specification and connect it to the other modules of a blockchain system.
+Abrahm is a permissioned Rust blockchain created for educational purposes. It is inspired by the [go-ethereum](https://github.com/ethereum/go-ethereum) and [diem](https://github.com/diem/diem) clients. A similarity with Ethereum is that it uses the account-based transaction model, mainly for simplicity. Transaction finality is handled through PBFT consensus (Castro and Liskov, 1999). Diem has been used as a reference to better understand designs of Rust blockchains and as an example of how to produce excellent documentation. A significant part of the drive for this project is to implement the PBFT three-phase consensus protocol from its specification and connect it to the other modules of a blockchain system.
 
 Due to the wide scope, building a functional blockchain from scratch, certain trade-offs has been done. The goals have been boiled down to the essentials and the non-goals are many.
 
@@ -7,17 +7,17 @@ Due to the wide scope, building a functional blockchain from scratch, certain tr
 ### Goal (Implementation features)
 * Value ("cryptocurrency") transfer from one entity to another
 * Prevent a limited set of attack vectors such double spend and masquerading through cryptography
-* Mining mechanism based on a BFT protocol for relatively high throughput
+* Mining mechanism based on a BFT algorithm for relatively high throughput
 * Messaging protocol to encapsulate all the stages and states in the blockchain lifecycle
 * Concurrent, multithreaded, and asynchronous
 
 ### Non-Goals (Omit) and Limitations
-* Smart contract functionality or any other functionality apart from send / receive of value
-* Additional networking protocols to upgrade and optimize message passing further
-* Internetworking support; only supports LAN
-* Unbounded amount of peers and scalability; fixed set of validator peers
-* Post-startup synchronization; all peers must boot around the same time
-* Cross-platform compatibility; only supports macOS
+* No smart contract functionality or any other functionality apart from send / receive of value
+* No additional networking protocols to upgrade and optimize message passing further
+* No internetworking support; only supports LAN
+* No unbounded amount of peers and scalability; fixed set of validator peers
+* No post-startup synchronization; all peers must boot around the same time
+* No cross-platform compatibility; only supports macOS
 
 ### Architecture
 The ambition is to demonstrate the most fundamental components of a working blockchain, albeit with rudimentary functionality. The focus is to deliver a complete and working baseline rather than the most clever, novel, and performant one. The different architectural components are:
