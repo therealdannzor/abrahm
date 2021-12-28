@@ -3,7 +3,7 @@ use crate::ledger::controller::calculate_fee;
 use std::collections::HashMap;
 
 #[derive(Clone)]
-// Replay replays a proposed transition on the ledger to verify its validitiy
+// Replay replays a proposed transition on the ledger to verify its validity
 pub struct Replay {
     cache: HashMap<u8, Peer>,
 }
