@@ -400,35 +400,4 @@ mod tests {
         let actual = mw.validate_received(message);
         assert_err!(actual);
     }
-
-    #[ignore]
-    #[test]
-    pub fn sign_and_decrypt_consensus_message() {
-        // Setup the client signation and known information about a supposed foreign peer
-        // (in this case we use the client's public key as the foreign peer's identity for brevity)
-        let (sk, pk) = keygen::gen_ec_key_pair().split();
-        let peer_map: HashMap<u8, EcdsaPublicKey> = HashMap::new();
-        peer_map.insert(1, pk.clone());
-        let mut mw = MessageWorker::new(peer_map, sk.clone(), pk.clone());
-
-        // Sign a secret message with shortest possible length
-        let signed = hash_and_sign_message_digest(sk.clone(), vec![49]);
-        let sign_len = usize_to_ascii_decimal(signed.len());
-        // Construct the complete message as passed over TCP:
-        // Index 0:        Consensus phase
-        // Index 1:        Peer ID
-        // Index 2 to 4:   Length (L) of payload
-        // Index 5 to 5+L: Payload
-        //
-        // 48 = digit 0 in ASCII decimal
-        // 49 = digit 1 in ASCII decimal
-        let mut msg = vec![1, 1, 48, 48, 49, 49];
-        // After appending the signed message:
-        // From index 5+L+1 to the end : The signed message
-        msg.extend(signed);
-
-        // Returns true if the message we have constructed is authentic and non-tampered with
-        let result = mw.validate_received(msg);
-        assert_ok!(result);
-    }
 }
