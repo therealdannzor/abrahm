@@ -1,4 +1,4 @@
-use crate::swiss_knife::helper::{hash_and_sign_message_digest, hash_from_vec_u8_input};
+use swiss_knife::helper::{hash_and_sign_message_digest, hash_from_vec_u8_input};
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use themis::secure_message::SecureVerify;
 

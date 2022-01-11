@@ -1,9 +1,9 @@
 #![allow(unused)]
-use crate::swiss_knife::helper::hash_and_sign_message_digest;
 use std::boxed::Box;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::ErrorKind;
+use swiss_knife::helper::hash_and_sign_message_digest;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey, PublicKey};
 use themis::secure_message::SecureSign;
 
@@ -11,12 +11,14 @@ use super::common::{
     cmp_message_with_signed_digest, parse_u8_to_enum, u8_to_ascii_decimal, usize_to_ascii_decimal,
     vec_u8_ascii_decimal_to_u8,
 };
-use crate::consensus::messages_tp::{Commit, Prepare, Preprepare};
-use crate::consensus::request::Request;
-use crate::consensus::transition::{Transact, Transition};
+use consensus::{
+    messages_tp::{Commit, Prepare, Preprepare},
+    request::Request,
+    transition::{Transact, Transition},
+};
 
-use crate::hashed;
-use crate::swiss_knife::helper::generate_hash_from_input;
+use swiss_knife::hashed;
+use swiss_knife::helper::generate_hash_from_input;
 
 #[derive(Clone)]
 pub struct MessageWorker {

@@ -1,10 +1,9 @@
-use super::common::{create_p2p_message, create_short_message, extract_server_port_field};
+use super::common::create_p2p_message;
 use super::discovery::create_rnd_number;
 use super::udp_utils::any_udp_socket;
-use super::{FromServerEvent, OrdPayload, PayloadEvent, PeerShortId, UpgradedPeerData};
+use super::{FromServerEvent, OrdPayload, PayloadEvent, PeerShortId};
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::sync::Notify;
@@ -90,7 +89,7 @@ async fn peer_upgraded_loop(mut rx: Receiver<PayloadEvent>) {
                 }
                 PayloadEvent::Get(i, sender) => {
                     let arc = id_to_ord_payload.clone();
-                    let mut inner = arc.lock().await;
+                    let inner = arc.lock().await;
                     let payload = match inner.get(&i.0) {
                         Some(p) => sender.send(p.to_vec()),
                         None => sender.send(vec![OrdPayload(vec![0], 0)]),

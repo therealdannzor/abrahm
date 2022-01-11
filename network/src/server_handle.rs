@@ -1,9 +1,8 @@
 use super::common::{extract_server_port_field, verify_p2p_message, verify_root_hash_sync_message};
 use super::message::MessageWorker;
 use super::udp_utils::get_udp_and_addr;
-use super::{FromServerEvent, OrdPayload, PayloadEvent, PeerInfo, PeerShortId, UpgradedPeerData};
+use super::{FromServerEvent, PayloadEvent, PeerInfo, UpgradedPeerData};
 use std::collections::HashMap;
-use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
@@ -42,8 +41,8 @@ async fn event_loop(
     secret: EcdsaPrivateKey,
 ) -> Result<(), std::io::Error> {
     const PEER_MESSAGE_MAX_LEN: usize = 248;
-    let mut stream_size: Option<usize> = None;
-    let mut from_addr: Option<SocketAddr> = None;
+    let stream_size: Option<usize> = None;
+    let from_addr: Option<SocketAddr> = None;
     let mut buf = [0; PEER_MESSAGE_MAX_LEN];
     let wait_time = std::time::Duration::from_secs(2);
     let total_other_peers = validator_list.len() - 1;
@@ -242,8 +241,6 @@ async fn server_consensus_loop(
             messages.push(msg);
         }
     }
-
-    Ok(())
 }
 
 fn is_upgrade_syn_tag(v: Vec<u8>) -> bool {

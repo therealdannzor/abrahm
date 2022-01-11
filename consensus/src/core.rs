@@ -1,6 +1,5 @@
 #![allow(unused)]
 use super::engine::Engine;
-use crate::ledger::state_db::StateDB;
 use crate::types::block::Block;
 use themis::keys::EcdsaPublicKey;
 use tokio::sync::mpsc;

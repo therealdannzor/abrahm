@@ -1,5 +1,5 @@
 #![allow(unused)]
-use crate::consensus::common::{Committer, SequenceNumber, View};
+use crate::common::{Committer, SequenceNumber, View};
 use serde::{Deserialize, Serialize};
 
 ///! Contains the message types for the three-phase consensus (PREPREPARE, PREPARE, COMMIT)

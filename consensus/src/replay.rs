@@ -1,5 +1,4 @@
-use crate::consensus::transition::Transact;
-use crate::ledger::controller::calculate_fee;
+use crate::transition::Transact;
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -162,6 +161,11 @@ fn cache_balance(account: u8, cache: HashMap<u8, Peer>) -> u32 {
     } else {
         return p.unwrap().1;
     }
+}
+
+// calculate_fee calculates 5% of the transfer amount, rounded up, as fee
+pub fn calculate_fee(amount: u16) -> f64 {
+    (((amount as f64) / 100f64) * 5f64).ceil()
 }
 
 #[cfg(test)]

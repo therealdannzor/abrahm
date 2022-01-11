@@ -1,7 +1,7 @@
 #![allow(unused)]
 
-use crate::consensus::request::Request;
-use crate::ledger::replay::Replay;
+use crate::replay::Replay;
+use crate::request::Request;
 use std::{collections::HashMap, io::ErrorKind, vec::Vec};
 
 use super::common::{

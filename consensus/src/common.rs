@@ -2,8 +2,8 @@ use super::{
     engine::{State, M},
     view::ViewChangeMessage,
 };
-use crate::{hashed, swiss_knife::helper::generate_hash_from_input};
 use std::collections::HashMap;
+use swiss_knife::{hashed, helper::generate_hash_from_input};
 
 // Common types being used during the consensus process
 pub type View = u64;

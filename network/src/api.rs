@@ -1,20 +1,16 @@
 use super::discovery::{create_rnd_number, spawn_peer_discovery_loop, ValidatedPeer};
-use super::{FromServerEvent, OrdPayload, PayloadEvent, UpgradedPeerData};
-use crate::network::client_handle::{spawn_peer_listeners, MessagePeerHandle};
-use crate::network::common::{create_p2p_message, public_key_and_payload_to_vec};
-use crate::network::server_handle::spawn_server_accept_loop;
-use crate::network::udp_utils::any_udp_socket;
-use crate::swiss_knife::helper::hash_and_sign_message_digest;
+use super::{FromServerEvent, PayloadEvent, UpgradedPeerData};
+use crate::client_handle::{spawn_peer_listeners, MessagePeerHandle};
+use crate::common::create_p2p_message;
+use crate::server_handle::spawn_server_accept_loop;
+use crate::udp_utils::any_udp_socket;
 use std::convert::TryInto;
-use std::error::Error;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::sync::{
     mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender},
-    oneshot::error::TryRecvError,
     Notify,
 };
-use tokio::task::JoinHandle;
 
 pub struct Networking {
     // List of (presumably) connected and validated peers which the client can communicate with

@@ -1,11 +1,9 @@
 use super::common::{
-    cmp_message_with_signed_digest, extract_discv_port_field, extract_pub_key_field,
-    extract_server_port_field, extract_signed_message, public_key_and_payload_to_vec,
+    extract_discv_port_field, extract_server_port_field, public_key_and_payload_to_vec,
     verify_p2p_message,
 };
-use crate::swiss_knife::helper::hash_and_sign_message_digest;
-use futures::StreamExt;
 use libp2p::{
+    futures::StreamExt,
     identity,
     mdns::{Mdns, MdnsConfig, MdnsEvent},
     swarm::{Swarm, SwarmEvent},
@@ -15,14 +13,11 @@ use rand::{
     distributions::{Distribution, Uniform},
     thread_rng,
 };
-use std::convert::TryInto;
 use std::error::Error;
+use swiss_knife::helper::hash_and_sign_message_digest;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::net::UdpSocket;
-use tokio::sync::{
-    mpsc::{self, Receiver, Sender},
-    Notify,
-};
+use tokio::sync::{mpsc::Sender, Notify};
 use tokio::task::JoinHandle;
 
 pub async fn spawn_peer_discovery_loop(
