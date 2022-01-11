@@ -1,5 +1,9 @@
-# build folder
+# build folders
 /target
+/consensus/target
+/network/target
+/ledger/target
+/swiss_knife/target
 
 # tmp test folder
 /test
