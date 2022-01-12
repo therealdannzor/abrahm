@@ -273,7 +273,7 @@ impl NewViewMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::testcommons::generate_keys_as_str;
+    use crate::testcommons::generate_keys_as_str;
     use std::iter::Map;
 
     const DIG: &str = "dig"; // digest

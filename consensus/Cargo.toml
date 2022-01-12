@@ -15,6 +15,7 @@ serde_json = "1.0"
 uuid = { version = "0.4", features = ["serde", "v4"] }
 log = "0.4"
 hex = "0.4.2"
+serial_test = "0.5.1"
 
 swiss_knife = { path = "../swiss_knife" }
 types = { path = "../types" }

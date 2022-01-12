@@ -612,8 +612,8 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::testcommons::generate_keys_as_str;
-    use crate::consensus::transition::{Transact, Transition};
+    use crate::testcommons::generate_keys_as_str;
+    use crate::transition::{Transact, Transition};
     use themis::keys::EcdsaPublicKey;
     use tokio_test::{assert_err, assert_ok};
 

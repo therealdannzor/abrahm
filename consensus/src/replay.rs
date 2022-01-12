@@ -171,7 +171,7 @@ pub fn calculate_fee(amount: u16) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::testcommons::generate_keys_as_str;
+    use crate::testcommons::generate_keys_as_str;
     use serial_test::serial;
     use tokio_test::{assert_err, assert_ok};
 

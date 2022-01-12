@@ -142,8 +142,8 @@ impl ValidatorProcess {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::state::State;
-    use crate::consensus::testcommons::generate_keys_as_str;
+    use crate::state::State;
+    use crate::testcommons::generate_keys_as_str;
     use std::iter::Iterator;
     use themis::keygen;
 
