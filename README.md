@@ -1,7 +1,7 @@
 # Abrahm Chain
 Abrahm is a permissioned Rust blockchain created for educational purposes. It is inspired by the [go-ethereum](https://github.com/ethereum/go-ethereum) and [diem](https://github.com/diem/diem) clients. A similarity with Ethereum is that it uses the account-based transaction model, mainly for simplicity. Transaction finality is handled through PBFT consensus (Castro and Liskov, 1999). Diem has been used as a reference to better understand designs of Rust blockchains and as an example of how to produce excellent documentation. A significant part of the drive for this project is to implement the PBFT three-phase consensus protocol from its specification and connect it to the other modules of a blockchain system.
 
-Due to the wide scope, building a functional blockchain from scratch, certain trade-offs has been done. The goals have been boiled down to the essentials and the non-goals are many.
+Due to the wide scope, building a functional blockchain from scratch, several trade-offs have been done. The goals have been boiled down to the essentials and the non-goals are many.
 
 
 ### Goal (Implementation features)
@@ -21,9 +21,9 @@ Due to the wide scope, building a functional blockchain from scratch, certain tr
 
 ### Architecture
 The ambition is to demonstrate the most fundamental components of a working blockchain, albeit with rudimentary functionality. The focus is to deliver a complete and working baseline rather than the most clever, novel, and performant one. The different architectural components are:
-* [ledger](src/ledger/README.md): state database, key management, and chain initialization
-* [consensus](src/consensus/README.md): the state negotiation protocol (PBFT)
-* [network](src/network/README.md): peer-to-peer discovery and messaging
+* [ledger](src/ledger): state database, key management, and chain initialization
+* [consensus](src/consensus): the state negotiation protocol (PBFT)
+* [network](src/network): peer-to-peer discovery and messaging
 * swiss_knife: various helpers
 * types: block and transaction types
 
