@@ -86,7 +86,7 @@ fn update_mutex_timestamp(m: &Mutex<i64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::block::Block;
+    use crate::block::Block;
     use serde_json::Value;
 
     fn setup() -> (Vec<Block>, PoolManager) {

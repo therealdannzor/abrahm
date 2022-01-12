@@ -185,7 +185,7 @@ impl TxPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::transaction::*;
+    use crate::transaction::*;
     use themis::keygen;
     use themis::keys::EcdsaPublicKey;
 

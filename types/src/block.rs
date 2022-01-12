@@ -109,8 +109,8 @@ impl Display for Block {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashed; // macros are exported to the crate root level
     use crate::swiss_knife::helper::generate_hash_from_input;
+    use swiss_knife::hashed; // macros are exported to the crate root level
 
     #[test]
     fn genesis_block() {
