@@ -1,16 +1,23 @@
-[workspace]
-resolver = "2"
+[package]
+description = "AbrahmChain"
+name = "abrahmchain"
+version = "0.1.0"
+authors = ["dkf <dannzor@outlook.com>"]
+edition = "2018"
 
-members = [
-	"consensus",
-	"ledger",
-	"network",
-	"types",
-	"swiss_knife",
-]
+[dependencies]
+consensus = { path = "consensus" }
+ledger = { path = "ledger" }
+network = { path = "network" }
+types = { path = "types" }
+swiss_knife = { path = "swiss_knife" }
 
+[lib]
+path = "bin/lib.rs"
 
-# helper = { path = "./swiss_knife/src/helper.rs" }
+[[bin]]
+path = "bin/main.rs"
+name = "abrahmchain"
 
 [profile.release]
 debug = true
