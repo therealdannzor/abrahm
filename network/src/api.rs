@@ -156,7 +156,6 @@ async fn upgrade_server_backend(
     server_port: String,
 ) {
     let socket = any_udp_socket().await;
-    let synced_peers: Vec<String> = Vec::new();
 
     for i in 0..3 * peers.len() {
         let mut address = "127.0.0.1:".to_string();

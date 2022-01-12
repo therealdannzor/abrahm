@@ -56,7 +56,6 @@ async fn peer_discovery_loop(
     let mut swarm = Swarm::new(transport, behaviour, peer_id);
     let assign_multi_addr = "/ip4/0.0.0.0/tcp/0".parse::<libp2p::Multiaddr>()?;
     let _ = swarm.listen_on(assign_multi_addr.clone());
-    let notify = Notify::new();
     let mut my_disc_port = "".to_string();
 
     loop {
@@ -65,7 +64,6 @@ async fn peer_discovery_loop(
             SwarmEvent::Behaviour(MdnsEvent::Discovered(peers)) => {
                 for (_, addr) in peers {
                     let discv_addr = multi_to_socket_addr(addr.clone());
-                    let discv_port = extract_port_from_multi(addr);
                     let socket = UdpSocket::bind("127.0.0.1:0").await?;
                     let broadcast_disc_msg = create_discv_handshake(
                         pk.clone(),
@@ -98,7 +96,6 @@ async fn peer_discovery_loop(
                         socket,
                         buf: vec![0; 248],
                         stream_size: None,
-                        exploration_mode: true,
                         ready_upgrade_mode: false,
                     };
                     let list_peers = to_discover.clone();
@@ -163,7 +160,6 @@ pub struct Server {
     socket: UdpSocket,
     buf: Vec<u8>,
     stream_size: Option<usize>,
-    exploration_mode: bool,
     ready_upgrade_mode: bool,
 }
 
@@ -325,14 +321,11 @@ fn create_discv_handshake(
 }
 
 const PUB_KEY_LEN: usize = 90;
-const SRV_PORT_LEN: usize = 5;
 
 fn check_for_ready_message(v: Vec<u8>) -> bool {
     let expected = "READYREADY".to_string().as_bytes().to_vec();
     let payload_len = expected.len();
     let p = v[PUB_KEY_LEN..PUB_KEY_LEN + payload_len].to_vec();
-    let p1 = p.clone();
-    let s = std::str::from_utf8(&p1).unwrap();
     p == expected
 }
 

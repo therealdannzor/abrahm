@@ -3,7 +3,6 @@ use super::message::MessageWorker;
 use super::udp_utils::get_udp_and_addr;
 use super::{FromServerEvent, PayloadEvent, PeerInfo, UpgradedPeerData};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
 use tokio::net::UdpSocket;
@@ -21,7 +20,7 @@ pub async fn spawn_server_accept_loop(
     secret: EcdsaPrivateKey,
 ) {
     let join = tokio::spawn(async move {
-        event_loop(
+        let _ = event_loop(
             tx_out, tx_in, tx2_in, validators, notify, root_hash, public, secret,
         )
         .await;
@@ -32,7 +31,7 @@ pub async fn spawn_server_accept_loop(
 
 async fn event_loop(
     tx_out: Sender<FromServerEvent>,
-    tx_in: Sender<PayloadEvent>,
+    _tx_in: Sender<PayloadEvent>, //TODO: verify that this can be removed
     tx2_in: UnboundedSender<UpgradedPeerData>,
     validator_list: Vec<String>,
     notify: Arc<Notify>,
@@ -41,10 +40,6 @@ async fn event_loop(
     secret: EcdsaPrivateKey,
 ) -> Result<(), std::io::Error> {
     const PEER_MESSAGE_MAX_LEN: usize = 248;
-    let stream_size: Option<usize> = None;
-    let from_addr: Option<SocketAddr> = None;
-    let mut buf = [0; PEER_MESSAGE_MAX_LEN];
-    let wait_time = std::time::Duration::from_secs(2);
     let total_other_peers = validator_list.len() - 1;
 
     // create listening server and register it will poll to receive events
@@ -81,7 +76,7 @@ async fn event_loop(
     let rhc = root_hash.clone();
     loop {
         let root_hash = rhc.clone();
-        buf = [0; PEER_MESSAGE_MAX_LEN];
+        let mut buf = [0; PEER_MESSAGE_MAX_LEN];
         let stream_size = Some(socket.recv(&mut buf).await?);
 
         if let Some(_) = stream_size {
@@ -171,7 +166,7 @@ async fn event_loop(
                     }
                 };
                 let in_root_list = sync_hash_peers.contains(&key);
-                let (ok, id) = verify_root_hash_sync_message(buf.to_vec(), root_hash, key.clone());
+                let (ok, _id) = verify_root_hash_sync_message(buf.to_vec(), root_hash, key.clone());
                 if ok && !in_root_list {
                     sync_hash_peers.push(key.clone());
                     log::debug!(
@@ -183,7 +178,7 @@ async fn event_loop(
                 root_hash_confirmed = sync_hash_peers.len() == total_other_peers;
                 if root_hash_confirmed {
                     tokio::spawn(async move {
-                        server_consensus_loop(port, upgraded_peers, public, secret).await;
+                        let _ = server_consensus_loop(port, upgraded_peers, public, secret).await;
                     });
                     // exit this loop and only serv consensus messages from now on
                     break;
@@ -215,7 +210,6 @@ async fn server_consensus_loop(
     let m = message_worker.clone();
     tokio::spawn(async move {
         loop {
-            buf = [0; 250];
             let bytes_recv = match socket.recv(&mut buf).await {
                 Ok(n) => n,
                 Err(_) => continue,
@@ -272,6 +266,7 @@ fn is_root_hash_tag(v: Vec<u8>) -> (bool, u8) {
     }
 }
 
+#[allow(unused)]
 fn extract_root_hash(v: Vec<u8>) -> Option<String> {
     let rh_len = 64;
     let root_hash = &v[7..7 + rh_len];

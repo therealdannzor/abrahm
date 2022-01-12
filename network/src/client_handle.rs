@@ -90,7 +90,7 @@ async fn peer_upgraded_loop(mut rx: Receiver<PayloadEvent>) {
                 PayloadEvent::Get(i, sender) => {
                     let arc = id_to_ord_payload.clone();
                     let inner = arc.lock().await;
-                    let payload = match inner.get(&i.0) {
+                    let _ = match inner.get(&i.0) {
                         Some(p) => sender.send(p.to_vec()),
                         None => sender.send(vec![OrdPayload(vec![0], 0)]),
                     };
@@ -155,8 +155,6 @@ async fn peer_loop(
                     let mut resp = "127.0.0.1:".to_string();
                     resp.push_str(&msg.2);
 
-                    let msg_len = full_msg.len();
-                    let new_client_id = msg.1.clone();
                     let socket = any_udp_socket().await;
 
                     let arc = hex_key_to_id.clone();
