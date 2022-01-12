@@ -275,13 +275,12 @@ fn check_id_length(short_identifier: u8) -> Result<(), std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::transition::{Transact, Transition};
-    use crate::hashed;
-    use crate::network::common::usize_to_ascii_decimal;
-    use crate::swiss_knife::helper::generate_hash_from_input;
+    use crate::common::usize_to_ascii_decimal;
+    use consensus::transition::{Transact, Transition};
     use crypto::digest::Digest;
     use crypto::sha2::Sha256;
-    use std::convert::TryFrom;
+    use swiss_knife::hashed;
+    use swiss_knife::helper::generate_hash_from_input;
     use themis::keygen;
     use themis::secure_message::{SecureSign, SecureVerify};
     use tokio_test::{assert_err, assert_ok};

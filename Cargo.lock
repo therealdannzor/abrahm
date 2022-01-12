@@ -1862,6 +1862,7 @@ dependencies = [
  "libp2p",
  "log",
  "rand 0.8.4",
+ "rust-crypto",
  "serde_json",
  "swiss_knife",
  "themis",
