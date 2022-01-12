@@ -1132,8 +1132,10 @@ dependencies = [
  "rust-crypto",
  "serde 1.0.125",
  "serde_json",
+ "serial_test",
  "swiss_knife",
  "themis",
+ "tokio-test",
 ]
 
 [[package]]

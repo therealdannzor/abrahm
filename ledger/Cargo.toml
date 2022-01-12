@@ -6,6 +6,8 @@ edition = "2018"
 
 [dependencies]
 themis = "0.13.0"
+tokio-test = "0.4.1"
+serial_test = "0.5.1"
 rust-crypto = "^0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
