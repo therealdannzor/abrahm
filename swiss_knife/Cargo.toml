@@ -5,7 +5,7 @@ authors = ["dkf <dannzor@outlook.com>"]
 edition = "2018"
 
 [dependencies]
-themis = "0.13.0"
+themis = "0.14.0"
 chrono = "0.4"
 rust-crypto = "^0.2"
 hex = "0.4.2"

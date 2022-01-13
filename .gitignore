@@ -1,13 +1,9 @@
-# build folders
-/target
-/consensus/target
-/network/target
-/ledger/target
-/swiss_knife/target
+# Cargo in sub dirs
+**/Cargo.lock
+**/target/
 
-# tmp test folder
-/test
-/ledger/test
+# test folders
+**/test/
 
 # state database
 /database
