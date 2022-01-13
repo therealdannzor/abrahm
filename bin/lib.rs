@@ -1,3 +1,6 @@
+mod blockchain;
+mod cli;
+
 extern crate consensus;
 extern crate ledger;
 extern crate network;

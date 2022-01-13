@@ -6,6 +6,12 @@ authors = ["dkf <dannzor@outlook.com>"]
 edition = "2018"
 
 [dependencies]
+tokio = { version = "1.14.0", features = ["full"] }
+themis = "0.14.0"
+clap = "2.27.0"
+log = "0.4"
+serial_test = "0.5.1"
+
 consensus = { path = "consensus" }
 ledger = { path = "ledger" }
 network = { path = "network" }
