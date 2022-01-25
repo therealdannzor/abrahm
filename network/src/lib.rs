@@ -4,7 +4,7 @@ pub mod common;
 pub mod discovery;
 pub mod message;
 pub mod server_handle;
-pub mod udp_utils;
+pub mod utils;
 
 #[derive(PartialEq, Clone, Debug)]
 pub struct UpgradedPeerData(

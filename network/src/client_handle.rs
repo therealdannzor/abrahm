@@ -1,6 +1,6 @@
 use super::common::create_p2p_message;
 use super::discovery::create_rnd_number;
-use super::udp_utils::any_udp_socket;
+use super::utils::any_udp_socket;
 use super::{FromServerEvent, OrdPayload, PayloadEvent, PeerShortId};
 use std::collections::HashMap;
 use std::convert::TryInto;

@@ -3,7 +3,7 @@ use super::{FromServerEvent, PayloadEvent, UpgradedPeerData};
 use crate::client_handle::{spawn_peer_listeners, MessagePeerHandle};
 use crate::common::create_p2p_message;
 use crate::server_handle::spawn_server_accept_loop;
-use crate::udp_utils::any_udp_socket;
+use crate::utils::any_udp_socket;
 use std::convert::TryInto;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};

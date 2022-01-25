@@ -1,6 +1,6 @@
 use super::common::{extract_server_port_field, verify_p2p_message, verify_root_hash_sync_message};
 use super::message::MessageWorker;
-use super::udp_utils::get_udp_and_addr;
+use super::utils::get_udp_and_addr;
 use super::{FromServerEvent, PayloadEvent, PeerInfo, UpgradedPeerData};
 use std::collections::HashMap;
 use std::sync::Arc;

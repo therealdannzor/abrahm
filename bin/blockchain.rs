@@ -8,7 +8,7 @@ use crate::network::api::{spawn_io_listeners, spawn_peer_discovery_listener, Net
 use crate::network::client_handle::MessagePeerHandle;
 use crate::network::common::create_short_message;
 use crate::network::discovery::{create_rnd_number, ValidatedPeer};
-use crate::network::udp_utils::any_udp_socket;
+use crate::network::utils::any_udp_socket;
 use crate::network::UpgradedPeerData;
 use crate::types::{block::Block, pool::TxPool};
 use std::convert::TryInto;
