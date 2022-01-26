@@ -4,6 +4,7 @@ pub mod common;
 pub mod connection_hub;
 pub mod discovery;
 pub mod message;
+pub mod peer;
 pub mod server_handle;
 pub mod utils;
 
