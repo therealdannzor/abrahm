@@ -1,24 +1,68 @@
 #![allow(unused)]
-use std::boxed::Box;
-use std::collections::HashMap;
-use std::fmt;
-use std::io::ErrorKind;
-use swiss_knife::helper::hash_and_sign_message_digest;
-use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey, PublicKey};
-use themis::secure_message::SecureSign;
-
 use super::common::{
     cmp_message_with_signed_digest, parse_u8_to_enum, u8_to_ascii_decimal, usize_to_ascii_decimal,
     vec_u8_ascii_decimal_to_u8,
 };
+use bendy::encoding::{Error, ToBencode};
 use consensus::{
     messages_tp::{Commit, Prepare, Preprepare},
     request::Request,
     transition::{Transact, Transition},
 };
+use std::boxed::Box;
+use std::collections::HashMap;
+use std::fmt;
+use std::io::ErrorKind;
+use swiss_knife::{
+    hashed,
+    helper::{generate_hash_from_input, hash_and_sign_message_digest},
+};
+use themis::{
+    keys::{EcdsaPrivateKey, EcdsaPublicKey, PublicKey},
+    secure_message::SecureSign,
+};
 
-use swiss_knife::hashed;
-use swiss_knife::helper::generate_hash_from_input;
+// The different type of message codes a peer send to one another
+enum Code {
+    // Handshakes after discovery
+    Ping,
+    Pong,
+    AckPong,
+
+    // Consensus messages
+    TransactionRequest,
+    PrePrepare,
+    Prepare,
+    Commit,
+    ViewChange,
+    NewView,
+    Checkpoint,
+}
+
+fn enc_message(
+    code: Code,
+    payload: Vec<u8>,
+    public_key: Option<EcdsaPublicKey>,
+) -> Result<Vec<u8>, bendy::encoding::Error> {
+    let mut msg_code = "";
+
+    match code {
+        ping => msg_code = "ping",
+        pong => msg_code = "pong",
+        ack_pong => msg_code = "ack",
+        transaction_request => msg_code = "txr",
+        preprepare => msg_code = "ppp",
+        prepare => msg_code = "pre",
+        commit => msg_code = "com",
+        view_change => msg_code = "chg",
+        newview => msg_code = "new",
+        checkpoint => msg_code = "cpt",
+    }
+
+    let data = vec![msg_code];
+    let encoded = data.to_bencode()?;
+    Ok(encoded.as_slice().to_vec())
+}
 
 #[derive(Clone)]
 pub struct MessageWorker {
