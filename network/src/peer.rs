@@ -28,7 +28,7 @@ pub struct Peer {
 
 const MAX_LENGTH: usize = 550;
 
-struct TestPipe {
+pub struct TestPipe {
     w: Sender<[u8; MAX_LENGTH]>,
     r: Receiver<[u8; MAX_LENGTH]>,
 }
@@ -76,7 +76,7 @@ impl Peer {
             }
         } else if self.test_pipe.is_some() {
             let s = &self.test_pipe.as_ref().unwrap().w;
-            s.send(msg);
+            let _ = s.send(msg).await;
         } else {
             return Err(io::Error::new(
                 ErrorKind::Unsupported,
@@ -87,7 +87,7 @@ impl Peer {
         Ok(())
     }
 
-    pub async fn recv(&self) -> Result<[u8; MAX_LENGTH], io::Error> {
+    pub async fn recv(self) -> Result<[u8; MAX_LENGTH], io::Error> {
         if self.rw.is_some() {
             loop {
                 let recv = self.rw.as_ref().unwrap();
@@ -110,7 +110,7 @@ impl Peer {
                 }
             }
         } else if self.test_pipe.is_some() {
-            let r = &self.test_pipe.as_ref().unwrap().r;
+            let mut r = self.test_pipe.unwrap().r;
             if let Some(msg) = r.recv().await {
                 return Ok(msg);
             } else {
