@@ -1,9 +1,9 @@
 #![allow(unused)]
 use super::common::{
-    cmp_message_with_signed_digest, parse_u8_to_enum, u8_to_ascii_decimal, usize_to_ascii_decimal,
-    vec_u8_ascii_decimal_to_u8,
+    cmp_message_with_signed_digest, create_p2p_message, parse_u8_to_enum, u8_to_ascii_decimal,
+    usize_to_ascii_decimal, vec_u8_ascii_decimal_to_u8,
 };
-use bendy::encoding::{Error, ToBencode};
+use bendy::encoding::{self, SingleItemEncoder, ToBencode};
 use consensus::{
     messages_tp::{Commit, Prepare, Preprepare},
     request::Request,
@@ -22,8 +22,9 @@ use themis::{
     secure_message::SecureSign,
 };
 
+#[derive(PartialEq, Copy, Clone)]
 // The different type of message codes a peer send to one another
-enum Code {
+pub enum Code {
     // Handshakes after discovery
     Ping,
     Pong,
@@ -39,29 +40,86 @@ enum Code {
     Checkpoint,
 }
 
-fn enc_message(
-    code: Code,
-    payload: Vec<u8>,
-    public_key: Option<EcdsaPublicKey>,
-) -> Result<Vec<u8>, bendy::encoding::Error> {
-    let mut msg_code = "";
-
-    match code {
-        ping => msg_code = "ping",
-        pong => msg_code = "pong",
-        ack_pong => msg_code = "ack",
-        transaction_request => msg_code = "txr",
-        preprepare => msg_code = "ppp",
-        prepare => msg_code = "pre",
-        commit => msg_code = "com",
-        view_change => msg_code = "chg",
-        newview => msg_code = "new",
-        checkpoint => msg_code = "cpt",
+impl fmt::Display for Code {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Code::Ping => write!(f, "ping"),
+            Code::Pong => write!(f, "pong"),
+            Code::AckPong => write!(f, "ack"),
+            Code::TransactionRequest => write!(f, "txr"),
+            Code::PrePrepare => write!(f, "ppp"),
+            Code::Prepare => write!(f, "pre"),
+            Code::Commit => write!(f, "com"),
+            Code::ViewChange => write!(f, "chn"),
+            Code::NewView => write!(f, "new"),
+            Code::Checkpoint => write!(f, "cpt"),
+        }
     }
+}
 
-    let data = vec![msg_code];
-    let encoded = data.to_bencode()?;
-    Ok(encoded.as_slice().to_vec())
+pub struct MetaHandshake {
+    // handshake sequence
+    code: String,
+    // local node public key
+    id: String,
+    // local node handshake port
+    port: String,
+}
+
+impl MetaHandshake {
+    pub fn new(code: Code, id: EcdsaPublicKey, port: String) -> Self {
+        if code != Code::Ping || code != Code::Pong || code != Code::AckPong || port == "" {
+            panic!("unsupported handshake: this should not happen");
+        }
+        let code = code.to_string();
+        let id = match std::str::from_utf8(&id.as_ref().to_vec()) {
+            Ok(s) => s.to_string(),
+            Err(e) => panic!("themis key: this should not happen"),
+        };
+        Self { code, id, port }
+    }
+}
+
+pub struct FullHandshake {
+    // handshake bencoded
+    hand: Vec<u8>,
+    // hashed and signed `hand`
+    signed: Vec<u8>,
+}
+
+impl FullHandshake {
+    pub fn new(handshake: MetaHandshake, secret_key: EcdsaPrivateKey) -> Self {
+        let hand = handshake.to_bencode().unwrap();
+        let signed = hash_and_sign_message_digest(secret_key, hand.clone());
+        Self { hand, signed }
+    }
+}
+
+impl ToBencode for FullHandshake {
+    const MAX_DEPTH: usize = 1;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"hand", &self.hand)?;
+            e.emit_pair(b"signed", &self.signed)?;
+
+            Ok(())
+        })
+    }
+}
+
+impl ToBencode for MetaHandshake {
+    const MAX_DEPTH: usize = 1;
+
+    fn encode(&self, encoder: SingleItemEncoder) -> Result<(), encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"code", &self.code)?;
+            e.emit_pair(b"id", &self.id)?;
+            e.emit_pair(b"port", &self.port)?;
+
+            Ok(())
+        })
+    }
 }
 
 #[derive(Clone)]
