@@ -3,6 +3,7 @@ use super::common::{
     cmp_message_with_signed_digest, create_p2p_message, parse_u8_to_enum, u8_to_ascii_decimal,
     usize_to_ascii_decimal, vec_u8_ascii_decimal_to_u8,
 };
+use bendy::decoding::{self, FromBencode, Object, ResultExt};
 use bendy::encoding::{self, SingleItemEncoder, ToBencode};
 use consensus::{
     messages_tp::{Commit, Prepare, Preprepare},
@@ -57,7 +58,7 @@ impl fmt::Display for Code {
     }
 }
 
-pub struct MetaHandshake {
+pub struct RawHandshake {
     // handshake sequence
     code: String,
     // local node public key
@@ -66,8 +67,8 @@ pub struct MetaHandshake {
     port: String,
 }
 
-impl MetaHandshake {
-    pub fn new(code: Code, id: EcdsaPublicKey, port: String) -> Self {
+impl RawHandshake {
+    fn new(code: Code, id: EcdsaPublicKey, port: String) -> Self {
         if code != Code::Ping || code != Code::Pong || code != Code::AckPong || port == "" {
             panic!("unsupported handshake: this should not happen");
         }
@@ -80,7 +81,7 @@ impl MetaHandshake {
     }
 }
 
-pub struct FullHandshake {
+struct FullHandshake {
     // handshake bencoded
     hand: Vec<u8>,
     // hashed and signed `hand`
@@ -88,10 +89,128 @@ pub struct FullHandshake {
 }
 
 impl FullHandshake {
-    pub fn new(handshake: MetaHandshake, secret_key: EcdsaPrivateKey) -> Self {
-        let hand = handshake.to_bencode().unwrap();
-        let signed = hash_and_sign_message_digest(secret_key, hand.clone());
-        Self { hand, signed }
+    fn verify(&self) -> bool {
+        if self.hand.len() == 0 || self.signed.len() == 0 {
+            log::warn!("full handshake: empty benc handshake or signed");
+            return false;
+        }
+        let dec = match Vec::<u8>::from_bencode(&self.signed) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("full handshake: error decode: {:?}", e);
+                return false;
+            }
+        };
+
+        self.hand == dec
+    }
+
+    fn parse(&self) -> Result<RawHandshake, decoding::Error> {
+        Ok(RawHandshake::from_bencode(&self.hand)?)
+    }
+}
+
+// new_handshake creates a new p2p handshake used to perform the three-way handshake.
+// If it is successful, it is immediately ready to be sent over the network.
+pub fn new_handshake(
+    code: Code,
+    id: EcdsaPublicKey,
+    port: String,
+    secret_key: EcdsaPrivateKey,
+) -> Result<Vec<u8>, encoding::Error> {
+    let raw = RawHandshake::new(code, id, port);
+    let hand = raw.to_bencode()?;
+    let signed = hash_and_sign_message_digest(secret_key, hand.clone());
+    let hs = FullHandshake { hand, signed };
+    Ok(hs.to_bencode()?)
+}
+
+// from_handshake receives a p2p handshake from another, connected peer.
+// If it is successful, it is a valid p2p handshake message and its content
+// can be trusted to be authentic.
+pub fn from_handshake(hs: Vec<u8>) -> Result<RawHandshake, decoding::Error> {
+    let full = FullHandshake::from_bencode(&hs)?;
+    if !full.verify() {
+        return Err(decoding::Error::missing_field(String::from_utf8_lossy(
+            b"unknown",
+        )));
+    }
+    full.parse()
+}
+
+impl FromBencode for FullHandshake {
+    const EXPECTED_RECURSION_DEPTH: usize = 1;
+
+    fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
+        let mut hand = None;
+        let mut signed = None;
+        let mut dict = object.try_into_dictionary()?;
+
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"hand", value) => {
+                    hand = Vec::<u8>::decode_bencode_object(value)
+                        .context("hand")
+                        .map(Some)?;
+                }
+                (b"signed", value) => {
+                    signed = Vec::<u8>::decode_bencode_object(value)
+                        .context("signed")
+                        .map(Some)?;
+                }
+                (unknown_field, _) => {
+                    return Err(decoding::Error::unexpected_field(String::from_utf8_lossy(
+                        unknown_field,
+                    )));
+                }
+            }
+        }
+
+        let hand = hand.ok_or_else(|| decoding::Error::missing_field("hand"))?;
+        let signed = signed.ok_or_else(|| decoding::Error::missing_field("signed"))?;
+
+        Ok(FullHandshake { hand, signed })
+    }
+}
+
+impl FromBencode for RawHandshake {
+    const EXPECTED_RECURSION_DEPTH: usize = 1;
+
+    fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
+        let mut code = None;
+        let mut id = None;
+        let mut port = None;
+        let mut dict = object.try_into_dictionary()?;
+        while let Some(pair) = dict.next_pair()? {
+            match pair {
+                (b"code", value) => {
+                    code = String::decode_bencode_object(value)
+                        .context("code")
+                        .map(Some)?;
+                }
+                (b"id", value) => {
+                    id = String::decode_bencode_object(value)
+                        .context("id")
+                        .map(Some)?;
+                }
+                (b"port", value) => {
+                    port = String::decode_bencode_object(value)
+                        .context("port")
+                        .map(Some)?;
+                }
+                (unknown_field, _) => {
+                    return Err(decoding::Error::unexpected_field(String::from_utf8_lossy(
+                        unknown_field,
+                    )));
+                }
+            }
+        }
+
+        let code = code.ok_or_else(|| decoding::Error::missing_field("code"))?;
+        let id = id.ok_or_else(|| decoding::Error::missing_field("id"))?;
+        let port = port.ok_or_else(|| decoding::Error::missing_field("port"))?;
+
+        Ok(RawHandshake { code, id, port })
     }
 }
 
@@ -108,7 +227,7 @@ impl ToBencode for FullHandshake {
     }
 }
 
-impl ToBencode for MetaHandshake {
+impl ToBencode for RawHandshake {
     const MAX_DEPTH: usize = 1;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), encoding::Error> {
