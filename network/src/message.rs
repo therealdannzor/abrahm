@@ -25,12 +25,7 @@ use themis::{
 
 #[derive(PartialEq, Copy, Clone)]
 // The different type of message codes a peer send to one another
-pub enum Code {
-    // Handshakes after discovery
-    Ping,
-    Pong,
-    AckPong,
-
+pub enum ConsensusCode {
     // Consensus messages
     TransactionRequest,
     PrePrepare,
@@ -41,23 +36,38 @@ pub enum Code {
     Checkpoint,
 }
 
-impl fmt::Display for Code {
+pub enum HandshakeCode {
+    // Handshakes after discovery
+    Ping,
+    Pong,
+    AckPong,
+}
+
+impl fmt::Display for HandshakeCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Code::Ping => write!(f, "ping"),
-            Code::Pong => write!(f, "pong"),
-            Code::AckPong => write!(f, "ack"),
-            Code::TransactionRequest => write!(f, "txr"),
-            Code::PrePrepare => write!(f, "ppp"),
-            Code::Prepare => write!(f, "pre"),
-            Code::Commit => write!(f, "com"),
-            Code::ViewChange => write!(f, "chn"),
-            Code::NewView => write!(f, "new"),
-            Code::Checkpoint => write!(f, "cpt"),
+            HandshakeCode::Ping => write!(f, "ping"),
+            HandshakeCode::Pong => write!(f, "pong"),
+            HandshakeCode::AckPong => write!(f, "ack"),
         }
     }
 }
 
+impl fmt::Display for ConsensusCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ConsensusCode::TransactionRequest => write!(f, "txr"),
+            ConsensusCode::PrePrepare => write!(f, "ppp"),
+            ConsensusCode::Prepare => write!(f, "pre"),
+            ConsensusCode::Commit => write!(f, "com"),
+            ConsensusCode::ViewChange => write!(f, "chn"),
+            ConsensusCode::NewView => write!(f, "new"),
+            ConsensusCode::Checkpoint => write!(f, "cpt"),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct RawHandshake {
     // handshake sequence
     code: String,
@@ -68,12 +78,13 @@ pub struct RawHandshake {
 }
 
 impl RawHandshake {
-    fn new(code: Code, id: EcdsaPublicKey, port: String) -> Self {
-        if code != Code::Ping || code != Code::Pong || code != Code::AckPong || port == "" {
-            panic!("unsupported handshake: this should not happen");
+    fn new(code: HandshakeCode, id: EcdsaPublicKey, port: String) -> Self {
+        if port == "" {
+            panic!("create handshake misses a port");
         }
         let code = code.to_string();
-        let id = match std::str::from_utf8(&id.as_ref().to_vec()) {
+        let id = hex::encode(id).as_bytes().to_vec();
+        let id = match std::str::from_utf8(&id.as_ref()) {
             Ok(s) => s.to_string(),
             Err(e) => panic!("themis key: this should not happen"),
         };
@@ -82,75 +93,71 @@ impl RawHandshake {
 }
 
 struct FullHandshake {
-    // handshake bencoded
-    hand: Vec<u8>,
-    // hashed and signed `hand`
+    // handshake in bencoded form
+    handshake: Vec<u8>,
+    // hashed and signed handshake
     signed: Vec<u8>,
 }
 
 impl FullHandshake {
-    fn verify(&self) -> bool {
-        if self.hand.len() == 0 || self.signed.len() == 0 {
-            log::warn!("full handshake: empty benc handshake or signed");
+    fn verify(&self, public_key: EcdsaPublicKey) -> bool {
+        if self.handshake.len() == 0 || self.signed.len() == 0 {
+            log::warn!("handshake missing field(s)");
             return false;
         }
-        let dec = match Vec::<u8>::from_bencode(&self.signed) {
-            Ok(s) => s,
-            Err(e) => {
-                log::warn!("full handshake: error decode: {:?}", e);
-                return false;
-            }
-        };
 
-        self.hand == dec
+        cmp_message_with_signed_digest(public_key, self.handshake.clone(), self.signed.clone())
     }
 
     fn parse(&self) -> Result<RawHandshake, decoding::Error> {
-        Ok(RawHandshake::from_bencode(&self.hand)?)
+        Ok(RawHandshake::from_bencode(&self.handshake)?)
     }
 }
 
 // new_handshake creates a new p2p handshake used to perform the three-way handshake.
 // If it is successful, it is immediately ready to be sent over the network.
 pub fn new_handshake(
-    code: Code,
+    code: HandshakeCode,
     id: EcdsaPublicKey,
     port: String,
     secret_key: EcdsaPrivateKey,
 ) -> Result<Vec<u8>, encoding::Error> {
     let raw = RawHandshake::new(code, id, port);
-    let hand = raw.to_bencode()?;
-    let signed = hash_and_sign_message_digest(secret_key, hand.clone());
-    let hs = FullHandshake { hand, signed };
+    let handshake = raw.to_bencode()?;
+    let signed = hash_and_sign_message_digest(secret_key, handshake.clone());
+    let hs = FullHandshake { handshake, signed };
     Ok(hs.to_bencode()?)
 }
 
 // from_handshake receives a p2p handshake from another, connected peer.
 // If it is successful, it is a valid p2p handshake message and its content
 // can be trusted to be authentic.
-pub fn from_handshake(hs: Vec<u8>) -> Result<RawHandshake, decoding::Error> {
+pub fn from_handshake(
+    hs: Vec<u8>,
+    other_peer_pk: EcdsaPublicKey,
+) -> Result<RawHandshake, decoding::Error> {
     let full = FullHandshake::from_bencode(&hs)?;
-    if !full.verify() {
+    if !full.verify(other_peer_pk) {
         return Err(decoding::Error::missing_field(String::from_utf8_lossy(
-            b"unknown",
+            b"invalid messsage, possibly invalid peer key",
         )));
     }
     full.parse()
 }
 
 impl FromBencode for FullHandshake {
-    const EXPECTED_RECURSION_DEPTH: usize = 1;
+    const EXPECTED_RECURSION_DEPTH: usize = RawHandshake::EXPECTED_RECURSION_DEPTH + 1;
 
     fn decode_bencode_object(object: Object) -> Result<Self, decoding::Error> {
-        let mut hand = None;
+        let mut handshake = None;
         let mut signed = None;
         let mut dict = object.try_into_dictionary()?;
 
         while let Some(pair) = dict.next_pair()? {
             match pair {
-                (b"hand", value) => {
-                    hand = Vec::<u8>::decode_bencode_object(value)
-                        .context("hand")
+                (b"handshake", value) => {
+                    handshake = Vec::<u8>::decode_bencode_object(value)
+                        .context("handshake")
                         .map(Some)?;
                 }
                 (b"signed", value) => {
@@ -166,10 +173,10 @@ impl FromBencode for FullHandshake {
             }
         }
 
-        let hand = hand.ok_or_else(|| decoding::Error::missing_field("hand"))?;
+        let handshake = handshake.ok_or_else(|| decoding::Error::missing_field("handshake"))?;
         let signed = signed.ok_or_else(|| decoding::Error::missing_field("signed"))?;
 
-        Ok(FullHandshake { hand, signed })
+        Ok(FullHandshake { handshake, signed })
     }
 }
 
@@ -215,11 +222,11 @@ impl FromBencode for RawHandshake {
 }
 
 impl ToBencode for FullHandshake {
-    const MAX_DEPTH: usize = 1;
+    const MAX_DEPTH: usize = RawHandshake::MAX_DEPTH + 1;
 
     fn encode(&self, encoder: SingleItemEncoder) -> Result<(), encoding::Error> {
         encoder.emit_dict(|mut e| {
-            e.emit_pair(b"hand", &self.hand)?;
+            e.emit_pair(b"handshake", &self.handshake)?;
             e.emit_pair(b"signed", &self.signed)?;
 
             Ok(())
@@ -505,6 +512,50 @@ mod tests {
     use themis::keygen;
     use themis::secure_message::{SecureSign, SecureVerify};
     use tokio_test::{assert_err, assert_ok};
+
+    #[test]
+    fn create_parse_validate_p2p_three_way_handshake_messages() {
+        let ping = HandshakeCode::Ping;
+        let pong = HandshakeCode::Pong;
+        let ack = HandshakeCode::AckPong;
+        let (a_sk, a_pk) = keygen::gen_ec_key_pair().split();
+        let (b_sk, b_pk) = keygen::gen_ec_key_pair().split();
+        let a_port = "8080".to_string();
+        let b_port = "8081".to_string();
+
+        let ping_message = new_handshake(ping, a_pk.clone(), a_port.clone(), a_sk.clone());
+        assert_ok!(ping_message.clone());
+        let ping_message = ping_message.unwrap();
+        let parsed_ping = from_handshake(ping_message.clone(), a_pk.clone());
+        assert_ok!(parsed_ping.clone());
+        let parsed_ping = parsed_ping.unwrap();
+        assert_eq!(parsed_ping.code, "ping".to_string());
+        assert_eq!(parsed_ping.port, a_port);
+        let ping_parse_err = from_handshake(ping_message, b_pk.clone());
+        assert_err!(ping_parse_err);
+
+        let pong_message = new_handshake(pong, b_pk.clone(), b_port.clone(), b_sk);
+        assert_ok!(pong_message.clone());
+        let pong_message = pong_message.unwrap();
+        let parsed_pong = from_handshake(pong_message.clone(), b_pk.clone());
+        assert_ok!(parsed_pong.clone());
+        let parsed_pong = parsed_pong.unwrap();
+        assert_eq!(parsed_pong.code, "pong".to_string());
+        assert_eq!(parsed_pong.port, b_port);
+        let pong_parse_err = from_handshake(pong_message, a_pk.clone());
+        assert_err!(pong_parse_err);
+
+        let ack_message = new_handshake(ack, a_pk.clone(), a_port.clone(), a_sk.clone());
+        assert_ok!(ack_message.clone());
+        let ack_message = ack_message.unwrap();
+        let parsed_ack = from_handshake(ack_message.clone(), a_pk.clone());
+        assert_ok!(parsed_ack.clone());
+        let parsed_ack = parsed_ack.unwrap();
+        assert_eq!(parsed_ack.code, "ack".to_string());
+        assert_eq!(parsed_ack.port, a_port);
+        let ack_parse_err = from_handshake(ack_message, b_pk.clone());
+        assert_err!(ack_parse_err);
+    }
 
     #[test]
     fn outgoing_message_serialize_request_struct_and_verify_authenticity() {
