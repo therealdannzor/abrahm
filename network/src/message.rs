@@ -114,6 +114,45 @@ impl FullHandshake {
     }
 }
 
+// Used for three-way handshakes after discovery
+pub struct FixedHandshakes {
+    ping: Vec<u8>,
+    pong: Vec<u8>,
+    ack: Vec<u8>,
+}
+impl FixedHandshakes {
+    pub fn new(
+        id: EcdsaPublicKey,
+        port: String,
+        secret_key: EcdsaPrivateKey,
+    ) -> Result<Self, encoding::Error> {
+        let ping = new_handshake(
+            HandshakeCode::Ping,
+            id.clone(),
+            port.clone(),
+            secret_key.clone(),
+        )?;
+        let pong = new_handshake(
+            HandshakeCode::Pong,
+            id.clone(),
+            port.clone(),
+            secret_key.clone(),
+        )?;
+        let ack = new_handshake(HandshakeCode::AckPong, id, port, secret_key)?;
+        Ok(Self { ping, pong, ack })
+    }
+
+    pub fn ping(&self) -> Vec<u8> {
+        self.ping.clone()
+    }
+    pub fn pong(&self) -> Vec<u8> {
+        self.pong.clone()
+    }
+    pub fn ack(&self) -> Vec<u8> {
+        self.ack.clone()
+    }
+}
+
 // new_handshake creates a new p2p handshake used to perform the three-way handshake.
 // If it is successful, it is immediately ready to be sent over the network.
 pub fn new_handshake(
