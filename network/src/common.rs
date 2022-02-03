@@ -44,6 +44,30 @@ pub fn cmp_message_with_signed_digest(
     decrypted == plain_hashed
 }
 
+// Compares two public keys and returns the one which has the highest byte value (ascii code)
+// starting from the leftmost bit. If they are equal, we move one step to the right.
+// This is used to decide on message protocol priority when two peers have both sent a ping message
+// to one another and need to decide on which of the two will respond with pong.
+// This function returns the peer with the obligation to respond with pong.
+pub fn cmp_two_keys(k1: EcdsaPublicKey, k2: EcdsaPublicKey) -> EcdsaPublicKey {
+    let s1: Vec<u8> = hex::encode(k1.clone()).as_bytes().to_vec();
+    let s2: Vec<u8> = hex::encode(k2.clone()).as_bytes().to_vec();
+    let len = s1.len();
+
+    for i in 0..len {
+        if s1[i] > s2[i] {
+            return k1;
+        } else if s2[i] > s1[i] {
+            return k2;
+        } else {
+            continue;
+        }
+    }
+    log::error!("cmp_two_keys was passed the same key twice, returning the first");
+    // the (erroneous) edge case where the two keys are identical
+    k1
+}
+
 // Creates a p2p message with the public key (in hex) as ID and the payload in both plain text and
 // as a signed digest
 pub fn create_p2p_message(
