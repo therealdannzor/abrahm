@@ -60,6 +60,14 @@ pub struct TestPipeReceive {
     r: broadcast::Receiver<Vec<u8>>,
 }
 
+pub fn setup_test_pipe() -> (TestPipeSend, TestPipeReceive) {
+    let (tx, rx): (broadcast::Sender<Vec<u8>>, broadcast::Receiver<Vec<u8>>) =
+        broadcast::channel(32);
+    let send = TestPipeSend { w: tx };
+    let recv = TestPipeReceive { r: rx };
+    (send, recv)
+}
+
 impl Peer {
     pub fn new(
         rw: Option<TcpStream>,
@@ -128,7 +136,7 @@ impl Peer {
         }
     }
 
-    pub async fn read_handshake_loop(&mut self, err: broadcast::Sender<io::Error>) {
+    pub async fn read_handshake_loop(&mut self) {
         loop {
             if self.fully_upgraded {
                 log::info!("already upgraded, skip handshake step");
@@ -137,7 +145,7 @@ impl Peer {
             let msg = match self.recv().await {
                 Ok(x) => x.to_vec(),
                 Err(e) => {
-                    let _ = err.send(e);
+                    log::error!("handshake receive error: {}", e);
                     continue;
                 }
             };
@@ -156,7 +164,7 @@ impl Peer {
                                     *hs_phase += 1;
                                 }
                                 Err(e) => {
-                                    let _ = err.send(e);
+                                    log::error!("handshake send pong error: {}", e);
                                 }
                             };
                         } else {
@@ -180,7 +188,7 @@ impl Peer {
                                     }
                                 }
                                 Err(e) => {
-                                    let _ = err.send(e);
+                                    log::error!("handshake send ack error: {}", e);
                                 }
                             };
                         }
@@ -197,7 +205,7 @@ impl Peer {
                                         *hs_phase += 1;
                                     }
                                     Err(e) => {
-                                        let _ = err.send(e);
+                                        log::error!("handshake send pong error: {}", e);
                                     }
                                 };
                             } else {
@@ -224,7 +232,7 @@ impl Peer {
                     }
                 }
                 Err(e) => {
-                    let _ = err.send(io::Error::new(ErrorKind::Other, e.to_string()));
+                    log::error!("handshake error: {}", e.to_string());
                 }
             };
             continue;
@@ -325,5 +333,26 @@ impl Peer {
         let ts = new_timestamp();
         self.last_seen = ts;
         ts
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{setup_test_pipe, Peer};
+    use crate::message::FixedHandshakes;
+    use themis::keygen;
+
+    #[tokio::test]
+    async fn full_three_way_handshakes_between_two_peers() {
+        let (a_sk, a_pk) = keygen::gen_ec_key_pair().split();
+        let (b_sk, b_pk) = keygen::gen_ec_key_pair().split();
+        let a_hs = FixedHandshakes::new(a_pk.clone(), "8080".to_string(), a_sk).unwrap();
+        let b_hs = FixedHandshakes::new(b_pk.clone(), "8081".to_string(), b_sk).unwrap();
+        let (a_send, a_recv) = setup_test_pipe();
+        let (b_send, b_recv) = setup_test_pipe();
+
+        // simulate p2p messaging by assigning send/recv halves to both peers
+        let _p1 = Peer::new(None, a_pk, a_hs, Some(b_send), Some(a_recv));
+        let _p2 = Peer::new(None, b_pk, b_hs, Some(a_send), Some(b_recv));
     }
 }
