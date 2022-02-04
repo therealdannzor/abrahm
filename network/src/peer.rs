@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::common::cmp_two_keys_string;
 use crate::message::{from_handshake, FixedHandshakes};
 use std::io::{self, ErrorKind};
 use std::sync::{Arc, Mutex};
@@ -100,7 +101,34 @@ impl Peer {
         }
     }
 
-    async fn read_handshake_loop(&mut self, err: broadcast::Sender<io::Error>) {
+    pub async fn send_ping_loop(&mut self, err: broadcast::Sender<io::Error>) {
+        let remote_id = hex::encode(self.id.clone());
+        let local_id = self.handshakes.author_id().clone();
+
+        let priority_id = cmp_two_keys_string(remote_id, local_id.clone());
+        let mut has_init = self.initiated.lock().unwrap();
+        while !*has_init {
+            if priority_id == local_id {
+                match self.send_ping().await {
+                    Ok(_) => {
+                        *has_init = true;
+                        let mut hs_phase = self.three_way_handshake_counter.lock().unwrap();
+                        *hs_phase = 1;
+                    }
+                    Err(e) => {
+                        let _ = err.send(e);
+                    }
+                };
+            } else {
+                // do nothing, we do not engage with the remote peer but wait for a ping instead
+                let ok = io::Error::new(io::ErrorKind::Other, "waiting for other peer to initiate");
+                let _ = err.send(ok);
+                return;
+            }
+        }
+    }
+
+    pub async fn read_handshake_loop(&mut self, err: broadcast::Sender<io::Error>) {
         loop {
             if self.fully_upgraded {
                 log::info!("already upgraded, skip handshake step");
@@ -123,8 +151,7 @@ impl Peer {
                     if *hs_phase == 0 && !*has_init {
                         if msg.code() == "ping" {
                             *hs_phase += 1;
-                            let pong_msg = self.handshakes.pong();
-                            match self.send(pong_msg).await {
+                            match self.send_pong().await {
                                 Ok(_) => {
                                     *hs_phase += 1;
                                 }
@@ -143,8 +170,7 @@ impl Peer {
                     else if *hs_phase == 1 && *has_init {
                         if msg.code() == "pong" {
                             *hs_phase += 1;
-                            let ack_msg = self.handshakes.ack();
-                            match self.send(ack_msg).await {
+                            match self.send_ack().await {
                                 Ok(_) => {
                                     *hs_phase += 1;
                                     if *hs_phase == 3 {
@@ -157,6 +183,27 @@ impl Peer {
                                     let _ = err.send(e);
                                 }
                             };
+                        }
+                        // edge case where both of the peers have sent a ping to one another
+                        // approximately at the same time so we need to decide who will respond
+                        // with a pong
+                        else if msg.code() == "ping" {
+                            let remote_id = msg.id();
+                            let local_id = self.handshakes.author_id().clone();
+                            let priority_id = cmp_two_keys_string(remote_id, local_id.clone());
+                            if priority_id == local_id {
+                                match self.send_pong().await {
+                                    Ok(_) => {
+                                        *hs_phase += 1;
+                                    }
+                                    Err(e) => {
+                                        let _ = err.send(e);
+                                    }
+                                };
+                            } else {
+                                // do nothing, we wait for the remote peer to send a pong because
+                                // its public key 'wins' over our public key and thus has priority
+                            }
                         } else {
                             log::warn!(
                                 "handshake proto error: out of order, got: {}, expected pong",
@@ -184,7 +231,19 @@ impl Peer {
         }
     }
 
-    pub async fn send(&self, msg: Vec<u8>) -> Result<(), io::Error> {
+    pub async fn send_ping(&self) -> Result<(), io::Error> {
+        Ok(self.send(self.handshakes.ping()).await?)
+    }
+
+    pub async fn send_pong(&self) -> Result<(), io::Error> {
+        Ok(self.send(self.handshakes.pong()).await?)
+    }
+
+    pub async fn send_ack(&self) -> Result<(), io::Error> {
+        Ok(self.send(self.handshakes.ack()).await?)
+    }
+
+    async fn send(&self, msg: Vec<u8>) -> Result<(), io::Error> {
         let l = msg.len();
         if self.rw.is_some() {
             loop {
