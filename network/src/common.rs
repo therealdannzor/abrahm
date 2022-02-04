@@ -63,9 +63,26 @@ pub fn cmp_two_keys(k1: EcdsaPublicKey, k2: EcdsaPublicKey) -> EcdsaPublicKey {
             continue;
         }
     }
-    log::error!("cmp_two_keys was passed the same key twice, returning the first");
+    log::error!("cmp_two_keys received the same key twice, return the first");
     // the (erroneous) edge case where the two keys are identical
     k1
+}
+pub fn cmp_two_keys_string(s1: String, s2: String) -> String {
+    let b1 = s1.as_bytes();
+    let b2 = s2.as_bytes();
+    let len = b1.len();
+
+    for i in 0..len {
+        if b1[i] > b2[i] {
+            return s1;
+        } else if b2[i] > b1[i] {
+            return s2;
+        } else {
+            continue;
+        }
+    }
+    log::error!("cmp_two_keys_string received the same key twice, return the first");
+    s1
 }
 
 // Creates a p2p message with the public key (in hex) as ID and the payload in both plain text and

@@ -90,6 +90,16 @@ impl RawHandshake {
         };
         Self { code, id, port }
     }
+
+    pub fn code(&self) -> String {
+        self.code.clone()
+    }
+    pub fn id(&self) -> String {
+        self.id.clone()
+    }
+    pub fn port(&self) -> String {
+        self.port.clone()
+    }
 }
 
 struct FullHandshake {
@@ -116,6 +126,10 @@ impl FullHandshake {
 
 // Used for three-way handshakes after discovery
 pub struct FixedHandshakes {
+    // author_id is the identity creating the handshake messages
+    author_id: String,
+
+    // handshakes
     ping: Vec<u8>,
     pong: Vec<u8>,
     ack: Vec<u8>,
@@ -138,8 +152,17 @@ impl FixedHandshakes {
             port.clone(),
             secret_key.clone(),
         )?;
-        let ack = new_handshake(HandshakeCode::AckPong, id, port, secret_key)?;
-        Ok(Self { ping, pong, ack })
+        let ack = new_handshake(HandshakeCode::AckPong, id.clone(), port, secret_key)?;
+        Ok(Self {
+            author_id: hex::encode(id),
+            ping,
+            pong,
+            ack,
+        })
+    }
+
+    pub fn author_id(&self) -> String {
+        self.author_id.clone()
     }
 
     pub fn ping(&self) -> Vec<u8> {
@@ -155,7 +178,7 @@ impl FixedHandshakes {
 
 // new_handshake creates a new p2p handshake used to perform the three-way handshake.
 // If it is successful, it is immediately ready to be sent over the network.
-pub fn new_handshake(
+fn new_handshake(
     code: HandshakeCode,
     id: EcdsaPublicKey,
     port: String,
