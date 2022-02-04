@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::message::{from_handshake, new_handshake, FixedHandshakes, HandshakeCode};
+use crate::message::{from_handshake, FixedHandshakes};
 use std::io::{self, ErrorKind};
 use std::sync::{Arc, Mutex};
 use swiss_knife::helper::new_timestamp;
@@ -19,8 +19,11 @@ pub struct Peer {
     // Port to communicate with this peer
     port: String,
 
-    // Client handshakes
+    // Handshakes signed by the client.
+    // These have a different ID than that `id` of this struct.
     handshakes: FixedHandshakes,
+    // Done with handshakes
+    fully_upgraded: bool,
 
     // Last time a message was received
     last_seen: i64,
@@ -50,10 +53,10 @@ const MAX_LENGTH: usize = 550;
 
 #[derive(Clone)]
 pub struct TestPipeSend {
-    w: broadcast::Sender<[u8; MAX_LENGTH]>,
+    w: broadcast::Sender<Vec<u8>>,
 }
 pub struct TestPipeReceive {
-    r: broadcast::Receiver<[u8; MAX_LENGTH]>,
+    r: broadcast::Receiver<Vec<u8>>,
 }
 
 impl Peer {
@@ -86,6 +89,7 @@ impl Peer {
             id,
             port,
             handshakes,
+            fully_upgraded: false,
             last_seen,
             three_way_handshake_counter,
             initiated,
@@ -98,6 +102,10 @@ impl Peer {
 
     async fn read_handshake_loop(&mut self, err: broadcast::Sender<io::Error>) {
         loop {
+            if self.fully_upgraded {
+                log::info!("already upgraded, skip handshake step");
+                continue;
+            }
             let msg = match self.recv().await {
                 Ok(x) => x.to_vec(),
                 Err(e) => {
@@ -106,15 +114,66 @@ impl Peer {
                 }
             };
             match from_handshake(msg, self.id.clone()) {
-                Ok(_msg) => {
+                Ok(msg) => {
                     self.last_seen = new_timestamp();
+                    let mut hs_phase = self.three_way_handshake_counter.lock().unwrap();
+                    let has_init = self.initiated.lock().unwrap();
 
-                    let hs_phase = *self.three_way_handshake_counter.lock().unwrap();
-                    let mut has_init = self.initiated.lock().unwrap();
-                    if hs_phase == 0 && !*has_init {
-                        *has_init = true;
-                        let _ping_msg = self.handshakes.ping();
-                        unimplemented!();
+                    // this peer has neither received a ping nor sent one
+                    if *hs_phase == 0 && !*has_init {
+                        if msg.code() == "ping" {
+                            *hs_phase += 1;
+                            let pong_msg = self.handshakes.pong();
+                            match self.send(pong_msg).await {
+                                Ok(_) => {
+                                    *hs_phase += 1;
+                                }
+                                Err(e) => {
+                                    let _ = err.send(e);
+                                }
+                            };
+                        } else {
+                            log::warn!(
+                                "handshake proto error: out of order, got: {}, expected ping",
+                                msg.code()
+                            );
+                        }
+                    }
+                    // this peer has sent a ping and awaits a pong
+                    else if *hs_phase == 1 && *has_init {
+                        if msg.code() == "pong" {
+                            *hs_phase += 1;
+                            let ack_msg = self.handshakes.ack();
+                            match self.send(ack_msg).await {
+                                Ok(_) => {
+                                    *hs_phase += 1;
+                                    if *hs_phase == 3 {
+                                        self.fully_upgraded = true;
+                                    } else {
+                                        log::error!("handshake proto error: incorrect phase, should be 3 but is: {}", *hs_phase);
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = err.send(e);
+                                }
+                            };
+                        } else {
+                            log::warn!(
+                                "handshake proto error: out of order, got: {}, expected pong",
+                                msg.code()
+                            );
+                        }
+                    }
+                    // this peer has sent a pong message and awaits an ack
+                    else if *hs_phase == 2 && !*has_init {
+                        if msg.code() == "ack" {
+                            *hs_phase += 1;
+                            if *hs_phase == 3 {
+                                self.fully_upgraded = true;
+                            } else {
+                                log::error!("handshake proto error: incorrect phase, should be 3 but is: {}", *hs_phase);
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -125,7 +184,7 @@ impl Peer {
         }
     }
 
-    pub async fn send(&self, msg: [u8; MAX_LENGTH]) -> Result<(), io::Error> {
+    pub async fn send(&self, msg: Vec<u8>) -> Result<(), io::Error> {
         let l = msg.len();
         if self.rw.is_some() {
             loop {
@@ -163,7 +222,7 @@ impl Peer {
         Ok(())
     }
 
-    async fn recv(&self) -> Result<[u8; MAX_LENGTH], io::Error> {
+    async fn recv(&self) -> Result<Vec<u8>, io::Error> {
         if self.rw.is_some() {
             loop {
                 let recv = self.rw.as_ref().unwrap();
@@ -175,7 +234,7 @@ impl Peer {
                         continue;
                     }
                     Ok(_n) => {
-                        return Ok(buf);
+                        return Ok(buf.to_vec());
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         continue;
