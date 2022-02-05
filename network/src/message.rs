@@ -127,7 +127,7 @@ impl FullHandshake {
 // Used for three-way handshakes after discovery
 pub struct FixedHandshakes {
     // author_id is the identity creating the handshake messages
-    author_id: String,
+    author_id: EcdsaPublicKey,
 
     // handshakes
     ping: Vec<u8>,
@@ -154,14 +154,14 @@ impl FixedHandshakes {
         )?;
         let ack = new_handshake(HandshakeCode::AckPong, id.clone(), port, secret_key)?;
         Ok(Self {
-            author_id: hex::encode(id),
+            author_id: id,
             ping,
             pong,
             ack,
         })
     }
 
-    pub fn author_id(&self) -> String {
+    pub fn author_id(&self) -> EcdsaPublicKey {
         self.author_id.clone()
     }
 
