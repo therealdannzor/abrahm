@@ -1,10 +1,9 @@
 #![allow(dead_code)]
 
 use crate::common::{cmp_two_keys, cmp_two_keys_string};
-use crate::message::{from_handshake, FixedHandshakes, RawHandshake};
+use crate::message::{from_handshake, FixedHandshakes};
 use std::io::{self, ErrorKind};
 use std::sync::{Arc, Mutex};
-use swiss_knife::helper::new_timestamp;
 use themis::keys::EcdsaPublicKey;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -15,16 +14,110 @@ pub struct Pipes {
     // for mocks in test
     test_w: Option<TestPipeSend>,
     test_r: Option<TestPipeReceive>,
+}
 
-    // Handshakes signed by the client.
-    // These have a different ID than that `id` of this struct.
+#[derive(Clone)]
+pub struct TestPipeSend {
+    w: broadcast::Sender<Vec<u8>>,
+}
+struct TestPipeReceive {
+    r: broadcast::Receiver<Vec<u8>>,
+}
+
+impl Pipes {
+    pub fn new(rw: Option<Arc<Mutex<TcpStream>>>, test_mode: bool) -> Self {
+        let (mut test_w, mut test_r) = (None, None);
+        if test_mode {
+            let pipe_wr = setup_test_pipe();
+            test_w = Some(pipe_wr.0);
+            test_r = Some(pipe_wr.1);
+        }
+        Self { rw, test_w, test_r }
+    }
+}
+
+pub async fn initiate_ping(
+    rw: &Arc<Mutex<Option<TcpStream>>>,
+    test_w: Option<TestPipeSend>,
+    ping_msg: Vec<u8>,
+    remote_id: EcdsaPublicKey,
+    handshake_id: EcdsaPublicKey,
+    three_way_handshake_counter: Arc<Mutex<usize>>,
+) {
+    let remote_id = remote_id.clone();
+
+    let priority_id = cmp_two_keys(remote_id, handshake_id.clone());
+    if priority_id == handshake_id {
+        let tmp = rw.clone();
+        match send(&tmp, test_w, ping_msg).await {
+            Ok(_) => {
+                let mut hs_phase = three_way_handshake_counter.lock().unwrap();
+                *hs_phase = 1;
+            }
+            Err(e) => {
+                log::error!("failed to send ping: {:?}", e);
+            }
+        };
+    } else {
+        // do nothing, we do not engage with the remote peer but wait for a ping instead
+        log::warn!("skip send ping, wait for other peer to initiate");
+        return;
+    }
+}
+
+async fn send(
+    rw: &Arc<Mutex<Option<TcpStream>>>,
+    test_w: Option<TestPipeSend>,
+    msg: Vec<u8>,
+) -> Result<(), io::Error> {
+    let l = msg.len();
+    let tmp = rw.clone();
+    let rw = tmp.lock().unwrap();
+    if rw.is_some() {
+        loop {
+            let send = rw.as_ref().unwrap();
+            let _ = send.writable().await;
+
+            match send.try_write(&msg) {
+                Ok(n) => {
+                    if n != l {
+                        return Err(io::Error::new(
+                            ErrorKind::BrokenPipe,
+                            "sent incomplete message",
+                        ));
+                    }
+                    break;
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(e) => {
+                    return Err(e.into());
+                }
+            }
+        }
+    } else if test_w.is_some() {
+        let s = test_w.clone().unwrap().w;
+        let _ = s.send(msg);
+    } else {
+        return Err(io::Error::new(
+            ErrorKind::Unsupported,
+            "neither tcp stream nor test pipe exists",
+        ));
+    }
+
+    Ok(())
+}
+
+pub async fn read_handshake_loop(
+    rw: Arc<Mutex<Option<TcpStream>>>,
+    test_w: Option<TestPipeSend>,
     handshakes: FixedHandshakes,
-
+    mut updates: mpsc::Receiver<Vec<u8>>,
+    remote_id: EcdsaPublicKey,
+) {
     // True when attempted to send a ping
-    initiated_handshake: Arc<Mutex<bool>>,
-
-    // Last time a stream was received
-    last_received: i64,
+    let initiated_handshake: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
 
     // A peer P is considered _fully upgraded_ with the client C if and only if:
     // 1) C sent a ping to P, P responded with pong, and C sent an ack; or
@@ -34,213 +127,74 @@ pub struct Pipes {
     // 1 = sent or received a ping
     // 2 = sent or received a pong
     // 3 = sent or received an ack
-    three_way_handshake_counter: Arc<Mutex<usize>>,
-}
+    let three_way_handshake_counter: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
 
-#[derive(Clone)]
-struct TestPipeSend {
-    w: broadcast::Sender<Vec<u8>>,
-}
-struct TestPipeReceive {
-    r: broadcast::Receiver<Vec<u8>>,
-}
-
-impl Pipes {
-    pub fn new(
-        rw: Option<Arc<Mutex<TcpStream>>>,
-        test_mode: bool,
-        handshakes: FixedHandshakes,
-    ) -> Self {
-        let (mut test_w, mut test_r) = (None, None);
-        if test_mode {
-            let pipe_wr = setup_test_pipe();
-            test_w = Some(pipe_wr.0);
-            test_r = Some(pipe_wr.1);
-        }
-        Self {
-            rw,
-            test_w,
-            test_r,
-            handshakes,
-            initiated_handshake: Arc::new(Mutex::new(false)),
-            last_received: 0,
-            three_way_handshake_counter: Arc::new(Mutex::new(0)),
-        }
+    let local_id = hex::encode(handshakes.author_id());
+    let priority_id = cmp_two_keys_string(hex::encode(remote_id.clone()), local_id.clone());
+    let tmp = rw.clone();
+    if priority_id == local_id {
+        initiate_ping(
+            &tmp,
+            test_w.clone(),
+            handshakes.ping(),
+            remote_id.clone(),
+            handshakes.author_id(),
+            three_way_handshake_counter.clone(),
+        )
+        .await;
     }
 
-    pub async fn send_ping_loop(
-        &self,
-        remote_id: EcdsaPublicKey,
-        three_way_handshake_counter: Arc<Mutex<usize>>,
-    ) {
-        let remote_id = remote_id.clone();
-        let local_id = self.handshakes.author_id().clone();
-
-        let priority_id = cmp_two_keys(remote_id, local_id.clone());
-        let mut has_init = self.initiated_handshake.lock().unwrap();
-        while !*has_init {
-            if priority_id == local_id {
-                match self.send_ping().await {
-                    Ok(_) => {
-                        *has_init = true;
-                        let mut hs_phase = three_way_handshake_counter.lock().unwrap();
-                        *hs_phase = 1;
-                    }
-                    Err(e) => {
-                        log::error!("failed to send ping: {:?}", e);
-                    }
-                };
-            } else {
-                // do nothing, we do not engage with the remote peer but wait for a ping instead
-                log::error!("skip send ping, wait for other peer to initiate");
-                return;
-            }
-        }
-    }
-
-    async fn send_ping(&self) -> Result<(), io::Error> {
-        Ok(self.send(self.handshakes.ping()).await?)
-    }
-
-    async fn send_pong(&self) -> Result<(), io::Error> {
-        Ok(self.send(self.handshakes.pong()).await?)
-    }
-
-    async fn send_ack(&self) -> Result<(), io::Error> {
-        Ok(self.send(self.handshakes.ack()).await?)
-    }
-
-    async fn send(&self, msg: Vec<u8>) -> Result<(), io::Error> {
-        let l = msg.len();
-        if self.rw.is_some() {
-            loop {
-                let send = self.rw.as_ref().unwrap().lock().unwrap();
-                let _ = send.writable().await;
-
-                match send.try_write(&msg) {
-                    Ok(n) => {
-                        if n != l {
-                            return Err(io::Error::new(
-                                ErrorKind::BrokenPipe,
-                                "sent incomplete message",
-                            ));
-                        }
-                        break;
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        continue;
-                    }
-                    Err(e) => {
-                        return Err(e.into());
-                    }
-                }
-            }
-        } else if self.test_w.is_some() {
-            let s = self.test_w.clone().unwrap().w;
-            let _ = s.send(msg);
-        } else {
-            return Err(io::Error::new(
-                ErrorKind::Unsupported,
-                "neither tcp stream nor test pipe exists",
-            ));
-        }
-
-        Ok(())
-    }
-
-    pub async fn read_handshake_loop(&mut self, mut updates: mpsc::Receiver<RawHandshake>) {
-        loop {
-            while let Some(msg) = updates.recv().await {
-                self.last_received = new_timestamp();
-                let mut hs_phase = self.three_way_handshake_counter.lock().unwrap();
-                let has_init = self.initiated_handshake.lock().unwrap();
-
-                // this peer has neither received a ping nor sent one
-                if *hs_phase == 0 && !*has_init {
-                    if msg.code() == "ping" {
-                        *hs_phase = 1;
-                        match self.send_pong().await {
-                            Ok(_) => {
-                                *hs_phase = 2;
-                            }
-                            Err(e) => {
-                                log::error!("handshake send pong error: {}", e);
-                            }
-                        };
-                    } else {
-                        log::warn!(
-                            "handshake proto error: out of order, got: {}, expected ping",
-                            msg.code()
-                        );
-                    }
-                }
-                // this peer has sent a ping and awaits a pong
-                else if *hs_phase == 1 && *has_init {
-                    if msg.code() == "pong" {
-                        match self.send_ack().await {
-                            Ok(_) => {
-                                *hs_phase = 3;
-                            }
-                            Err(e) => {
-                                log::error!("handshake send ack error: {}", e);
-                            }
-                        };
-                    }
-                    // edge case where both of the peers have sent a ping to one another
-                    // approximately at the same time so we need to decide who will respond
-                    // with a pong
-                    else if msg.code() == "ping" {
-                        let remote_id = msg.id();
-                        let local_id = hex::encode(self.handshakes.author_id().clone());
-                        let priority_id = cmp_two_keys_string(remote_id, local_id.clone());
-                        if priority_id == local_id {
-                            match self.send_pong().await {
-                                Ok(_) => {
-                                    *hs_phase += 1;
-                                }
-                                Err(e) => {
-                                    log::error!("handshake send pong error: {}", e);
-                                }
-                            };
-                        } else {
-                            // do nothing, we wait for the remote peer to send a pong because
-                            // its public key 'wins' over our public key and thus has priority
-                        }
-                    } else {
-                        log::warn!(
-                            "handshake proto error: out of order, got: {}, expected pong",
-                            msg.code()
-                        );
-                    }
-                }
-                // this peer has sent a pong message and awaits an ack
-                else if *hs_phase == 2 && !*has_init {
-                    if msg.code() == "ack" {
-                        *hs_phase = 3;
-                    }
-                }
-            }
-            continue;
-        }
-    }
-
-    async fn recv(&self) {
-        if self.rw.is_some() {}
-    }
-
-    fn update_last_received(&mut self) {
-        let ts = new_timestamp();
-        self.last_received = ts;
-    }
-}
-
-async fn message_box(
-    returner: mpsc::Sender<RawHandshake>,
-    mut fetcher: mpsc::Receiver<RawHandshake>,
-) {
     loop {
-        while let Some(msg) = fetcher.recv().await {
-            let _ = returner.send(msg).await;
+        while let Some(msg) = updates.recv().await {
+            let mut hs_phase = three_way_handshake_counter.lock().unwrap();
+            let has_init = initiated_handshake.lock().unwrap();
+
+            // all messages sent on this channel has already been checked with `from_handshake` and
+            // are error-free hence the unwrap
+            let parsed_msg = from_handshake(msg, remote_id.clone()).unwrap();
+
+            // this peer has neither received a ping nor sent one
+            if *hs_phase == 0 && !*has_init {
+                if parsed_msg.code() == "ping" {
+                    *hs_phase = 1;
+                    let pong_msg = handshakes.pong();
+                    let tmp = rw.clone();
+                    match send(&tmp, test_w.clone(), pong_msg).await {
+                        Ok(_) => {
+                            *hs_phase = 2;
+                        }
+                        Err(e) => {
+                            log::error!("handshake send pong error: {}", e);
+                        }
+                    };
+                } else {
+                    log::warn!(
+                        "handshake proto error: out of order, got: {}, expected ping",
+                        parsed_msg.code()
+                    );
+                }
+            }
+            // this peer has sent a ping and awaits a pong
+            else if *hs_phase == 1 && *has_init {
+                if parsed_msg.code() == "pong" {
+                    let ack_msg = handshakes.ack();
+                    let tmp = rw.clone();
+                    match send(&tmp, test_w.clone(), ack_msg).await {
+                        Ok(_) => {
+                            *hs_phase = 3;
+                        }
+                        Err(e) => {
+                            log::error!("handshake send ack error: {}", e);
+                        }
+                    };
+                }
+            }
+            // this peer has sent a pong message and awaits an ack
+            else if *hs_phase == 2 && !*has_init {
+                if parsed_msg.code() == "ack" {
+                    *hs_phase = 3;
+                }
+            }
         }
     }
 }
@@ -249,7 +203,7 @@ async fn message_listen_loop(
     stream: Option<Arc<Mutex<TcpStream>>>,
     stream_id: EcdsaPublicKey,
     test_rcv: Option<Arc<Mutex<mpsc::Receiver<Vec<u8>>>>>,
-    fetcher: mpsc::Sender<RawHandshake>,
+    fetcher: mpsc::Sender<Vec<u8>>,
     err: mpsc::Sender<String>,
 ) {
     const MAX_LENGTH: usize = 400;
@@ -264,14 +218,15 @@ async fn message_listen_loop(
                     continue;
                 }
                 Ok(_) => {
-                    let h = match from_handshake(buf.to_vec(), stream_id.clone()) {
-                        Ok(x) => x,
+                    let message_vec = buf.to_vec();
+                    let _ = match from_handshake(message_vec.clone(), stream_id.clone()) {
+                        Ok(_) => {}
                         Err(e) => {
                             let _ = err.send(e.to_string()).await;
                             continue;
                         }
                     };
-                    let _ = fetcher.send(h).await;
+                    let _ = fetcher.send(message_vec).await;
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     continue;
@@ -286,14 +241,14 @@ async fn message_listen_loop(
             let arc = test_rcv.clone().unwrap();
             let mut read = arc.lock().unwrap();
             while let Some(rx_msg) = read.recv().await {
-                let h = match from_handshake(rx_msg, stream_id.clone()) {
-                    Ok(x) => x,
+                let _ = match from_handshake(rx_msg.clone(), stream_id.clone()) {
+                    Ok(_) => {}
                     Err(e) => {
                         let _ = err.send(e.to_string()).await;
                         continue;
                     }
                 };
-                let _ = fetcher.send(h).await;
+                let _ = fetcher.send(rx_msg).await;
             }
         }
     } else {
@@ -361,7 +316,6 @@ impl Peer {
 
 #[cfg(test)]
 mod tests {
-    use super::{setup_test_pipe, Peer, Pipes};
     use crate::message::FixedHandshakes;
     use themis::keygen;
 
@@ -371,11 +325,5 @@ mod tests {
         let (b_sk, b_pk) = keygen::gen_ec_key_pair().split();
         let a_hs = FixedHandshakes::new(a_pk.clone(), "8080".to_string(), a_sk).unwrap();
         let b_hs = FixedHandshakes::new(b_pk.clone(), "8081".to_string(), b_sk).unwrap();
-        let a_pipe = Pipes::new(None, true, a_hs);
-        let b_pipe = Pipes::new(None, true, b_hs);
-
-        // simulate p2p messaging by assigning send/recv halves to both peers
-        //let _p1 = Peer::new(None, a_pk, a_hs, Some(b_send), Some(a_recv));
-        //let _p2 = Peer::new(None, b_pk, b_hs, Some(a_send), Some(b_recv));
     }
 }
