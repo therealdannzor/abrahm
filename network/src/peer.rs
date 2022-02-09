@@ -37,31 +37,34 @@ impl Pipes {
 }
 
 pub async fn peer_handshake_loop(
-    rw: Arc<Mutex<TcpStream>>,
+    rw: Arc<TcpStream>,
     other_stream_id: EcdsaPublicKey,
+    handshakes: FixedHandshakes,
+    test_send: Option<broadcast::Sender<Vec<u8>>>,
     test_rcv: Option<broadcast::Receiver<Vec<u8>>>,
-    fetcher: mpsc::Sender<Vec<u8>>,
     err: mpsc::Sender<String>,
 ) {
+    let (send, recv): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) = mpsc::channel(16);
+    let other_copy = other_stream_id.clone();
+    let rw_copy = rw.clone();
     if test_rcv.is_some() {
         tokio::task::spawn(async move {
-            message_listen_loop_mock(
-                test_rcv.unwrap(),
-                other_stream_id.clone(),
-                fetcher.clone(),
-                err.clone(),
-            )
-            .await;
+            message_listen_loop_mock(test_rcv.unwrap(), other_copy, send.clone(), err.clone())
+                .await;
         });
     } else {
-        message_listen_loop(&rw, other_stream_id, fetcher, err).await;
+        tokio::task::spawn(async move {
+            message_listen_loop(rw_copy, other_copy, send.clone(), err).await;
+        });
     }
+
+    read_handshake_loop(rw, test_send, handshakes, recv, other_stream_id).await;
 }
 
 // Sends a ping message if the peer is supposed to initiate a three-way handshake
 // which is the one with the "highest value" key is the initiator.
 async fn initiate_ping(
-    rw: &Arc<Mutex<TcpStream>>,
+    rw: Arc<TcpStream>,
     ping_msg: Vec<u8>,
     remote_id: EcdsaPublicKey,
     handshake_id: EcdsaPublicKey,
@@ -72,7 +75,7 @@ async fn initiate_ping(
     let priority_id = cmp_two_keys(remote_id, handshake_id.clone());
     if priority_id == handshake_id {
         let tmp = rw.clone();
-        match send(&tmp, ping_msg).await {
+        match send(tmp, ping_msg).await {
             Ok(_) => {
                 let mut hs_phase = three_way_handshake_counter.lock().unwrap();
                 *hs_phase = 1;
@@ -89,7 +92,7 @@ async fn initiate_ping(
 }
 
 async fn initiate_ping_mock(
-    test_w: TestPipeSend,
+    test_w: broadcast::Sender<Vec<u8>>,
     ping_msg: Vec<u8>,
     remote_id: EcdsaPublicKey,
     handshake_id: EcdsaPublicKey,
@@ -112,10 +115,9 @@ async fn initiate_ping_mock(
 }
 
 // Writes a message to either a TCP connection or the mock tokio channel
-async fn send(rw: &Arc<Mutex<TcpStream>>, msg: Vec<u8>) -> Result<(), io::Error> {
+async fn send(rw: Arc<TcpStream>, msg: Vec<u8>) -> Result<(), io::Error> {
     let l = msg.len();
-    let tmp = rw.clone();
-    let rw = tmp.lock().unwrap();
+    let rw = rw.clone();
     loop {
         let _ = rw.writable().await;
 
@@ -142,10 +144,10 @@ async fn send(rw: &Arc<Mutex<TcpStream>>, msg: Vec<u8>) -> Result<(), io::Error>
 }
 
 async fn send_mock(
-    test_w: TestPipeSend,
+    test_w: broadcast::Sender<Vec<u8>>,
     ping_msg: Vec<u8>,
 ) -> Result<usize, tokio::sync::broadcast::error::SendError<Vec<u8>>> {
-    let s = test_w.clone().w;
+    let s = test_w.clone();
     s.send(ping_msg)
 }
 
@@ -153,10 +155,10 @@ async fn send_mock(
 // This function is responsible for managing the full handshake logic: receive and send of
 // handshake messages.
 async fn read_handshake_loop(
-    rw: Arc<Mutex<TcpStream>>,
-    test_w: Option<TestPipeSend>,
+    rw: Arc<TcpStream>,
+    test_w: Option<broadcast::Sender<Vec<u8>>>,
     handshakes: FixedHandshakes,
-    mut updates: mpsc::Receiver<Vec<u8>>,
+    mut fetcher_recv: mpsc::Receiver<Vec<u8>>,
     remote_id: EcdsaPublicKey,
 ) {
     // True when attempted to send a ping
@@ -188,7 +190,7 @@ async fn read_handshake_loop(
             .await;
         } else {
             initiate_ping(
-                &tmp,
+                tmp,
                 handshakes.ping(),
                 remote_id.clone(),
                 handshakes.author_id(),
@@ -199,7 +201,7 @@ async fn read_handshake_loop(
     }
 
     loop {
-        while let Some(msg) = updates.recv().await {
+        while let Some(msg) = fetcher_recv.recv().await {
             let mut hs_phase = three_way_handshake_counter.lock().unwrap();
             let has_init = initiated_handshake.lock().unwrap();
 
@@ -213,7 +215,7 @@ async fn read_handshake_loop(
                     *hs_phase = 1;
                     let pong_msg = handshakes.pong();
                     let tmp = rw.clone();
-                    match send(&tmp, pong_msg).await {
+                    match send(tmp, pong_msg).await {
                         Ok(_) => {
                             *hs_phase = 2;
                         }
@@ -233,7 +235,7 @@ async fn read_handshake_loop(
                 if parsed_msg.code() == "pong" {
                     let ack_msg = handshakes.ack();
                     let tmp = rw.clone();
-                    match send(&tmp, ack_msg).await {
+                    match send(tmp, ack_msg).await {
                         Ok(_) => {
                             *hs_phase = 3;
                         }
@@ -253,22 +255,20 @@ async fn read_handshake_loop(
     }
 }
 
-// Listens for p2p messages from either the TCP stream or the tokio channel. It then relays these
-// messages to the fetcher.
+// Listens for p2p messages from the TCP stream. It then relays these messages to the fetcher.
 async fn message_listen_loop(
-    rw: &Arc<Mutex<TcpStream>>,
+    rw: Arc<TcpStream>,
     other_stream_id: EcdsaPublicKey,
     fetcher: mpsc::Sender<Vec<u8>>,
     err: mpsc::Sender<String>,
 ) {
     const MAX_LENGTH: usize = 400;
     let arc = rw.clone();
-    let rw = arc.lock().unwrap();
     loop {
-        let _ = rw.readable().await;
+        let _ = arc.readable().await;
         let mut buf = [0; MAX_LENGTH];
 
-        match rw.try_read(&mut buf) {
+        match arc.try_read(&mut buf) {
             Ok(0) => {
                 continue;
             }
@@ -293,6 +293,7 @@ async fn message_listen_loop(
     }
 }
 
+// Listens for p2p messages from the tokio broadcast channel. It then relays these messages to the fetcher.
 async fn message_listen_loop_mock(
     mut test_rcv: broadcast::Receiver<Vec<u8>>,
     other_stream_id: EcdsaPublicKey,
