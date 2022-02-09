@@ -6,35 +6,7 @@ use std::io::{self, ErrorKind};
 use std::sync::{Arc, Mutex};
 use themis::keys::EcdsaPublicKey;
 use tokio::net::TcpStream;
-use tokio::sync::{broadcast, mpsc, oneshot};
-
-pub struct Pipes {
-    rw: Option<Arc<Mutex<TcpStream>>>,
-
-    // for mocks in test
-    test_w: Option<TestPipeSend>,
-    test_r: Option<TestPipeReceive>,
-}
-
-#[derive(Clone)]
-pub struct TestPipeSend {
-    w: broadcast::Sender<Vec<u8>>,
-}
-struct TestPipeReceive {
-    r: broadcast::Receiver<Vec<u8>>,
-}
-
-impl Pipes {
-    pub fn new(rw: Option<Arc<Mutex<TcpStream>>>, test_mode: bool) -> Self {
-        let (mut test_w, mut test_r) = (None, None);
-        if test_mode {
-            let pipe_wr = setup_test_pipe();
-            test_w = Some(pipe_wr.0);
-            test_r = Some(pipe_wr.1);
-        }
-        Self { rw, test_w, test_r }
-    }
-}
+use tokio::sync::{broadcast, mpsc};
 
 pub async fn peer_handshake_loop(
     rw: Arc<TcpStream>,
@@ -314,68 +286,8 @@ async fn message_listen_loop_mock(
     }
 }
 
-fn setup_test_pipe() -> (TestPipeSend, TestPipeReceive) {
-    let (tx, rx): (broadcast::Sender<Vec<u8>>, broadcast::Receiver<Vec<u8>>) =
-        broadcast::channel(32);
-    let send = TestPipeSend { w: tx };
-    let recv = TestPipeReceive { r: rx };
-    (send, recv)
-}
-
-// Peer is connected with the client (another running software instance, also a peer).
-// It is part of the validator set which means its ID is already white listed.
-pub struct Peer {
-    // TCP stream and mock channels
-    pipes: Pipes,
-
-    // ID of this peer
-    id: EcdsaPublicKey,
-
-    // Port to communicate with this peer
-    port: String,
-
-    // Done with handshakes
-    fully_upgraded: bool,
-
-    // Exit signals
-    close_recv: oneshot::Receiver<u8>,
-    close_send: oneshot::Sender<u8>,
-}
-
-impl Peer {
-    pub fn new(pipes: Pipes, id: EcdsaPublicKey) -> Self {
-        let port: String;
-        if pipes.rw.is_some() {
-            port = pipes
-                .rw
-                .as_ref()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port()
-                .to_string();
-        } else {
-            port = "8080".to_string();
-        }
-        let (close_send, close_recv): (oneshot::Sender<u8>, oneshot::Receiver<u8>) =
-            oneshot::channel();
-        Self {
-            pipes,
-            id,
-            port,
-            fully_upgraded: false,
-            close_recv,
-            close_send,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::message::FixedHandshakes;
-    use themis::keygen;
 
     #[tokio::test]
     async fn full_three_way_handshakes_between_two_peers() {}
