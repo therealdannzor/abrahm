@@ -56,3 +56,9 @@ pub enum PayloadEvent {
     // Sender: response channel
     Get(PeerShortId, tokio::sync::oneshot::Sender<Vec<OrdPayload>>),
 }
+
+// Handshake status API
+pub enum HandshakeAPI {
+    NewState(i32),
+    GetState(tokio::sync::oneshot::Sender<i32>),
+}
