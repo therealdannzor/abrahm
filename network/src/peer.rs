@@ -78,6 +78,8 @@ async fn initiate_ping(
     remote_id: EcdsaPublicKey,
     handshake_id: EcdsaPublicKey,
     handshake_counter: Arc<AtomicUsize>,
+    send_api: mpsc::Sender<HandshakeAPI>,
+    initiated: Arc<bool>,
 ) {
     let remote_id = remote_id.clone();
 
@@ -86,7 +88,8 @@ async fn initiate_ping(
         let tmp = rw.clone();
         match send(tmp, ping_msg).await {
             Ok(_) => {
-                handshake_counter.clone().fetch_add(1, Ordering::SeqCst);
+                update_counters(handshake_counter.clone(), send_api.clone(), 1).await;
+                *Arc::get_mut(&mut initiated.clone()).unwrap() = true;
                 log::warn!("handshake value: {:?}", handshake_counter);
             }
             Err(e) => {
@@ -106,12 +109,15 @@ async fn initiate_ping_mock(
     remote_id: EcdsaPublicKey,
     handshake_id: EcdsaPublicKey,
     handshake_counter: Arc<AtomicUsize>,
+    send_api: mpsc::Sender<HandshakeAPI>,
+    initiated: Arc<bool>,
 ) {
     let priority_id = cmp_two_keys(remote_id.clone(), handshake_id.clone());
     if priority_id == handshake_id {
         match send_mock(test_w, ping_msg).await {
             Ok(_) => {
-                handshake_counter.fetch_add(1, Ordering::SeqCst);
+                update_counters(handshake_counter.clone(), send_api.clone(), 1).await;
+                *Arc::get_mut(&mut initiated.clone()).unwrap() = true;
                 log::warn!("handshake value: {:?}", handshake_counter);
             }
             Err(e) => {
@@ -224,6 +230,8 @@ async fn read_handshake_loop(
                 remote_id.clone(),
                 handshakes.author_id(),
                 handshake_counter.clone(),
+                api_send.clone(),
+                initiated_handshake.clone(),
             )
             .await;
         } else {
@@ -233,6 +241,8 @@ async fn read_handshake_loop(
                 remote_id.clone(),
                 handshakes.author_id(),
                 handshake_counter.clone(),
+                api_send.clone(),
+                initiated_handshake.clone(),
             )
             .await;
         }
