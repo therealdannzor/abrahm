@@ -124,6 +124,7 @@ impl FullHandshake {
     }
 }
 
+#[derive(Clone)]
 // Used for three-way handshakes after discovery
 pub struct FixedHandshakes {
     // author_id is the identity creating the handshake messages

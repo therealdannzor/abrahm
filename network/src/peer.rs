@@ -413,6 +413,114 @@ fn message_listen_loop_mock(
 
 #[cfg(test)]
 mod tests {
+    use super::peer_handshake_loop;
+    use crate::common::cmp_two_keys;
+    use crate::handshake_get_state;
+    use crate::message::FixedHandshakes;
+    use crate::HandshakeAPI;
+    use themis::keygen::gen_ec_key_pair;
+    use themis::keys::EcdsaKeyPair;
+    use tokio::sync::mpsc;
+
+    fn create_two_pairs_highest_first() -> (EcdsaKeyPair, EcdsaKeyPair) {
+        let pair1 = gen_ec_key_pair();
+        let pair2 = gen_ec_key_pair();
+        let (_, pub1) = pair1.clone().split();
+        let (_, pub2) = pair2.clone().split();
+        let highest = cmp_two_keys(pub1.clone(), pub2.clone());
+        if highest == pub1 {
+            return (pair1, pair2);
+        } else {
+            return (pair2, pair1);
+        }
+    }
+
+    fn create_handshake_set_highest_first(
+        pair_hi: EcdsaKeyPair,
+        pair_lo: EcdsaKeyPair,
+    ) -> (FixedHandshakes, FixedHandshakes) {
+        let (hi_sk, hi_pk) = pair_hi.clone().split();
+        let (lo_sk, lo_pk) = pair_lo.clone().split();
+        let hi_shake = FixedHandshakes::new(hi_pk, "8080".to_string(), hi_sk).unwrap();
+        let lo_shake = FixedHandshakes::new(lo_pk, "8081".to_string(), lo_sk).unwrap();
+        (hi_shake, lo_shake)
+    }
+
+    struct MockPairPeer {
+        high_keypair: EcdsaKeyPair,
+        high_handshake: FixedHandshakes,
+        low_keypair: EcdsaKeyPair,
+        low_handshake: FixedHandshakes,
+    }
+
+    fn peer_credentials() -> MockPairPeer {
+        let (high_keypair, low_keypair) = create_two_pairs_highest_first();
+        let (high_handshake, low_handshake) =
+            create_handshake_set_highest_first(high_keypair.clone(), low_keypair.clone());
+        MockPairPeer {
+            high_keypair,
+            high_handshake,
+            low_keypair,
+            low_handshake,
+        }
+    }
+
+    struct MockPeerHandlers {
+        high_peer_handle: mpsc::Sender<HandshakeAPI>,
+        high_err_handle: mpsc::Receiver<String>,
+        low_peer_handle: mpsc::Sender<HandshakeAPI>,
+        low_err_handle: mpsc::Receiver<String>,
+    }
+
+    async fn create_two_peer_loops() -> MockPeerHandlers {
+        let mock = peer_credentials();
+        let low_public_key = mock.low_keypair.split().1.clone();
+        let high_public_key = mock.high_keypair.split().1.clone();
+        let low_handshake = mock.low_handshake.clone();
+        let high_handshake = mock.high_handshake.clone();
+        let (high_peer_handle, high_err_handle) =
+            peer_handshake_loop(None, low_public_key, high_handshake, true).await;
+        let (low_peer_handle, low_err_handle) =
+            peer_handshake_loop(None, high_public_key, low_handshake, true).await;
+        MockPeerHandlers {
+            high_peer_handle,
+            high_err_handle,
+            low_peer_handle,
+            low_err_handle,
+        }
+    }
+
+    async fn api_request_get(handle: mpsc::Sender<HandshakeAPI>, expected: i32) {
+        let (response, api_msg) = handshake_get_state();
+        let _ = handle.send(api_msg).await;
+
+        match response.await {
+            Ok(v) => assert_eq!(v, expected),
+            Err(e) => panic!("request failed: {:?}", e),
+        }
+    }
+
+    async fn api_error_check(mut handle: mpsc::Receiver<String>, expecting_error: bool) {
+        if expecting_error {
+            match handle.recv().await {
+                Some(_) => {}
+                None => {
+                    panic!("missing error");
+                }
+            }
+        } else {
+            match handle.recv().await {
+                Some(x) => panic!("{}", x),
+                None => {}
+            }
+        }
+    }
+
     #[tokio::test]
-    async fn full_three_way_handshakes_between_two_peers() {}
+    async fn full_three_way_handshakes_between_two_peers() {
+        let peer_handlers = create_two_peer_loops().await;
+        let high_msg_api = peer_handlers.high_peer_handle.clone();
+
+        api_request_get(high_msg_api.clone(), 1).await;
+    }
 }

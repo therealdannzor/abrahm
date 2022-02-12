@@ -62,3 +62,9 @@ pub enum HandshakeAPI {
     NewState(i32),
     GetState(tokio::sync::oneshot::Sender<i32>),
 }
+
+pub fn handshake_get_state() -> (tokio::sync::oneshot::Receiver<i32>, HandshakeAPI) {
+    let (send, recv) = tokio::sync::oneshot::channel();
+    let message = HandshakeAPI::GetState(send);
+    (recv, message)
+}
