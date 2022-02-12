@@ -5,7 +5,7 @@ use crate::message::{from_handshake, FixedHandshakes};
 use crate::HandshakeAPI;
 use std::io::{self, ErrorKind};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 use themis::keys::EcdsaPublicKey;
@@ -13,7 +13,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 
 pub async fn peer_handshake_loop(
-    rw: Arc<TcpStream>,
+    rw: Option<Arc<TcpStream>>,
     other_stream_id: EcdsaPublicKey,
     handshakes: FixedHandshakes,
     mock_mode: bool,
@@ -31,29 +31,24 @@ pub async fn peer_handshake_loop(
 
     // unit and e2e testing
     if mock_mode {
-        tokio::task::spawn(async move {
-            message_listen_loop_mock(mock_recv, other_copy, msg_send.clone(), err_send.clone())
-                .await;
-        });
-        tokio::spawn(async move {
-            read_handshake_loop(
-                rw2,
-                Some(mock_send),
-                handshakes,
-                msg_recv,
-                api_send.clone(),
-                api_recv,
-                other_stream_id,
-            )
-            .await;
-        });
+        message_listen_loop_mock(mock_recv, other_copy, msg_send.clone(), err_send.clone());
+        read_handshake_loop(
+            None,
+            Some(mock_send),
+            handshakes,
+            msg_recv,
+            api_send.clone(),
+            api_recv,
+            other_stream_id,
+        )
+        .await;
     }
     // main operation
     else {
-        tokio::task::spawn(async move {
-            message_listen_loop(rw1, other_copy, msg_send.clone(), err_send).await;
+        tokio::spawn(async move {
+            message_listen_loop(rw1.unwrap(), other_copy, msg_send.clone(), err_send).await;
         });
-        tokio::task::spawn(async move {
+        tokio::spawn(async move {
             read_handshake_loop(
                 rw2,
                 None,
@@ -79,7 +74,7 @@ async fn initiate_ping(
     handshake_id: EcdsaPublicKey,
     handshake_counter: Arc<AtomicUsize>,
     send_api: mpsc::Sender<HandshakeAPI>,
-    initiated: Arc<bool>,
+    initiated: Arc<AtomicBool>,
 ) {
     let remote_id = remote_id.clone();
 
@@ -89,7 +84,9 @@ async fn initiate_ping(
         match send(tmp, ping_msg).await {
             Ok(_) => {
                 update_counters(handshake_counter.clone(), send_api.clone(), 1).await;
-                *Arc::get_mut(&mut initiated.clone()).unwrap() = true;
+                let arc = initiated.clone();
+                arc.store(true, Ordering::SeqCst);
+
                 log::warn!("handshake value: {:?}", handshake_counter);
             }
             Err(e) => {
@@ -110,14 +107,16 @@ async fn initiate_ping_mock(
     handshake_id: EcdsaPublicKey,
     handshake_counter: Arc<AtomicUsize>,
     send_api: mpsc::Sender<HandshakeAPI>,
-    initiated: Arc<bool>,
+    initiated: Arc<AtomicBool>,
 ) {
     let priority_id = cmp_two_keys(remote_id.clone(), handshake_id.clone());
     if priority_id == handshake_id {
         match send_mock(test_w, ping_msg).await {
             Ok(_) => {
                 update_counters(handshake_counter.clone(), send_api.clone(), 1).await;
-                *Arc::get_mut(&mut initiated.clone()).unwrap() = true;
+                let arc = initiated.clone();
+                arc.store(true, Ordering::SeqCst);
+
                 log::warn!("handshake value: {:?}", handshake_counter);
             }
             Err(e) => {
@@ -160,38 +159,41 @@ async fn send(rw: Arc<TcpStream>, msg: Vec<u8>) -> Result<(), io::Error> {
 
 async fn send_mock(
     test_w: broadcast::Sender<Vec<u8>>,
-    ping_msg: Vec<u8>,
+    msg: Vec<u8>,
 ) -> Result<usize, tokio::sync::broadcast::error::SendError<Vec<u8>>> {
     let s = test_w.clone();
-    s.send(ping_msg)
+    s.send(msg)
 }
 
-async fn handshake_status_api(mut recv: mpsc::Receiver<HandshakeAPI>) {
+fn handshake_status_api(mut recv: mpsc::Receiver<HandshakeAPI>) {
     let state = Arc::new(AtomicUsize::new(0));
-    loop {
-        while let Some(msg) = recv.recv().await {
-            match msg {
-                HandshakeAPI::NewState(s) => {
-                    if s > 0 {
-                        state.clone().fetch_add(s as usize, Ordering::SeqCst);
-                    } else {
-                        state.clone().fetch_sub(s as usize, Ordering::SeqCst);
+
+    tokio::spawn(async move {
+        loop {
+            while let Some(msg) = recv.recv().await {
+                match msg {
+                    HandshakeAPI::NewState(s) => {
+                        if s > 0 {
+                            state.clone().fetch_add(s as usize, Ordering::SeqCst);
+                        } else {
+                            state.clone().fetch_sub(s as usize, Ordering::SeqCst);
+                        }
                     }
-                }
-                HandshakeAPI::GetState(sender) => {
-                    let res = state.clone().load(Ordering::SeqCst);
-                    let _ = sender.send(res as i32);
+                    HandshakeAPI::GetState(sender) => {
+                        let res = state.clone().load(Ordering::SeqCst);
+                        let _ = sender.send(res as i32).unwrap();
+                    }
                 }
             }
         }
-    }
+    });
 }
 
 // Receives messages from the fetcher channel (connected to the message listener loop).
 // This function is responsible for managing the full handshake logic: receive and send of
 // handshake messages.
 async fn read_handshake_loop(
-    rw: Arc<TcpStream>,
+    rw: Option<Arc<TcpStream>>,
     test_w: Option<broadcast::Sender<Vec<u8>>>,
     handshakes: FixedHandshakes,
     mut fetcher_recv: mpsc::Receiver<Vec<u8>>,
@@ -200,7 +202,7 @@ async fn read_handshake_loop(
     remote_id: EcdsaPublicKey,
 ) {
     // True when attempted to send a ping
-    let initiated_handshake: Arc<bool> = Arc::new(false);
+    let initiated_handshake: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
     // A peer P is considered _fully upgraded_ with the client C if and only if:
     // 1) C sent a ping to P, P responded with pong, and C sent an ack; or
@@ -215,8 +217,8 @@ async fn read_handshake_loop(
 
     // Create a replica counter in its own process to make it accessible to the rest of the system.
     // This should be in sync with `handshake_counter`.
-    tokio::task::spawn(async move {
-        handshake_status_api(api_recv).await;
+    tokio::spawn(async move {
+        handshake_status_api(api_recv);
     });
 
     let local_id = hex::encode(handshakes.author_id());
@@ -225,7 +227,7 @@ async fn read_handshake_loop(
     if priority_id == local_id {
         if test_w.is_some() {
             initiate_ping_mock(
-                test_w.unwrap(),
+                test_w.clone().unwrap(),
                 handshakes.ping(),
                 remote_id.clone(),
                 handshakes.author_id(),
@@ -236,7 +238,7 @@ async fn read_handshake_loop(
             .await;
         } else {
             initiate_ping(
-                tmp,
+                tmp.unwrap(),
                 handshakes.ping(),
                 remote_id.clone(),
                 handshakes.author_id(),
@@ -248,67 +250,89 @@ async fn read_handshake_loop(
         }
     }
 
-    loop {
-        while let Some(msg) = fetcher_recv.recv().await {
-            let atomic_phase = handshake_counter.clone().load(Ordering::SeqCst);
-            let has_init = initiated_handshake.clone();
+    tokio::spawn(async move {
+        loop {
+            while let Some(msg) = fetcher_recv.recv().await {
+                let atomic_phase = handshake_counter.clone().load(Ordering::SeqCst);
+                let has_init = initiated_handshake.clone();
 
-            // all messages sent on this channel have already been checked with `from_handshake` once
-            // before arriving here and are thus error-free, hence the immediate unwrap
-            let parsed_msg = from_handshake(msg, remote_id.clone()).unwrap();
+                // all messages sent on this channel have already been checked with `from_handshake` once
+                // before arriving here and are thus error-free, hence the immediate unwrap
+                let parsed_msg = from_handshake(msg, remote_id.clone()).unwrap();
 
-            // this peer has neither received a ping nor sent one
-            if atomic_phase == 0 && !*has_init {
-                if parsed_msg.code() == "ping" {
-                    update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
-
-                    let pong_msg = handshakes.pong();
-                    let tmp = rw.clone();
-                    match send(tmp, pong_msg).await {
-                        Ok(_) => {
-                            update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
+                // this peer has neither received a ping nor sent one
+                if atomic_phase == 0 && has_init.load(Ordering::SeqCst) == false {
+                    if parsed_msg.code() == "ping" {
+                        update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
+                        let pong_msg = handshakes.pong();
+                        if test_w.is_some() {
+                            let write = test_w.clone();
+                            let _ = send_mock(write.unwrap().clone(), pong_msg).await;
+                        } else {
+                            let tmp = rw.clone().unwrap();
+                            match send(tmp, pong_msg).await {
+                                Ok(_) => {
+                                    update_counters(handshake_counter.clone(), api_send.clone(), 1)
+                                        .await;
+                                }
+                                Err(e) => {
+                                    // undo add in on line 202
+                                    update_counters(
+                                        handshake_counter.clone(),
+                                        api_send.clone(),
+                                        -1,
+                                    )
+                                    .await;
+                                    log::error!("handshake send pong error: {}", e);
+                                }
+                            };
                         }
-                        Err(e) => {
-                            // undo add in on line 202
-                            update_counters(handshake_counter.clone(), api_send.clone(), -1).await;
-                            log::error!("handshake send pong error: {}", e);
-                        }
-                    };
-                } else {
-                    log::warn!(
-                        "handshake proto error: out of order, got: {}, expected ping",
-                        parsed_msg.code()
-                    );
+                    } else {
+                        log::warn!(
+                            "handshake proto error: out of order, got: {}, expected ping",
+                            parsed_msg.code()
+                        );
+                    }
                 }
-            }
-            // this peer has sent a ping and awaits a pong
-            else if atomic_phase == 1 && *has_init {
-                if parsed_msg.code() == "pong" {
-                    update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
-
-                    let ack_msg = handshakes.ack();
-                    let tmp = rw.clone();
-                    match send(tmp, ack_msg).await {
-                        Ok(_) => {
-                            // handshake complete
-                            update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
+                // this peer has sent a ping and awaits a pong
+                else if atomic_phase == 1 && has_init.load(Ordering::SeqCst) == true {
+                    if parsed_msg.code() == "pong" {
+                        update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
+                        let ack_msg = handshakes.ack();
+                        if test_w.is_some() {
+                            let write = test_w.clone();
+                            let _ = send_mock(write.unwrap(), ack_msg).await;
+                        } else {
+                            let tmp = rw.clone().unwrap();
+                            match send(tmp, ack_msg).await {
+                                Ok(_) => {
+                                    // handshake complete
+                                    update_counters(handshake_counter.clone(), api_send.clone(), 1)
+                                        .await;
+                                }
+                                Err(e) => {
+                                    update_counters(
+                                        handshake_counter.clone(),
+                                        api_send.clone(),
+                                        -1,
+                                    )
+                                    .await;
+                                    log::error!("handshake send ack error: {}", e);
+                                }
+                            };
                         }
-                        Err(e) => {
-                            update_counters(handshake_counter.clone(), api_send.clone(), -1).await;
-                            log::error!("handshake send ack error: {}", e);
-                        }
-                    };
+                    }
                 }
-            }
-            // this peer has sent a pong message and awaits an ack
-            else if atomic_phase == 2 && !*has_init {
-                if parsed_msg.code() == "ack" {
-                    // handshake complete
-                    handshake_counter.clone().fetch_add(1, Ordering::SeqCst);
+                // this peer has sent a pong message and awaits an ack
+                else if atomic_phase == 2 && has_init.load(Ordering::SeqCst) == false {
+                    if parsed_msg.code() == "ack" {
+                        // handshake complete
+                        handshake_counter.clone().fetch_add(1, Ordering::SeqCst);
+                    }
                 }
             }
         }
-    }
+    });
 }
 
 async fn update_counters(
@@ -365,29 +389,30 @@ async fn message_listen_loop(
 }
 
 // Listens for p2p messages from the tokio broadcast channel. It then relays these messages to the fetcher.
-async fn message_listen_loop_mock(
+fn message_listen_loop_mock(
     mut test_rcv: broadcast::Receiver<Vec<u8>>,
     other_stream_id: EcdsaPublicKey,
     fetcher: mpsc::Sender<Vec<u8>>,
     err: mpsc::Sender<String>,
 ) {
-    loop {
-        while let Ok(rx_msg) = test_rcv.recv().await {
-            let _ = match from_handshake(rx_msg.clone(), other_stream_id.clone()) {
-                Ok(_) => {}
-                Err(e) => {
-                    let _ = err.send(e.to_string()).await;
-                    continue;
-                }
-            };
-            let _ = fetcher.clone().send(rx_msg).await;
+    tokio::spawn(async move {
+        loop {
+            while let Ok(rx_msg) = test_rcv.recv().await {
+                let _ = match from_handshake(rx_msg.clone(), other_stream_id.clone()) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let _ = err.send(e.to_string()).await;
+                        continue;
+                    }
+                };
+                let _ = fetcher.clone().send(rx_msg).await;
+            }
         }
-    }
+    });
 }
 
 #[cfg(test)]
 mod tests {
-
     #[tokio::test]
     async fn full_three_way_handshakes_between_two_peers() {}
 }
