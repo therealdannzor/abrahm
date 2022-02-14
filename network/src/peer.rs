@@ -532,8 +532,11 @@ mod tests {
                     // the channel has a message, we do not expect one to come
                     panic!("{}", x);
                 }
-                Err(_) => {
-                    // channel is empty and returns an error, this is expected
+                // channel is empty and returns an empty error, this is expected
+                Err(e) if e == mpsc::error::TryRecvError::Empty => {}
+                Err(e) => {
+                    // something else happened, this is not expected
+                    panic!("{}", e);
                 }
             }
         }
