@@ -102,6 +102,7 @@ impl RawHandshake {
     }
 }
 
+#[derive(Debug)]
 struct FullHandshake {
     // handshake in bencoded form
     handshake: Vec<u8>,
@@ -111,7 +112,7 @@ struct FullHandshake {
 
 impl FullHandshake {
     fn verify(&self, public_key: EcdsaPublicKey) -> bool {
-        if self.handshake.len() == 0 || self.signed.len() == 0 {
+        if self.handshake.len() == 0 || self.signed_len() == 0 {
             log::warn!("handshake missing field(s)");
             return false;
         }
@@ -121,6 +122,18 @@ impl FullHandshake {
 
     fn parse(&self) -> Result<RawHandshake, decoding::Error> {
         Ok(RawHandshake::from_bencode(&self.handshake)?)
+    }
+
+    fn signed_len(&self) -> usize {
+        self.signed.len()
+    }
+
+    fn plain_len(&self) -> usize {
+        self.handshake.len()
+    }
+
+    fn signed_message(&self) -> Vec<u8> {
+        self.signed.clone()
     }
 }
 
@@ -185,11 +198,12 @@ fn new_handshake(
     port: String,
     secret_key: EcdsaPrivateKey,
 ) -> Result<Vec<u8>, encoding::Error> {
-    let raw = RawHandshake::new(code, id, port);
+    let raw = RawHandshake::new(code, id.clone(), port);
     let handshake = raw.to_bencode()?;
     let signed = hash_and_sign_message_digest(secret_key, handshake.clone());
     let hs = FullHandshake { handshake, signed };
-    Ok(hs.to_bencode()?)
+    let bencode = hs.to_bencode()?;
+    Ok(bencode)
 }
 
 // from_handshake receives a p2p handshake from another, connected peer.
@@ -202,7 +216,7 @@ pub fn from_handshake(
     let full = FullHandshake::from_bencode(&hs)?;
     if !full.verify(other_peer_pk) {
         return Err(decoding::Error::missing_field(String::from_utf8_lossy(
-            b"invalid messsage, possibly invalid peer key",
+            b"invalid message, check other peer public key",
         )));
     }
     full.parse()
