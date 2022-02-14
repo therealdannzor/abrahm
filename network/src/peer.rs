@@ -31,7 +31,12 @@ pub async fn peer_handshake_loop(
 
     // unit and e2e testing
     if mock_mode {
-        message_listen_loop_mock(mock_recv, other_copy, msg_send.clone(), err_send.clone());
+        message_listen_loop_mock(
+            mock_recv,
+            handshakes.author_id(),
+            msg_send.clone(),
+            err_send.clone(),
+        );
         read_handshake_loop(
             None,
             Some(mock_send),
@@ -258,7 +263,10 @@ async fn read_handshake_loop(
 
                 // all messages sent on this channel have already been checked with `from_handshake` once
                 // before arriving here and are thus error-free, hence the immediate unwrap
-                let parsed_msg = from_handshake(msg, remote_id.clone()).unwrap();
+                let parsed_msg = match test_w {
+                    Some(_) => from_handshake(msg, handshakes.author_id().clone()).unwrap(),
+                    None => from_handshake(msg, remote_id.clone()).unwrap(),
+                };
 
                 // this peer has neither received a ping nor sent one
                 if atomic_phase == 0 && has_init.load(Ordering::SeqCst) == false {
@@ -357,7 +365,7 @@ async fn message_listen_loop(
     fetcher: mpsc::Sender<Vec<u8>>,
     err: mpsc::Sender<String>,
 ) {
-    const MAX_LENGTH: usize = 400;
+    const MAX_LENGTH: usize = 1200;
     let arc = rw.clone();
     loop {
         let _ = arc.readable().await;
@@ -391,14 +399,14 @@ async fn message_listen_loop(
 // Listens for p2p messages from the tokio broadcast channel. It then relays these messages to the fetcher.
 fn message_listen_loop_mock(
     mut test_rcv: broadcast::Receiver<Vec<u8>>,
-    other_stream_id: EcdsaPublicKey,
+    public_key: EcdsaPublicKey,
     fetcher: mpsc::Sender<Vec<u8>>,
     err: mpsc::Sender<String>,
 ) {
     tokio::spawn(async move {
         loop {
             while let Ok(rx_msg) = test_rcv.recv().await {
-                let _ = match from_handshake(rx_msg.clone(), other_stream_id.clone()) {
+                let _ = match from_handshake(rx_msg.clone(), public_key.clone()) {
                     Ok(_) => {}
                     Err(e) => {
                         let _ = err.send(e.to_string()).await;
@@ -457,6 +465,14 @@ mod tests {
         let (high_keypair, low_keypair) = create_two_pairs_highest_first();
         let (high_handshake, low_handshake) =
             create_handshake_set_highest_first(high_keypair.clone(), low_keypair.clone());
+        assert_eq!(
+            high_keypair.clone().split().1.clone(),
+            high_handshake.author_id()
+        );
+        assert_eq!(
+            low_keypair.clone().split().1.clone(),
+            low_handshake.author_id()
+        );
         MockPairPeer {
             high_keypair,
             high_handshake,
@@ -478,6 +494,8 @@ mod tests {
         let high_public_key = mock.high_keypair.split().1.clone();
         let low_handshake = mock.low_handshake.clone();
         let high_handshake = mock.high_handshake.clone();
+        assert_eq!(mock.high_handshake.author_id(), high_public_key.clone());
+        assert_eq!(mock.low_handshake.author_id(), low_public_key.clone());
         let (high_peer_handle, high_err_handle) =
             peer_handshake_loop(None, low_public_key, high_handshake, true).await;
         let (low_peer_handle, low_err_handle) =
@@ -509,18 +527,26 @@ mod tests {
                 }
             }
         } else {
-            match handle.recv().await {
-                Some(x) => panic!("{}", x),
-                None => {}
+            match handle.try_recv() {
+                Ok(x) => {
+                    // the channel has a message, we do not expect one to come
+                    panic!("{}", x);
+                }
+                Err(_) => {
+                    // channel is empty and returns an error, this is expected
+                }
             }
         }
     }
 
     #[tokio::test]
-    async fn full_three_way_handshakes_between_two_peers() {
+    async fn full_handshake() {
         let peer_handlers = create_two_peer_loops().await;
         let high_msg_api = peer_handlers.high_peer_handle.clone();
+        let high_err_api = peer_handlers.high_err_handle;
 
         api_request_get(high_msg_api.clone(), 1).await;
+        let expect_error = false;
+        api_error_check(high_err_api, expect_error).await;
     }
 }
