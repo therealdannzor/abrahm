@@ -15,6 +15,8 @@ use tokio::sync::{broadcast, mpsc};
 pub async fn peer_handshake_loop(
     rw: Option<Arc<TcpStream>>,
     other_stream_id: EcdsaPublicKey,
+    mock_recv: broadcast::Receiver<Vec<u8>>,
+    mock_send: broadcast::Sender<Vec<u8>>,
     handshakes: FixedHandshakes,
     mock_mode: bool,
 ) -> (mpsc::Sender<HandshakeAPI>, mpsc::Receiver<String>) {
@@ -22,8 +24,6 @@ pub async fn peer_handshake_loop(
     let (err_send, err_recv): (mpsc::Sender<String>, mpsc::Receiver<String>) = mpsc::channel(4);
     let (api_send, api_recv): (mpsc::Sender<HandshakeAPI>, mpsc::Receiver<HandshakeAPI>) =
         mpsc::channel(8);
-    let (mock_send, mock_recv): (broadcast::Sender<Vec<u8>>, broadcast::Receiver<Vec<u8>>) =
-        broadcast::channel(16);
     let other_copy = other_stream_id.clone();
     let rw1 = rw.clone();
     let rw2 = rw.clone();
@@ -33,7 +33,7 @@ pub async fn peer_handshake_loop(
     if mock_mode {
         message_listen_loop_mock(
             mock_recv,
-            handshakes.author_id(),
+            other_stream_id.clone(),
             msg_send.clone(),
             err_send.clone(),
         );
@@ -148,7 +148,7 @@ async fn send(rw: Arc<TcpStream>, msg: Vec<u8>) -> Result<(), io::Error> {
                         "sent incomplete message",
                     ));
                 }
-                break;
+                return Ok(());
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 continue;
@@ -158,8 +158,6 @@ async fn send(rw: Arc<TcpStream>, msg: Vec<u8>) -> Result<(), io::Error> {
             }
         }
     }
-
-    Ok(())
 }
 
 async fn send_mock(
@@ -264,8 +262,8 @@ async fn read_handshake_loop(
                 // all messages sent on this channel have already been checked with `from_handshake` once
                 // before arriving here and are thus error-free, hence the immediate unwrap
                 let parsed_msg = match test_w {
-                    Some(_) => from_handshake(msg, handshakes.author_id().clone()).unwrap(),
-                    None => from_handshake(msg, remote_id.clone()).unwrap(),
+                    Some(_) => from_handshake(msg, remote_id.clone()).unwrap(),
+                    None => from_handshake(msg, handshakes.author_id().clone()).unwrap(),
                 };
 
                 // this peer has neither received a ping nor sent one
@@ -428,7 +426,7 @@ mod tests {
     use crate::HandshakeAPI;
     use themis::keygen::gen_ec_key_pair;
     use themis::keys::EcdsaKeyPair;
-    use tokio::sync::mpsc;
+    use tokio::sync::{broadcast, mpsc};
 
     fn create_two_pairs_highest_first() -> (EcdsaKeyPair, EcdsaKeyPair) {
         let pair1 = gen_ec_key_pair();
@@ -496,10 +494,30 @@ mod tests {
         let high_handshake = mock.high_handshake.clone();
         assert_eq!(mock.high_handshake.author_id(), high_public_key.clone());
         assert_eq!(mock.low_handshake.author_id(), low_public_key.clone());
-        let (high_peer_handle, high_err_handle) =
-            peer_handshake_loop(None, low_public_key, high_handshake, true).await;
-        let (low_peer_handle, low_err_handle) =
-            peer_handshake_loop(None, high_public_key, low_handshake, true).await;
+
+        // Create two broadcast channels to simulate communication between two peers.
+        // We pass the receiver half of one peer to the other one to simulate p2p communication.
+        let (fir_send, fir_recv) = broadcast::channel(8);
+        let (sec_send, sec_recv) = broadcast::channel(8);
+
+        let (high_peer_handle, high_err_handle) = peer_handshake_loop(
+            None,
+            low_public_key,
+            sec_recv,
+            fir_send,
+            high_handshake,
+            true,
+        )
+        .await;
+        let (low_peer_handle, low_err_handle) = peer_handshake_loop(
+            None,
+            high_public_key,
+            fir_recv,
+            sec_send,
+            low_handshake,
+            true,
+        )
+        .await;
         MockPeerHandlers {
             high_peer_handle,
             high_err_handle,
@@ -547,9 +565,13 @@ mod tests {
         let peer_handlers = create_two_peer_loops().await;
         let high_msg_api = peer_handlers.high_peer_handle.clone();
         let high_err_api = peer_handlers.high_err_handle;
+        let low_msg_api = peer_handlers.low_peer_handle.clone();
+        let low_err_api = peer_handlers.low_err_handle;
 
         api_request_get(high_msg_api.clone(), 1).await;
+        api_request_get(low_msg_api.clone(), 1).await;
         let expect_error = false;
         api_error_check(high_err_api, expect_error).await;
+        api_error_check(low_err_api, expect_error).await;
     }
 }
