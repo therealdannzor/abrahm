@@ -275,24 +275,20 @@ async fn read_handshake_loop(
                             let write = test_w.clone();
                             let _ = send_mock(write.unwrap().clone(), pong_msg).await;
                         } else {
-                            let tmp = rw.clone().unwrap();
-                            match send(tmp, pong_msg).await {
-                                Ok(_) => {
-                                    update_counters(handshake_counter.clone(), api_send.clone(), 1)
-                                        .await;
-                                }
-                                Err(e) => {
-                                    // undo add in on line 202
-                                    update_counters(
-                                        handshake_counter.clone(),
-                                        api_send.clone(),
-                                        -1,
-                                    )
-                                    .await;
-                                    log::error!("handshake send pong error: {}", e);
-                                }
-                            };
+                            loop {
+                                let tmp = rw.clone().unwrap();
+                                let msg = pong_msg.clone();
+                                match send(tmp, msg).await {
+                                    Ok(_) => {
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        log::error!("handshake send pong error: {}", e);
+                                    }
+                                };
+                            }
                         }
+                        update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
                     } else {
                         log::warn!(
                             "handshake proto error: out of order, got: {}, expected ping",
@@ -309,31 +305,28 @@ async fn read_handshake_loop(
                             let write = test_w.clone();
                             let _ = send_mock(write.unwrap(), ack_msg).await;
                         } else {
-                            let tmp = rw.clone().unwrap();
-                            match send(tmp, ack_msg).await {
-                                Ok(_) => {
-                                    // handshake complete
-                                    update_counters(handshake_counter.clone(), api_send.clone(), 1)
-                                        .await;
-                                }
-                                Err(e) => {
-                                    update_counters(
-                                        handshake_counter.clone(),
-                                        api_send.clone(),
-                                        -1,
-                                    )
-                                    .await;
-                                    log::error!("handshake send ack error: {}", e);
-                                }
-                            };
+                            loop {
+                                let tmp = rw.clone().unwrap();
+                                let msg = ack_msg.clone();
+                                match send(tmp, msg).await {
+                                    Ok(_) => {
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        log::error!("handshake send ack error: {}", e);
+                                    }
+                                };
+                            }
                         }
+                        // handshake complete
+                        update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
                     }
                 }
                 // this peer has sent a pong message and awaits an ack
                 else if atomic_phase == 2 && has_init.load(Ordering::SeqCst) == false {
                     if parsed_msg.code() == "ack" {
                         // handshake complete
-                        handshake_counter.clone().fetch_add(1, Ordering::SeqCst);
+                        update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
                     }
                 }
             }
@@ -427,6 +420,11 @@ mod tests {
     use themis::keygen::gen_ec_key_pair;
     use themis::keys::EcdsaKeyPair;
     use tokio::sync::{broadcast, mpsc};
+
+    async fn sleep_one_half_second() {
+        use tokio::time::{sleep, Duration};
+        sleep(Duration::from_millis(500)).await;
+    }
 
     fn create_two_pairs_highest_first() -> (EcdsaKeyPair, EcdsaKeyPair) {
         let pair1 = gen_ec_key_pair();
@@ -568,8 +566,10 @@ mod tests {
         let low_msg_api = peer_handlers.low_peer_handle.clone();
         let low_err_api = peer_handlers.low_err_handle;
 
-        api_request_get(high_msg_api.clone(), 1).await;
-        api_request_get(low_msg_api.clone(), 1).await;
+        // some time has passed for the two peers to go through the full handshake
+        sleep_one_half_second().await;
+        api_request_get(high_msg_api.clone(), 3).await;
+        api_request_get(low_msg_api.clone(), 3).await;
         let expect_error = false;
         api_error_check(high_err_api, expect_error).await;
         api_error_check(low_err_api, expect_error).await;
