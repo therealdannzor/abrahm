@@ -12,6 +12,9 @@ use themis::keys::EcdsaPublicKey;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, mpsc};
 
+/// Runs the p2p connection stream and returns two channels to interact with the multiple loops.
+/// The first channel is the API handle, used to query the current handshake state (phase).
+/// The second channel is the error channel. This should be error free, thus empty.
 pub async fn peer_handshake_loop(
     rw: Option<Arc<TcpStream>>,
     other_stream_id: EcdsaPublicKey,
@@ -133,7 +136,7 @@ async fn initiate_ping_mock(
     }
 }
 
-// Writes a message to either a TCP connection or the mock tokio channel
+// Writes a message to a TCP connection
 async fn send(rw: Arc<TcpStream>, msg: Vec<u8>) -> Result<(), io::Error> {
     let l = msg.len();
     let rw = rw.clone();
@@ -160,6 +163,7 @@ async fn send(rw: Arc<TcpStream>, msg: Vec<u8>) -> Result<(), io::Error> {
     }
 }
 
+// Writes a message to the mock tokio channel
 async fn send_mock(
     test_w: broadcast::Sender<Vec<u8>>,
     msg: Vec<u8>,
@@ -168,6 +172,8 @@ async fn send_mock(
     s.send(msg)
 }
 
+// Keeps track of the handshake state between local and remote node
+// which forms a p2p connection
 fn handshake_status_api(mut recv: mpsc::Receiver<HandshakeAPI>) {
     let state = Arc::new(AtomicUsize::new(0));
 
@@ -334,6 +340,7 @@ async fn read_handshake_loop(
     });
 }
 
+// Increments or decrements the handshake counter and notifies the api
 async fn update_counters(
     counter: Arc<AtomicUsize>,
     replica_api: mpsc::Sender<HandshakeAPI>,
