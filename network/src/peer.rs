@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, mpsc};
 /// The first channel is the API handle, used to query the current handshake state (phase).
 /// The second channel is the error channel. This should be error free, thus empty.
 pub async fn peer_handshake_loop(
-    rw: Option<Arc<TcpStream>>,
+    other_stream_port: String,
     other_stream_id: EcdsaPublicKey,
     mock_recv: broadcast::Receiver<Vec<u8>>,
     mock_send: broadcast::Sender<Vec<u8>>,
@@ -27,7 +27,18 @@ pub async fn peer_handshake_loop(
     let (err_send, err_recv): (mpsc::Sender<String>, mpsc::Receiver<String>) = mpsc::channel(4);
     let (api_send, api_recv): (mpsc::Sender<HandshakeAPI>, mpsc::Receiver<HandshakeAPI>) =
         mpsc::channel(8);
+    let mut so_addr = "127.0.0.1:".to_string();
+    so_addr.push_str(&other_stream_port.clone());
     let other_copy = other_stream_id.clone();
+    let tcp = match TcpStream::connect(so_addr).await {
+        Ok(x) => x,
+        Err(e) => {
+            panic!("{}", e);
+        }
+    };
+    // make the stream safe to share over multiple threads
+    let rw = Arc::new(tcp);
+
     let rw1 = rw.clone();
     let rw2 = rw.clone();
     let api_handle = api_send.clone();
@@ -54,11 +65,11 @@ pub async fn peer_handshake_loop(
     // main operation
     else {
         tokio::spawn(async move {
-            message_listen_loop(rw1.unwrap(), other_copy, msg_send.clone(), err_send).await;
+            message_listen_loop(rw1, other_copy, msg_send.clone(), err_send).await;
         });
         tokio::spawn(async move {
             read_handshake_loop(
-                rw2,
+                Some(rw2),
                 None,
                 handshakes,
                 msg_recv,
@@ -176,7 +187,6 @@ async fn send_mock(
 // which forms a p2p connection
 fn handshake_status_api(mut recv: mpsc::Receiver<HandshakeAPI>) {
     let state = Arc::new(AtomicUsize::new(0));
-
     tokio::spawn(async move {
         loop {
             while let Some(msg) = recv.recv().await {
@@ -191,6 +201,14 @@ fn handshake_status_api(mut recv: mpsc::Receiver<HandshakeAPI>) {
                     HandshakeAPI::GetState(sender) => {
                         let res = state.clone().load(Ordering::SeqCst);
                         let _ = sender.send(res as i32).unwrap();
+                    }
+                    HandshakeAPI::IsAuth(s) => {
+                        let phase = state.clone().load(Ordering::SeqCst);
+                        if phase == 3 {
+                            let _ = s.send(true).unwrap();
+                        } else {
+                            let _ = s.send(false).unwrap();
+                        }
                     }
                 }
             }

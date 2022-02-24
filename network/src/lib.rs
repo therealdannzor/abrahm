@@ -61,6 +61,7 @@ pub enum PayloadEvent {
 pub enum HandshakeAPI {
     NewState(i32),
     GetState(tokio::sync::oneshot::Sender<i32>),
+    IsAuth(tokio::sync::oneshot::Sender<bool>),
 }
 
 pub fn handshake_get_state() -> (tokio::sync::oneshot::Receiver<i32>, HandshakeAPI) {
