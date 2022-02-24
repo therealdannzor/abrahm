@@ -48,13 +48,13 @@ impl Networking {
 }
 
 // spawn_peer_discovery_listener finds the other peers on the same network.
-// It needs to know the host server loop to tell other peers to speak with it there.
+// It needs to know the host handshake loop to tell other peers to speak with it there.
 // This port is received by a succcessful call to `spawn_io_listeners`.
 // When it has discovered all peers, it returns all [port, public_key] pairs.
 pub async fn spawn_peer_discovery_listener(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
-    server_port: String,
+    handshake_port: String,
     mut validator_list: Vec<String>,
     mut ug_rx: UnboundedReceiver<UpgradedPeerData>,
 ) -> Vec<UpgradedPeerData> {
@@ -78,7 +78,7 @@ pub async fn spawn_peer_discovery_listener(
 
     let public_key = pk.clone();
     let secret_key = sk.clone();
-    let serv_port = server_port.clone();
+    let serv_port = handshake_port.clone();
     let join = tokio::spawn(async move {
         spawn_peer_discovery_loop(
             public_key,
@@ -120,7 +120,7 @@ pub async fn spawn_peer_discovery_listener(
 
     not.notified().await;
     let pf = peers_found.clone();
-    let serv_port = server_port.clone();
+    let serv_port = handshake_port.clone();
     let join =
         tokio::spawn(
             async move { upgrade_server_backend(pk.clone(), sk.clone(), pf, serv_port).await },
@@ -153,16 +153,16 @@ async fn upgrade_server_backend(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     peers: Vec<ValidatedPeer>,
-    server_port: String,
+    handshake_port: String,
 ) {
     let socket = any_udp_socket().await;
 
     for i in 0..3 * peers.len() {
         let mut address = "127.0.0.1:".to_string();
-        let port = peers[i % peers.len()].serv_port();
+        let port = peers[i % peers.len()].shake_port();
         address.push_str(&port.clone());
         let mut message = "UPGRD".to_string();
-        message.push_str(&server_port);
+        message.push_str(&handshake_port);
         let payload = create_p2p_message(pk.clone(), sk.clone(), &message);
 
         let random_num = create_rnd_number(4, 10).try_into().unwrap();

@@ -23,13 +23,13 @@ use tokio::task::JoinHandle;
 pub async fn spawn_peer_discovery_loop(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
-    serv_port: String,
+    handshake_port: String,
     tx: Sender<ValidatedPeer>,
     kill: Sender<bool>,
     to_discover: Vec<String>,
 ) -> JoinHandle<()> {
     let join = tokio::spawn(async move {
-        match peer_discovery_loop(pk, sk, serv_port, tx, kill, to_discover).await {
+        match peer_discovery_loop(pk, sk, handshake_port, tx, kill, to_discover).await {
             Ok(()) => {}
             Err(e) => {
                 panic!("discovery loop failed: {:?}", e);
@@ -43,7 +43,7 @@ pub async fn spawn_peer_discovery_loop(
 async fn peer_discovery_loop(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
-    serv_port: String,
+    shake_port: String,
     tx: Sender<ValidatedPeer>,
     kill: Sender<bool>,
     to_discover: Vec<String>,
@@ -69,7 +69,7 @@ async fn peer_discovery_loop(
                         pk.clone(),
                         sk.clone(),
                         my_disc_port.clone(),
-                        serv_port.clone(),
+                        shake_port.clone(),
                     );
                     tokio::spawn(async move {
                         // send each new peer three discovery messages at each new discovery event
@@ -114,18 +114,18 @@ async fn peer_discovery_loop(
 #[derive(Clone, Debug)]
 pub struct ValidatedPeer {
     disc_port: String,
-    serv_port: String,
+    shake_port: String,
     key: EcdsaPublicKey,
 }
 impl ValidatedPeer {
-    fn new(disc_port: Vec<u8>, serv_port: Vec<u8>, public_key: Vec<u8>) -> Self {
+    fn new(disc_port: Vec<u8>, shake_port: Vec<u8>, public_key: Vec<u8>) -> Self {
         let disc_port = match std::str::from_utf8(&disc_port) {
             Ok(s) => s.to_string(),
             Err(e) => {
                 panic!("this should not happen: {}", e);
             }
         };
-        let serv_port = match std::str::from_utf8(&serv_port) {
+        let shake_port = match std::str::from_utf8(&shake_port) {
             Ok(s) => s.to_string(),
             Err(e) => {
                 panic!("this should not happen: {}", e);
@@ -139,7 +139,7 @@ impl ValidatedPeer {
         };
         Self {
             disc_port,
-            serv_port,
+            shake_port,
             key,
         }
     }
@@ -147,8 +147,8 @@ impl ValidatedPeer {
         self.disc_port.clone()
     }
 
-    pub fn serv_port(&self) -> String {
-        self.serv_port.clone()
+    pub fn shake_port(&self) -> String {
+        self.shake_port.clone()
     }
 
     pub fn key(&self) -> EcdsaPublicKey {
@@ -205,7 +205,7 @@ impl Server {
                     } else {
                         let public_key_vec = public_key.as_ref().to_vec();
                         let disc_port = extract_discv_port_field(msg.clone());
-                        let serv_port = extract_server_port_field(msg);
+                        let shake_port = extract_server_port_field(msg);
                         if !peers_confirmed.contains(&public_hex) {
                             // add peers found for the first time
                             if let Some(_) = to_find.iter().position(|x| *x == public_hex) {
@@ -217,7 +217,7 @@ impl Server {
                                 }
                             }
                             let validated =
-                                ValidatedPeer::new(disc_port, serv_port, public_key_vec);
+                                ValidatedPeer::new(disc_port, shake_port, public_key_vec);
 
                             let _ = tx.send(validated).await;
                         } else {
