@@ -3,10 +3,11 @@ use super::{FromServerEvent, PayloadEvent, UpgradedPeerData};
 use crate::client_handle::{spawn_peer_listeners, MessagePeerHandle};
 use crate::common::create_p2p_message;
 use crate::server_handle::spawn_server_accept_loop;
-use crate::utils::any_udp_socket;
+use crate::utils::{any_udp_socket, try_tcp_connect};
 use std::convert::TryInto;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
+use tokio::net::TcpStream;
 use tokio::sync::{
     mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender},
     Notify,
@@ -47,6 +48,8 @@ impl Networking {
     }
 }
 
+pub async fn spawn_handshake_loop(_upgraded: Vec<UpgradedPeerData>) {}
+
 // spawn_peer_discovery_listener finds the other peers on the same network.
 // It needs to know the host handshake loop to tell other peers to speak with it there.
 // This port is received by a succcessful call to `spawn_io_listeners`.
@@ -57,7 +60,7 @@ pub async fn spawn_peer_discovery_listener(
     handshake_port: String,
     mut validator_list: Vec<String>,
     mut ug_rx: UnboundedReceiver<UpgradedPeerData>,
-) -> Vec<UpgradedPeerData> {
+) -> Vec<Arc<TcpStream>> {
     let (tx_peer_discv, mut rx_peer_discv): (Sender<ValidatedPeer>, Receiver<ValidatedPeer>) =
         mpsc::channel(128);
 
@@ -143,10 +146,26 @@ pub async fn spawn_peer_discovery_listener(
             break;
         }
     }
-
     not.notified().await;
+
+    let mut tmp_ports: Vec<String> = Vec::new();
+    let mut all_streams: Vec<Arc<TcpStream>> = Vec::new();
+    while all_streams.len() < amount_to_validate {
+        loop {
+            for peer in ug_peers.iter() {
+                let other_port = peer.1.clone();
+                if let Ok(stream) = try_tcp_connect(other_port.clone()).await {
+                    if !tmp_ports.contains(&other_port.clone()) {
+                        tmp_ports.push(other_port);
+                        all_streams.push(Arc::new(stream));
+                    }
+                }
+            }
+        }
+    }
+
     log::info!("full upgrade of peer protocol done");
-    ug_peers
+    all_streams
 }
 
 async fn upgrade_server_backend(

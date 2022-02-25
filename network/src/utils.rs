@@ -1,4 +1,4 @@
-use tokio::net::{TcpListener, UdpSocket};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 pub async fn get_udp_and_addr() -> (UdpSocket, String) {
     let socket = match UdpSocket::bind("127.0.0.1:0").await {
@@ -27,4 +27,10 @@ pub async fn get_tcp_and_addr() -> (TcpListener, String) {
 
     let port = socket.local_addr().unwrap().port().to_string();
     (socket, port)
+}
+
+pub async fn try_tcp_connect(port: String) -> Result<TcpStream, std::io::Error> {
+    let mut addr = "127.0.0.1:".to_string();
+    addr.push_str(&port);
+    TcpStream::connect(addr).await
 }
