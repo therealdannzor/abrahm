@@ -2,6 +2,7 @@
 
 use crate::common::{cmp_two_keys, cmp_two_keys_string};
 use crate::message::{from_handshake, FixedHandshakes};
+use crate::utils::get_tcp_and_addr;
 use crate::HandshakeAPI;
 use std::io::{self, ErrorKind};
 use std::sync::{
@@ -9,17 +10,17 @@ use std::sync::{
     Arc,
 };
 use themis::keys::EcdsaPublicKey;
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, mpsc};
 
 /// Runs the p2p connection stream and returns two channels to interact with the multiple loops.
 /// The first channel is the API handle, used to query the current handshake state (phase).
 /// The second channel is the error channel. This should be error free, thus empty.
 pub async fn peer_handshake_loop(
-    other_stream_port: String,
+    other_stream: Option<Arc<TcpStream>>,
     other_stream_id: EcdsaPublicKey,
-    mock_recv: broadcast::Receiver<Vec<u8>>,
-    mock_send: broadcast::Sender<Vec<u8>>,
+    mock_recv: Option<broadcast::Receiver<Vec<u8>>>,
+    mock_send: Option<broadcast::Sender<Vec<u8>>>,
     handshakes: FixedHandshakes,
     mock_mode: bool,
 ) -> (mpsc::Sender<HandshakeAPI>, mpsc::Receiver<String>) {
@@ -27,33 +28,20 @@ pub async fn peer_handshake_loop(
     let (err_send, err_recv): (mpsc::Sender<String>, mpsc::Receiver<String>) = mpsc::channel(4);
     let (api_send, api_recv): (mpsc::Sender<HandshakeAPI>, mpsc::Receiver<HandshakeAPI>) =
         mpsc::channel(8);
-    let mut so_addr = "127.0.0.1:".to_string();
-    so_addr.push_str(&other_stream_port.clone());
-    let other_copy = other_stream_id.clone();
-    let tcp = match TcpStream::connect(so_addr).await {
-        Ok(x) => x,
-        Err(e) => {
-            panic!("{}", e);
-        }
-    };
-    // make the stream safe to share over multiple threads
-    let rw = Arc::new(tcp);
-
-    let rw1 = rw.clone();
-    let rw2 = rw.clone();
+    let rw = other_stream.clone();
     let api_handle = api_send.clone();
 
     // unit and e2e testing
     if mock_mode {
         message_listen_loop_mock(
-            mock_recv,
+            mock_recv.unwrap(),
             other_stream_id.clone(),
             msg_send.clone(),
             err_send.clone(),
         );
         read_handshake_loop(
             None,
-            Some(mock_send),
+            mock_send,
             handshakes,
             msg_recv,
             api_send.clone(),
@@ -65,11 +53,8 @@ pub async fn peer_handshake_loop(
     // main operation
     else {
         tokio::spawn(async move {
-            message_listen_loop(rw1, other_copy, msg_send.clone(), err_send).await;
-        });
-        tokio::spawn(async move {
             read_handshake_loop(
-                Some(rw2),
+                rw,
                 None,
                 handshakes,
                 msg_recv,
@@ -351,6 +336,7 @@ async fn read_handshake_loop(
                     if parsed_msg.code() == "ack" {
                         // handshake complete
                         update_counters(handshake_counter.clone(), api_send.clone(), 1).await;
+                        break;
                     }
                 }
             }
@@ -375,41 +361,20 @@ async fn update_counters(
 }
 
 // Listens for p2p messages from the TCP stream. It then relays these messages to the fetcher.
-async fn message_listen_loop(
-    rw: Arc<TcpStream>,
+pub async fn message_listen_loop(
     other_stream_id: EcdsaPublicKey,
     fetcher: mpsc::Sender<Vec<u8>>,
     err: mpsc::Sender<String>,
-) {
-    const MAX_LENGTH: usize = 1200;
-    let arc = rw.clone();
-    loop {
-        let _ = arc.readable().await;
-        let mut buf = [0; MAX_LENGTH];
+) -> (Arc<TcpListener>, String) {
+    let (rw, handshake_port) = get_tcp_and_addr().await;
+    let rw = Arc::new(rw);
+    let rw1 = rw.clone();
 
-        match arc.try_read(&mut buf) {
-            Ok(0) => {
-                continue;
-            }
-            Ok(_) => {
-                let message_vec = buf.to_vec();
-                let _ = match from_handshake(message_vec.clone(), other_stream_id.clone()) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        let _ = err.send(e.to_string()).await;
-                        continue;
-                    }
-                };
-                let _ = fetcher.send(message_vec).await;
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                continue;
-            }
-            Err(e) => {
-                let _ = err.send(e.to_string()).await;
-            }
-        }
-    }
+    tokio::spawn(async move {
+        relay_message(rw1, other_stream_id, err, fetcher).await;
+    });
+
+    (rw, handshake_port)
 }
 
 // Listens for p2p messages from the tokio broadcast channel. It then relays these messages to the fetcher.
@@ -433,6 +398,51 @@ fn message_listen_loop_mock(
             }
         }
     });
+}
+
+// Accepts an incoming connection from a listener and sends the message to fetcher
+async fn relay_message(
+    listener: Arc<TcpListener>,
+    other_id: EcdsaPublicKey,
+    err: mpsc::Sender<String>,
+    fetcher: mpsc::Sender<Vec<u8>>,
+) {
+    const MAX_LENGTH: usize = 1200;
+
+    loop {
+        match listener.clone().accept().await {
+            Ok((stream, _)) => {
+                let _ = stream.readable().await;
+                let mut buf = [0; MAX_LENGTH];
+
+                match stream.try_read(&mut buf) {
+                    Ok(0) => {
+                        continue;
+                    }
+                    Ok(_) => {
+                        let message_vec = buf.to_vec();
+                        let _ = match from_handshake(message_vec.clone(), other_id.clone()) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                let _ = err.send(e.to_string()).await;
+                                continue;
+                            }
+                        };
+                        let _ = fetcher.send(message_vec).await;
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        continue;
+                    }
+                    Err(e) => {
+                        let _ = err.send(e.to_string()).await;
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("p2p message tcp accept failed: {}", e);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -526,8 +536,8 @@ mod tests {
         let (high_peer_handle, high_err_handle) = peer_handshake_loop(
             None,
             low_public_key,
-            sec_recv,
-            fir_send,
+            Some(sec_recv),
+            Some(fir_send),
             high_handshake,
             true,
         )
@@ -535,8 +545,8 @@ mod tests {
         let (low_peer_handle, low_err_handle) = peer_handshake_loop(
             None,
             high_public_key,
-            fir_recv,
-            sec_send,
+            Some(fir_recv),
+            Some(sec_send),
             low_handshake,
             true,
         )
