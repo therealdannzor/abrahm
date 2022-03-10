@@ -24,12 +24,12 @@ The ambition is to demonstrate the most fundamental components of a working bloc
 * [ledger](ledger): state database, key management, and chain initialization
 * [consensus](consensus): the state negotiation protocol (PBFT)
 * [network](network): peer-to-peer discovery and messaging
-* swiss_knife: various helpers
-* types: block and transaction types
+* [swiss_knife](swiss_knife): various helpers
+* [types](types): block and transaction types
 
 ### Dependencies
 The main ones are:
 * [themis](https://www.cossacklabs.com/themis/) for encryption and secure message exchange
-* [tokio](https://github.com/tokio-rs/tokio) for async and UDP networking
+* [tokio](https://github.com/tokio-rs/tokio) for async and networking
 * [libp2p](https://github.com/libp2p/rust-libp2p) for local network discovery (mDNS)
 * [rocksdb](https://rocksdb.org/)
