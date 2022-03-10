@@ -21,9 +21,9 @@ Due to the wide scope, building a functional blockchain from scratch, several tr
 
 ### Architecture
 The ambition is to demonstrate the most fundamental components of a working blockchain, albeit with rudimentary functionality. The focus is to deliver a complete and working baseline rather than the most clever, novel, and performant one. The different architectural components are:
-* [ledger](src/ledger): state database, key management, and chain initialization
-* [consensus](src/consensus): the state negotiation protocol (PBFT)
-* [network](src/network): peer-to-peer discovery and messaging
+* [ledger](ledger): state database, key management, and chain initialization
+* [consensus](consensus): the state negotiation protocol (PBFT)
+* [network](network): peer-to-peer discovery and messaging
 * swiss_knife: various helpers
 * types: block and transaction types
 
