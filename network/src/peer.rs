@@ -10,14 +10,14 @@ use std::sync::{
     Arc,
 };
 use themis::keys::EcdsaPublicKey;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 
 /// Runs the p2p connection stream and returns two channels to interact with the multiple loops.
 /// The first channel is the API handle, used to query the current handshake state (phase).
 /// The second channel is the error channel. This should be error free, thus empty.
 pub async fn peer_handshake_loop(
-    other_stream: Option<Arc<TcpStream>>,
+    other_stream: Option<Arc<TcpListener>>,
     other_stream_id: EcdsaPublicKey,
     mock_recv: Option<broadcast::Receiver<Vec<u8>>>,
     mock_send: Option<broadcast::Sender<Vec<u8>>>,
@@ -72,20 +72,19 @@ pub async fn peer_handshake_loop(
 // Sends a ping message if the peer is supposed to initiate a three-way handshake
 // which is the one with the "highest value" key is the initiator.
 async fn initiate_ping(
-    rw: Arc<TcpStream>,
+    rw: Arc<TcpListener>,
     ping_msg: Vec<u8>,
     remote_id: EcdsaPublicKey,
     handshake_id: EcdsaPublicKey,
     handshake_counter: Arc<AtomicUsize>,
     send_api: mpsc::Sender<HandshakeAPI>,
     initiated: Arc<AtomicBool>,
-) {
+) -> io::Result<()> {
     let remote_id = remote_id.clone();
 
     let priority_id = cmp_two_keys(remote_id, handshake_id.clone());
     if priority_id == handshake_id {
-        let tmp = rw.clone();
-        match send(tmp, ping_msg).await {
+        match send(rw, ping_msg).await {
             Ok(_) => {
                 update_counters(handshake_counter.clone(), send_api.clone(), 1).await;
                 let arc = initiated.clone();
@@ -100,8 +99,8 @@ async fn initiate_ping(
     } else {
         // do nothing, we do not engage with the remote peer but wait for a ping instead
         log::warn!("skip send ping, wait for other peer to initiate");
-        return;
     }
+    return Ok(());
 }
 
 async fn initiate_ping_mock(
@@ -133,27 +132,33 @@ async fn initiate_ping_mock(
 }
 
 // Writes a message to a TCP connection
-async fn send(rw: Arc<TcpStream>, msg: Vec<u8>) -> Result<(), io::Error> {
+async fn send(listener: Arc<TcpListener>, msg: Vec<u8>) -> Result<(), io::Error> {
     let l = msg.len();
-    let rw = rw.clone();
     loop {
-        let _ = rw.writable().await;
+        match listener.clone().accept().await {
+            Ok((stream, _)) => {
+                let _ = stream.writable().await;
 
-        match rw.try_write(&msg) {
-            Ok(n) => {
-                if n != l {
-                    return Err(io::Error::new(
-                        ErrorKind::BrokenPipe,
-                        "sent incomplete message",
-                    ));
+                match stream.try_write(&msg) {
+                    Ok(n) => {
+                        if n != l {
+                            return Err(io::Error::new(
+                                ErrorKind::BrokenPipe,
+                                "sent incomplete message",
+                            ));
+                        }
+                        return Ok(());
+                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(e.into());
+                    }
                 }
-                return Ok(());
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                continue;
             }
             Err(e) => {
-                return Err(e.into());
+                log::error!("p2p message tcp accept failed: {}", e);
             }
         }
     }
@@ -205,7 +210,7 @@ fn handshake_status_api(mut recv: mpsc::Receiver<HandshakeAPI>) {
 // This function is responsible for managing the full handshake logic: receive and send of
 // handshake messages.
 async fn read_handshake_loop(
-    rw: Option<Arc<TcpStream>>,
+    rw: Option<Arc<TcpListener>>,
     test_w: Option<broadcast::Sender<Vec<u8>>>,
     handshakes: FixedHandshakes,
     mut fetcher_recv: mpsc::Receiver<Vec<u8>>,
@@ -363,7 +368,7 @@ async fn update_counters(
 // Listens for p2p messages from the TCP stream. It then relays these messages to the fetcher.
 pub async fn message_listen_loop(
     other_stream_id: EcdsaPublicKey,
-    fetcher: mpsc::Sender<Vec<u8>>,
+    msg_fetcher: mpsc::Sender<Vec<u8>>,
     err: mpsc::Sender<String>,
 ) -> (Arc<TcpListener>, String) {
     let (rw, handshake_port) = get_tcp_and_addr().await;
@@ -371,7 +376,7 @@ pub async fn message_listen_loop(
     let rw1 = rw.clone();
 
     tokio::spawn(async move {
-        relay_message(rw1, other_stream_id, err, fetcher).await;
+        relay_message(rw1, other_stream_id, err, msg_fetcher).await;
     });
 
     (rw, handshake_port)
@@ -405,7 +410,7 @@ async fn relay_message(
     listener: Arc<TcpListener>,
     other_id: EcdsaPublicKey,
     err: mpsc::Sender<String>,
-    fetcher: mpsc::Sender<Vec<u8>>,
+    msg_fetcher: mpsc::Sender<Vec<u8>>,
 ) {
     const MAX_LENGTH: usize = 1200;
 
@@ -428,7 +433,7 @@ async fn relay_message(
                                 continue;
                             }
                         };
-                        let _ = fetcher.send(message_vec).await;
+                        let _ = msg_fetcher.send(message_vec).await;
                     }
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                         continue;
