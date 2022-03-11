@@ -138,11 +138,11 @@ pub async fn start_listeners(
         spawn_io_listeners(pk.clone(), sk.clone(), peers.clone(), root_hash.clone()).await;
     log::debug!("Server port: {}", port);
     log::debug!("Root hash: {}", root_hash);
-    let upgraded_peers =
-        spawn_peer_discovery_listener(pk.clone(), sk.clone(), port, peers.clone(), rx_ug).await;
+    let stream_handles =
+        spawn_peer_discovery_listener(pk.clone(), sk.clone(), peers.clone(), rx_ug).await;
 
     net.set_handler(mph);
-    net.set_peers(upgraded_peers);
+    net.set_peers(stream_handles);
     log::info!("listener api kickstarted, now listening for events");
 
     notify.notify_one();
@@ -160,10 +160,10 @@ pub async fn broadcast_root_hash(root_hash: String, net: Networking, secret: Ecd
 
     for _ in 0..6 {
         for peer in ug_peers.iter() {
-            let peer_port = peer.server_port();
+            let peer_port = peer.port();
             let mut addr = "127.0.0.1:".to_string();
             addr.push_str(&peer_port);
-            let my_id_at_peer = peer.id();
+            let my_id_at_peer = peer.short_id();
             let payload = create_short_message(my_id_at_peer, secret.clone(), &message);
             let resp_address = addr.clone();
             let p = payload.clone();
