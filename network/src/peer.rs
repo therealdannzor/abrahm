@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::common::{cmp_two_keys, cmp_two_keys_string};
 use crate::message::{from_handshake, FixedHandshakes};
 use crate::utils::get_tcp_and_addr;
@@ -254,7 +252,7 @@ async fn read_handshake_loop(
             )
             .await;
         } else {
-            initiate_ping(
+            let _ = initiate_ping(
                 tmp.unwrap(),
                 handshakes.ping(),
                 remote_id.clone(),
