@@ -26,6 +26,20 @@ impl UpgradedPeerData {
     }
 }
 
+#[derive(Clone)]
+pub struct PeerStreamHandle(UpgradedPeerData, tokio::sync::mpsc::Sender<HandshakeAPI>);
+impl PeerStreamHandle {
+    pub fn id(&self) -> themis::keys::EcdsaPublicKey {
+        self.0.key_type()
+    }
+    pub fn port(&self) -> String {
+        self.0.server_port()
+    }
+    pub fn short_id(&self) -> u32 {
+        self.0.id()
+    }
+}
+
 #[derive(Debug)]
 // Public key as plain text, the new short ID for this peer, and the peer's server port
 pub struct PeerInfo(String, usize, String);

@@ -1,13 +1,14 @@
 use super::discovery::{create_rnd_number, spawn_peer_discovery_loop, ValidatedPeer};
-use super::{FromServerEvent, PayloadEvent, UpgradedPeerData};
+use super::{FromServerEvent, PayloadEvent, PeerStreamHandle, UpgradedPeerData};
 use crate::client_handle::{spawn_peer_listeners, MessagePeerHandle};
 use crate::common::create_p2p_message;
+use crate::message::FixedHandshakes;
+use crate::peer::peer_handshake_loop;
 use crate::server_handle::spawn_server_accept_loop;
-use crate::utils::{any_udp_socket, try_tcp_connect};
+use crate::utils::{any_udp_socket, get_tcp_and_addr};
 use std::convert::TryInto;
 use std::sync::Arc;
 use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
-use tokio::net::TcpStream;
 use tokio::sync::{
     mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender},
     Notify,
@@ -15,7 +16,7 @@ use tokio::sync::{
 
 pub struct Networking {
     // List of (presumably) connected and validated peers which the client can communicate with
-    peers: Vec<UpgradedPeerData>,
+    peers: Vec<PeerStreamHandle>,
     // Handler to send commands internally and externally
     handle: Option<MessagePeerHandle>,
 }
@@ -28,7 +29,7 @@ impl Networking {
         }
     }
 
-    pub fn set_peers(&mut self, p: Vec<UpgradedPeerData>) {
+    pub fn set_peers(&mut self, p: Vec<PeerStreamHandle>) {
         self.peers = p;
     }
 
@@ -36,7 +37,7 @@ impl Networking {
         self.handle = Some(h);
     }
 
-    pub fn get_registered_peers(&self) -> Vec<UpgradedPeerData> {
+    pub fn get_registered_peers(&self) -> Vec<PeerStreamHandle> {
         self.peers.clone()
     }
 
@@ -57,10 +58,9 @@ pub async fn spawn_handshake_loop(_upgraded: Vec<UpgradedPeerData>) {}
 pub async fn spawn_peer_discovery_listener(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
-    handshake_port: String,
     mut validator_list: Vec<String>,
     mut ug_rx: UnboundedReceiver<UpgradedPeerData>,
-) -> Vec<Arc<TcpStream>> {
+) -> Vec<PeerStreamHandle> {
     let (tx_peer_discv, mut rx_peer_discv): (Sender<ValidatedPeer>, Receiver<ValidatedPeer>) =
         mpsc::channel(128);
 
@@ -81,12 +81,15 @@ pub async fn spawn_peer_discovery_listener(
 
     let public_key = pk.clone();
     let secret_key = sk.clone();
-    let serv_port = handshake_port.clone();
+
+    let (tcp_listener, handshake_port) = get_tcp_and_addr().await;
+    let tcp_listener = Arc::new(tcp_listener);
+    let h = handshake_port.clone();
     let join = tokio::spawn(async move {
         spawn_peer_discovery_loop(
             public_key,
             secret_key,
-            serv_port,
+            h,
             tx_peer_discv,
             kill_tx,
             validator_list,
@@ -123,11 +126,10 @@ pub async fn spawn_peer_discovery_listener(
 
     not.notified().await;
     let pf = peers_found.clone();
-    let serv_port = handshake_port.clone();
-    let join =
-        tokio::spawn(
-            async move { upgrade_server_backend(pk.clone(), sk.clone(), pf, serv_port).await },
-        );
+    let hp = handshake_port.clone();
+    let pk1 = pk.clone();
+    let sk1 = sk.clone();
+    let join = tokio::spawn(async move { upgrade_server_backend(pk1, sk1, pf, hp).await });
 
     let _ = join.await;
 
@@ -148,24 +150,32 @@ pub async fn spawn_peer_discovery_listener(
     }
     not.notified().await;
 
-    let mut tmp_ports: Vec<String> = Vec::new();
-    let mut all_streams: Vec<Arc<TcpStream>> = Vec::new();
-    while all_streams.len() < amount_to_validate {
-        loop {
-            for peer in ug_peers.iter() {
-                let other_port = peer.1.clone();
-                if let Ok(stream) = try_tcp_connect(other_port.clone()).await {
-                    if !tmp_ports.contains(&other_port.clone()) {
-                        tmp_ports.push(other_port);
-                        all_streams.push(Arc::new(stream));
-                    }
-                }
-            }
-        }
+    let fix_handshakes =
+        FixedHandshakes::new(pk.clone(), handshake_port.clone(), sk.clone()).unwrap();
+    let mut peer_handles: Vec<PeerStreamHandle> = Vec::new();
+    let mut err_channels: Vec<mpsc::Receiver<String>> = Vec::new();
+    // spawn listeners for each peer
+    for peer in ug_peers.iter() {
+        let listener = tcp_listener.clone();
+        let other_peer_key = peer.key_type();
+
+        // spawn handshake loop for each (upgraded) peer
+        let (send_api, recv_err) = peer_handshake_loop(
+            Some(listener),
+            other_peer_key.clone(),
+            None,
+            None,
+            fix_handshakes.clone(),
+            false,
+        )
+        .await;
+        let p = PeerStreamHandle(peer.clone(), send_api);
+        peer_handles.push(p);
+        err_channels.push(recv_err);
     }
 
     log::info!("full upgrade of peer protocol done");
-    all_streams
+    peer_handles
 }
 
 async fn upgrade_server_backend(
