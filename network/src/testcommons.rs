@@ -1,7 +1,7 @@
-use super::peer_handshake_loop;
 use crate::common::cmp_two_keys;
 use crate::handshake_get_state;
 use crate::message::FixedHandshakes;
+use crate::peer::peer_handshake_loop;
 use crate::HandshakeAPI;
 use themis::keygen::gen_ec_key_pair;
 use themis::keys::EcdsaKeyPair;
@@ -63,11 +63,11 @@ pub fn peer_credentials() -> MockPairPeer {
     }
 }
 
-struct MockPeerHandlers {
-    high_peer_handle: mpsc::Sender<HandshakeAPI>,
-    high_err_handle: mpsc::Receiver<String>,
-    low_peer_handle: mpsc::Sender<HandshakeAPI>,
-    low_err_handle: mpsc::Receiver<String>,
+pub struct MockPeerHandlers {
+    pub high_peer_handle: mpsc::Sender<HandshakeAPI>,
+    pub high_err_handle: mpsc::Receiver<String>,
+    pub low_peer_handle: mpsc::Sender<HandshakeAPI>,
+    pub low_err_handle: mpsc::Receiver<String>,
 }
 
 pub async fn create_two_peer_loops() -> MockPeerHandlers {
@@ -110,7 +110,7 @@ pub async fn create_two_peer_loops() -> MockPeerHandlers {
     }
 }
 
-async fn api_request_get(handle: mpsc::Sender<HandshakeAPI>, expected: i32) {
+pub async fn api_request_get(handle: mpsc::Sender<HandshakeAPI>, expected: i32) {
     let (response, api_msg) = handshake_get_state();
     let _ = handle.send(api_msg).await;
 
@@ -120,7 +120,7 @@ async fn api_request_get(handle: mpsc::Sender<HandshakeAPI>, expected: i32) {
     }
 }
 
-async fn api_error_check(mut handle: mpsc::Receiver<String>, expecting_error: bool) {
+pub async fn api_error_check(mut handle: mpsc::Receiver<String>, expecting_error: bool) {
     if expecting_error {
         match handle.recv().await {
             Some(_) => {}

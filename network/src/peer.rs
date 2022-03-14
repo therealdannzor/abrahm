@@ -450,7 +450,9 @@ async fn relay_message(
 
 #[cfg(test)]
 mod tests {
-    use crate::testcommons::{create_two_peer_loops, sleep_one_half_second};
+    use crate::testcommons::{
+        api_error_check, api_request_get, create_two_peer_loops, sleep_one_half_second,
+    };
 
     #[tokio::test]
     async fn full_handshake() {
