@@ -6,6 +6,7 @@ pub mod discovery;
 pub mod message;
 pub mod peer;
 pub mod server_handle;
+pub mod testcommons;
 pub mod utils;
 
 #[derive(PartialEq, Clone, Debug)]
