@@ -68,7 +68,7 @@ pub async fn peer_handshake_loop(
 }
 
 // Sends a ping message if the peer is supposed to initiate a three-way handshake
-// which is the one with the "highest value" key is the initiator.
+// which is the peer with the "highest value" key as the initiator.
 async fn initiate_ping(
     rw: Arc<TcpListener>,
     ping_msg: Vec<u8>,
