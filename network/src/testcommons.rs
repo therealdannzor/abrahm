@@ -25,6 +25,38 @@ fn create_two_pairs_highest_first() -> (EcdsaKeyPair, EcdsaKeyPair) {
     }
 }
 
+pub fn create_validator_set_highest_first() -> Vec<EcdsaKeyPair> {
+    let mut v: Vec<EcdsaKeyPair> = Vec::new();
+
+    let (pr1, pr2) = create_two_pairs_highest_first();
+    let (pr3, pr4) = create_two_pairs_highest_first();
+    let (_, pk1) = pr1.clone().split();
+    let (_, pk3) = pr3.clone().split();
+
+    // get the highest of them all as main key
+    // since both of these keys are the highest in their respective pair
+    let highest = cmp_two_keys(pk1.clone(), pk3.clone());
+    // choose 1 or 3 as the main key
+    if highest == pk1 {
+        v.append(&mut vec![pr1, pr2, pr3, pr4]);
+    } else {
+        v.append(&mut vec![pr3, pr1, pr2, pr4]);
+    }
+
+    return v;
+}
+
+pub fn validator_set_as_str(v: Vec<EcdsaKeyPair>) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+
+    for key in v.iter() {
+        let (_, public_key) = key.clone().split();
+        result.push(hex::encode(public_key));
+    }
+
+    return result;
+}
+
 fn create_handshake_set_highest_first(
     pair_hi: EcdsaKeyPair,
     pair_lo: EcdsaKeyPair,
@@ -37,10 +69,10 @@ fn create_handshake_set_highest_first(
 }
 
 pub struct MockPairPeer {
-    high_keypair: EcdsaKeyPair,
-    high_handshake: FixedHandshakes,
-    low_keypair: EcdsaKeyPair,
-    low_handshake: FixedHandshakes,
+    pub high_keypair: EcdsaKeyPair,
+    pub high_handshake: FixedHandshakes,
+    pub low_keypair: EcdsaKeyPair,
+    pub low_handshake: FixedHandshakes,
 }
 
 pub fn peer_credentials() -> MockPairPeer {
