@@ -127,25 +127,20 @@ impl Blockchain {
 }
 
 pub async fn start_listeners(
-    mut net: Networking,
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     peers: Vec<String>,
-    notify: Arc<Notify>,
     root_hash: String,
 ) -> Networking {
     let (port, mut mph, rx_ug) =
         spawn_io_listeners(pk.clone(), sk.clone(), peers.clone(), root_hash.clone()).await;
-    log::debug!("Server port: {}", port);
-    log::debug!("Root hash: {}", root_hash);
     let stream_handles =
         spawn_peer_discovery_listener(pk.clone(), sk.clone(), peers.clone(), rx_ug).await;
 
+    let mut net = Networking::new();
     net.set_handler(mph);
     net.set_peers(stream_handles);
     log::info!("listener api kickstarted, now listening for events");
-
-    notify.notify_one();
 
     net
 }
@@ -204,10 +199,15 @@ fn create_db_folder(node_id_index: u32) -> StateDB {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consensus::testcommons::generate_keys_as_str;
+    use crate::consensus::testcommons::generate_keys_as_str_and_type;
+    use crate::network::testcommons::{
+        create_validator_set_highest_first, peer_credentials, sleep_one_half_second,
+        validator_set_as_str,
+    };
     use crate::swiss_knife::helper;
     use serial_test::serial;
     use std::convert::TryFrom;
+    use tokio::sync::mpsc::{channel, Receiver, Sender};
 
     macro_rules! hashed {
         ($x:expr) => {
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     #[serial]
     fn block_init_and_insertion() {
-        let keys = generate_keys_as_str(4);
+        let (keys, _) = generate_keys_as_str_and_type(4);
         let (sk, pk) = themis::keygen::gen_ec_key_pair().split();
         let (send, recv): (mpsc::Sender<Block>, mpsc::Receiver<Block>) = mpsc::channel(4);
         let mut bc = Blockchain::new(10, Some(keys), Some(0), send);
@@ -241,5 +241,64 @@ mod tests {
 
         let mut _rmdir = std::fs::remove_dir_all("/test");
         let _rmdir = std::fs::remove_dir_all("/database");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn chain_discovery_upgrade_and_handshake() {
+        let mock_pair_peer = peer_credentials();
+        let hi_kp = mock_pair_peer.high_keypair;
+        let hi_hs = mock_pair_peer.high_handshake;
+        let lo_kp = mock_pair_peer.low_keypair;
+        let lo_hs = mock_pair_peer.low_handshake;
+
+        let mut kp = create_validator_set_highest_first();
+        let (sk1, pk1) = kp[0].clone().split();
+        let (sk2, pk2) = kp[1].clone().split();
+        let (sk3, pk3) = kp[2].clone().split();
+        assert_eq!(kp.len(), 4);
+        let vals = validator_set_as_str(kp.clone());
+        let root_hash = hashed!("0x");
+
+        let (tx, mut rx): (Sender<Networking>, Receiver<Networking>) = mpsc::channel(8);
+
+        let v1 = vals.clone();
+        let rh1 = root_hash.clone();
+        let tx1 = tx.clone();
+        tokio::spawn(async move {
+            let n1 = start_listeners(pk1, sk1, v1, rh1).await;
+            let _ = tx1.send(n1).await;
+        });
+        sleep_one_half_second().await;
+        let v2 = vals.clone();
+        let rh2 = root_hash.clone();
+        let tx2 = tx.clone();
+        tokio::spawn(async move {
+            let n2 = start_listeners(pk2, sk2, v2, rh2.clone()).await;
+            let _ = tx2.send(n2).await;
+        });
+        sleep_one_half_second().await;
+        let v3 = vals.clone();
+        let rh3 = root_hash.clone();
+        let tx3 = tx.clone();
+        tokio::spawn(async move {
+            let n3 = start_listeners(pk3, sk3, vals.clone(), root_hash.clone()).await;
+            let _ = tx3.send(n3).await;
+        });
+
+        let mut handlers: Vec<Networking> = Vec::new();
+        while let Some(msg) = rx.recv().await {
+            handlers.push(msg);
+            if handlers.len() == 3 {
+                break;
+            }
+        }
+
+        let h1 = &handlers[0];
+        let h2 = &handlers[1];
+        let h3 = &handlers[2];
+        assert_eq!(h1.get_registered_peers().len(), 3);
+        assert_eq!(h2.get_registered_peers().len(), 3);
+        assert_eq!(h3.get_registered_peers().len(), 3);
     }
 }
