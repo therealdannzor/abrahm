@@ -73,11 +73,13 @@ async fn peer_discovery_loop(
                     );
                     tokio::spawn(async move {
                         // send each new peer three discovery messages at each new discovery event
-                        let to_address = discv_addr.clone();
-                        let payload = broadcast_disc_msg.clone();
-                        let res = socket.send_to(&payload, to_address.clone()).await;
-                        if res.is_err() {
-                            log::error!("discovery dispatch failed: {:?}", res);
+                        for _ in 0..3 {
+                            let to_address = discv_addr.clone();
+                            let payload = broadcast_disc_msg.clone();
+                            let res = socket.send_to(&payload, to_address.clone()).await;
+                            if res.is_err() {
+                                log::error!("discovery dispatch failed: {:?}", res);
+                            }
                         }
                     });
                 }
@@ -86,25 +88,28 @@ async fn peer_discovery_loop(
                 listener_id: _,
                 address,
             } => {
-                let hostname = multi_to_host_addr(address.clone());
-                my_disc_port = extract_port_from_multi(address.clone());
-
-                if hostname == "127.0.0.1" {
-                    let socket_addr = multi_to_socket_addr(address);
-                    let socket = UdpSocket::bind(&socket_addr).await?;
-                    let serv = Server {
-                        socket,
-                        buf: vec![0; 248],
-                        stream_size: None,
-                        ready_upgrade_mode: false,
-                    };
-                    let list_peers = to_discover.clone();
-                    log::debug!("start server buffer to receive other discv messages");
-                    let kill_tx = kill.clone();
-                    tokio::spawn(async move {
-                        let _ = serv.run(tx, kill_tx, list_peers).await;
-                    });
+                // For some reason there is a double connection on 127.0.0.1 and 192.168.0.32 on
+                // the same port which means we need to skip one of them. Not sure what this
+                // network interface represents but could be interesting to look into...
+                if multi_to_host_addr(address.clone()) == "192.168.0.32" {
+                    continue;
                 }
+
+                my_disc_port = extract_port_from_multi(address.clone());
+                let addr = multi_to_socket_addr(address.clone());
+                let socket = UdpSocket::bind(addr.clone()).await?;
+                let serv = Server {
+                    socket,
+                    buf: vec![0; 248],
+                    stream_size: None,
+                    ready_upgrade_mode: false,
+                };
+                let list_peers = to_discover.clone();
+                log::debug!("start server buffer to receive other discv messages");
+                let kill_tx = kill.clone();
+                tokio::spawn(async move {
+                    let _ = serv.run(tx, kill_tx, list_peers).await;
+                });
             }
             _ => {}
         }
@@ -178,72 +183,86 @@ impl Server {
         let wait_time = std::time::Duration::from_secs(2);
         let notif = Notify::new();
 
-        loop {
-            if let Some(_) = self.stream_size {
-                let start = std::time::Instant::now();
+        tokio::spawn(async move {
+            loop {
+                if let Some(_) = self.stream_size {
+                    let start = std::time::Instant::now();
 
-                notif.notified().await;
-                let (is_verified, public_key) = verify_p2p_message(self.buf.clone());
-                if is_verified {
-                    let public_hex = hex::encode(public_key.clone());
-                    let msg = self.buf.clone();
-                    // to make sure we don't count the same peer more than once
-                    if peers_confirmed.contains(&public_hex) && self.ready_upgrade_mode {
-                        if check_for_ready_message(msg) {
-                            if !peers_ready.contains(&public_hex) {
-                                peers_ready.push(public_hex);
+                    notif.notified().await;
+                    let (is_verified, public_key) = verify_p2p_message(self.buf.clone());
+                    if is_verified {
+                        let public_hex = hex::encode(public_key.clone());
+                        let msg = self.buf.clone();
+                        // to make sure we don't count the same peer more than once
+                        if peers_confirmed.contains(&public_hex) && self.ready_upgrade_mode {
+                            if check_for_ready_message(msg) {
+                                if !peers_ready.contains(&public_hex) {
+                                    peers_ready.push(public_hex);
+                                } else {
+                                    log::warn!("peer already known to be ready");
+                                }
                             } else {
-                                log::warn!("peer already known to be ready");
+                                log::error!("not a ready message, discard it");
+                            }
+                            if peers_ready.len() == total_peers {
+                                log::info!("all peers are ready, proceed to full connection");
+                                break;
                             }
                         } else {
-                            log::error!("not a ready message, discard it");
-                        }
-                        if peers_ready.len() == total_peers {
-                            log::info!("all peers are ready, proceed to full connection");
-                            break;
+                            let public_key_vec = public_key.as_ref().to_vec();
+                            let disc_port = extract_discv_port_field(msg.clone());
+                            let shake_port = extract_server_port_field(msg);
+                            if !peers_confirmed.contains(&public_hex) {
+                                // add peers found for the first time
+                                if let Some(_) = to_find.iter().position(|x| *x == public_hex) {
+                                    peers_confirmed.push(public_hex);
+                                    log::warn!("found new peer, added to list");
+                                    if peers_confirmed.len() == total_peers {
+                                        log::info!("enter ready-to-upgrade mode");
+                                        self.ready_upgrade_mode = true;
+                                    }
+                                }
+                                let validated =
+                                    ValidatedPeer::new(disc_port, shake_port, public_key_vec);
+
+                                let _ = tx.send(validated).await;
+                            } else {
+                                log::warn!("peer already confirmed");
+                            }
                         }
                     } else {
-                        let public_key_vec = public_key.as_ref().to_vec();
-                        let disc_port = extract_discv_port_field(msg.clone());
-                        let shake_port = extract_server_port_field(msg);
-                        if !peers_confirmed.contains(&public_hex) {
-                            // add peers found for the first time
-                            if let Some(_) = to_find.iter().position(|x| *x == public_hex) {
-                                peers_confirmed.push(public_hex);
-                                log::warn!("found new peer, added to list");
-                                if peers_confirmed.len() == total_peers {
-                                    log::info!("enter ready-to-upgrade mode");
-                                    self.ready_upgrade_mode = true;
-                                }
-                            }
-                            let validated =
-                                ValidatedPeer::new(disc_port, shake_port, public_key_vec);
-
-                            let _ = tx.send(validated).await;
-                        } else {
-                            log::warn!("peer already confirmed");
-                        }
+                        log::error!("could not authenticate buffered message, discarding");
                     }
-                } else {
-                    log::error!("could not authenticate buffered message, discarding");
+                    let elapsed_time = start.elapsed();
+                    if let Some(time) = wait_time.checked_sub(elapsed_time) {
+                        tokio::time::sleep(time).await;
+                    }
                 }
-                let elapsed_time = start.elapsed();
-                if let Some(time) = wait_time.checked_sub(elapsed_time) {
-                    tokio::time::sleep(time).await;
-                }
+                self.buf = vec![0; 248];
+                let bytes = match self.socket.try_recv(&mut self.buf) {
+                    Ok(n) => n,
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        // some cooldown in trying again
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                    Err(e) => {
+                        log::error!("could not receive message on socket, retry: {:?}", e);
+                        continue;
+                    }
+                };
+                self.stream_size = Some(bytes);
+                log::debug!("fetch new message from stream");
+                notif.notify_one();
+                log::debug!(
+                    "found: {}/{}, ready: {}/{}",
+                    peers_confirmed.len(),
+                    total_peers,
+                    peers_ready.len(),
+                    total_peers,
+                );
             }
-            self.buf = vec![0; 248];
-            self.stream_size = Some(self.socket.recv(&mut self.buf).await?);
-            log::debug!("fetch new message from stream");
-            notif.notify_one();
-            log::debug!(
-                "found: {}/{}, ready: {}/{}",
-                peers_confirmed.len(),
-                total_peers,
-                peers_ready.len(),
-                total_peers,
-            );
-        }
+        });
         log::info!("discovery completed, exiting");
         // alert api that discovery is finished
         let _ = kill.send(true).await;
