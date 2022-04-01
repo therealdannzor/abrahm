@@ -134,8 +134,12 @@ pub async fn start_listeners(
 ) -> Networking {
     let (port, mut mph, rx_ug) =
         spawn_io_listeners(pk.clone(), sk.clone(), peers.clone(), root_hash.clone()).await;
+
+    let server_port = mph.get_host_port().await;
+
     let stream_handles =
-        spawn_peer_discovery_listener(pk.clone(), sk.clone(), peers.clone(), rx_ug).await;
+        spawn_peer_discovery_listener(pk.clone(), sk.clone(), server_port, peers.clone(), rx_ug)
+            .await;
 
     let mut net = Networking::new();
     net.set_handler(mph);
