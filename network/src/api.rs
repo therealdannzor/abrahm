@@ -58,6 +58,7 @@ pub async fn spawn_handshake_loop(_upgraded: Vec<UpgradedPeerData>) {}
 pub async fn spawn_peer_discovery_listener(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
+    server_port: String,
     mut validator_list: Vec<String>,
     mut ug_rx: UnboundedReceiver<UpgradedPeerData>,
 ) -> Vec<PeerStreamHandle> {
@@ -119,6 +120,7 @@ pub async fn spawn_peer_discovery_listener(
 
     while let Some(msg) = kill_rx.recv().await {
         if msg == true {
+            log::debug!("kill signal received, discovery over");
             not.notify_one();
             break;
         }
@@ -126,10 +128,9 @@ pub async fn spawn_peer_discovery_listener(
 
     not.notified().await;
     let pf = peers_found.clone();
-    let hp = handshake_port.clone();
     let pk1 = pk.clone();
     let sk1 = sk.clone();
-    let join = tokio::spawn(async move { upgrade_server_backend(pk1, sk1, pf, hp).await });
+    let join = tokio::spawn(async move { upgrade_server_backend(pk1, sk1, pf, server_port).await });
 
     let _ = join.await;
 
@@ -186,7 +187,7 @@ async fn upgrade_server_backend(
 ) {
     let socket = any_udp_socket().await;
 
-    for i in 0..3 * peers.len() {
+    for i in 0..2 * peers.len() {
         let mut address = "127.0.0.1:".to_string();
         let port = peers[i % peers.len()].shake_port();
         address.push_str(&port.clone());
@@ -199,7 +200,9 @@ async fn upgrade_server_backend(
         let dur = tokio::time::Duration::from_secs(random_num);
         tokio::time::sleep(dur).await;
 
-        let _ = socket.send_to(&payload, address).await;
+        if let Err(e) = socket.send_to(&payload, address).await {
+            log::error!("failed to send upgrade message: {:?}", e);
+        }
     }
 }
 
@@ -253,7 +256,7 @@ pub async fn spawn_io_listeners(
     let secret = sk.clone();
     // peer loop
     tokio::spawn(async move {
-        // semaphore moved to loop to make setup is completed before giving green light
+        // semaphore moved to loop to make sure setup is completed before giving green light
         spawn_peer_listeners(public, secret, rx_out, rx_in, notif1).await;
     });
     // new connections loop
