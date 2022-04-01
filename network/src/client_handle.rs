@@ -76,28 +76,30 @@ pub async fn spawn_peer_listeners(
 async fn peer_upgraded_loop(mut rx: Receiver<PayloadEvent>) {
     let id_to_ord_payload: HashMap<usize, Vec<OrdPayload>> = HashMap::new();
     let id_to_ord_payload = Arc::new(Mutex::new(id_to_ord_payload));
-    loop {
-        while let Some(msg) = rx.recv().await {
-            match msg {
-                PayloadEvent::StoreMessage(i, ord_payload) => {
-                    let arc = id_to_ord_payload.clone();
-                    let mut inner = arc.lock().await;
-                    if inner.get(&i.0).is_none() {
-                        inner.insert(i.0, Vec::new());
+    tokio::spawn(async move {
+        loop {
+            while let Some(msg) = rx.recv().await {
+                match msg {
+                    PayloadEvent::StoreMessage(i, ord_payload) => {
+                        let arc = id_to_ord_payload.clone();
+                        let mut inner = arc.lock().await;
+                        if inner.get(&i.0).is_none() {
+                            inner.insert(i.0, Vec::new());
+                        }
+                        inner.get(&i.0).unwrap().clone().push(ord_payload);
                     }
-                    inner.get(&i.0).unwrap().clone().push(ord_payload);
-                }
-                PayloadEvent::Get(i, sender) => {
-                    let arc = id_to_ord_payload.clone();
-                    let inner = arc.lock().await;
-                    let _ = match inner.get(&i.0) {
-                        Some(p) => sender.send(p.to_vec()),
-                        None => sender.send(vec![OrdPayload(vec![0], 0)]),
-                    };
+                    PayloadEvent::Get(i, sender) => {
+                        let arc = id_to_ord_payload.clone();
+                        let inner = arc.lock().await;
+                        let _ = match inner.get(&i.0) {
+                            Some(p) => sender.send(p.to_vec()),
+                            None => sender.send(vec![OrdPayload(vec![0], 0)]),
+                        };
+                    }
                 }
             }
         }
-    }
+    });
 }
 
 // peer_loop supports the internal operations of the peers it is connected to
@@ -110,74 +112,76 @@ async fn peer_loop(
     // String -> usize
     let hex_key_to_id = Arc::new(Mutex::new(HashMap::new()));
     let mut server_port: Option<String> = None;
-    loop {
-        while let Some(msg) = rx.recv().await {
-            let secret_key = sk.clone();
-            let public_key = pk.clone();
-            match msg {
-                FromServerEvent::HostSocket(port) => {
-                    server_port = Some(port);
-                    // signals readiness to request for host port
-                    notify.notify_one();
-                }
-                FromServerEvent::GetHostPort(sender) => {
-                    if server_port.is_some() {
-                        let _ = sender.send(server_port.clone().unwrap());
-                    } else {
-                        panic!("server backend not initialized, this should not happen");
+    tokio::spawn(async move {
+        loop {
+            while let Some(msg) = rx.recv().await {
+                let secret_key = sk.clone();
+                let public_key = pk.clone();
+                match msg {
+                    FromServerEvent::HostSocket(port) => {
+                        server_port = Some(port);
+                        // signals readiness to request for host port
+                        notify.notify_one();
                     }
-                }
-                FromServerEvent::NewClient(msg) => {
-                    // Create a message that tells the peer, who recently connected, that
-                    // we have accepted your connection, given you a new short id (Token),
-                    // and that you will be able to send messages without having to write
-                    // your public key. Instead, use a token id instead, and speak on a
-                    // dedicated port. This port is only designated for communication from
-                    // you to me (unidirectional).
-                    let mut payload = "ACK=".to_string();
-                    // This is what I know you as when you want to speak with me. This way,
-                    // you don't have to send me your whole public key as a hex string
-                    // every time you want to ping me. Remember, every time you speak with
-                    // me from now on, I *only* recognize you by this short id.
-                    let peer_id: String = msg.1.clone().to_string();
+                    FromServerEvent::GetHostPort(sender) => {
+                        if server_port.is_some() {
+                            let _ = sender.send(server_port.clone().unwrap());
+                        } else {
+                            panic!("server backend not initialized, this should not happen");
+                        }
+                    }
+                    FromServerEvent::NewClient(msg) => {
+                        // Create a message that tells the peer, who recently connected, that
+                        // we have accepted your connection, given you a new short id (Token),
+                        // and that you will be able to send messages without having to write
+                        // your public key. Instead, use a token id instead, and speak on a
+                        // dedicated port. This port is only designated for communication from
+                        // you to me (unidirectional).
+                        let mut payload = "ACK=".to_string();
+                        // This is what I know you as when you want to speak with me. This way,
+                        // you don't have to send me your whole public key as a hex string
+                        // every time you want to ping me. Remember, every time you speak with
+                        // me from now on, I *only* recognize you by this short id.
+                        let peer_id: String = msg.1.clone().to_string();
 
-                    // Use the same port as the server backend to receive messages on
-                    let port = server_port.clone().unwrap();
-                    payload.push_str(&peer_id);
-                    payload.push_str(&port);
+                        // Use the same port as the server backend to receive messages on
+                        let port = server_port.clone().unwrap();
+                        payload.push_str(&peer_id);
+                        payload.push_str(&port);
 
-                    // create p2p message that includes the public key as hex string as a
-                    // final confirmation of who the recipient is speaking to and who now
-                    // have given the recipient a short code, i.e. upgraded the connection
-                    // between the two
-                    let full_msg = create_p2p_message(public_key, secret_key, &payload);
+                        // create p2p message that includes the public key as hex string as a
+                        // final confirmation of who the recipient is speaking to and who now
+                        // have given the recipient a short code, i.e. upgraded the connection
+                        // between the two
+                        let full_msg = create_p2p_message(public_key, secret_key, &payload);
 
-                    let mut resp = "127.0.0.1:".to_string();
-                    resp.push_str(&msg.2);
+                        let mut resp = "127.0.0.1:".to_string();
+                        resp.push_str(&msg.2);
 
-                    let socket = any_udp_socket().await;
+                        let socket = any_udp_socket().await;
 
-                    let arc = hex_key_to_id.clone();
-                    let mut inner = arc.lock().await;
-                    let key_slice = msg.0.clone()[80..89].to_string();
-                    inner.insert(msg.0, msg.1);
-                    log::debug!("key ({}..) linked to id {}", key_slice, msg.1.to_string());
+                        let arc = hex_key_to_id.clone();
+                        let mut inner = arc.lock().await;
+                        let key_slice = msg.0.clone()[80..89].to_string();
+                        inner.insert(msg.0, msg.1);
+                        log::debug!("key ({}..) linked to id {}", key_slice, msg.1.to_string());
 
-                    // send each upgrade ACK message a couple of times to make sure it hits home
-                    for _ in 0..8 {
-                        let resp_address = resp.clone();
-                        let payload = full_msg.clone();
+                        // send each upgrade ACK message a couple of times to make sure it hits home
+                        for _ in 0..8 {
+                            let resp_address = resp.clone();
+                            let payload = full_msg.clone();
 
-                        let random_num = create_rnd_number(3, 6).try_into().unwrap();
-                        // sleep some random time between to not overflow the network
-                        let dur = tokio::time::Duration::from_secs(random_num);
-                        tokio::time::sleep(dur).await;
+                            let random_num = create_rnd_number(3, 6).try_into().unwrap();
+                            // sleep some random time between to not overflow the network
+                            let dur = tokio::time::Duration::from_secs(random_num);
+                            tokio::time::sleep(dur).await;
 
-                        let _ = socket.send_to(&payload, resp_address).await;
+                            let _ = socket.send_to(&payload, resp_address).await;
+                        }
                     }
                 }
             }
+            log::error!("peer loop exited, this should not happen");
         }
-        log::error!("peer loop exited, this should not happen");
-    }
+    });
 }
