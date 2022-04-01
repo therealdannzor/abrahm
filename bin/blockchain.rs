@@ -245,7 +245,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn chain_discovery_upgrade_and_handshake() {
+    async fn network_e2e_chain_discovery_upgrade_and_handshake() {
         let mock_pair_peer = peer_credentials();
         let hi_kp = mock_pair_peer.high_keypair;
         let hi_hs = mock_pair_peer.high_handshake;
@@ -256,6 +256,7 @@ mod tests {
         let (sk1, pk1) = kp[0].clone().split();
         let (sk2, pk2) = kp[1].clone().split();
         let (sk3, pk3) = kp[2].clone().split();
+        let (sk4, pk4) = kp[3].clone().split();
         assert_eq!(kp.len(), 4);
         let vals = validator_set_as_str(kp.clone());
         let root_hash = hashed!("0x");
@@ -282,14 +283,22 @@ mod tests {
         let rh3 = root_hash.clone();
         let tx3 = tx.clone();
         tokio::spawn(async move {
-            let n3 = start_listeners(pk3, sk3, vals.clone(), root_hash.clone()).await;
+            let n3 = start_listeners(pk3, sk3, v3, rh3).await;
             let _ = tx3.send(n3).await;
+        });
+        sleep_one_half_second().await;
+        let v4 = vals.clone();
+        let rh4 = root_hash.clone();
+        let tx4 = tx.clone();
+        tokio::spawn(async move {
+            let n4 = start_listeners(pk4, sk4, v4, rh4).await;
+            let _ = tx4.send(n4).await;
         });
 
         let mut handlers: Vec<Networking> = Vec::new();
         while let Some(msg) = rx.recv().await {
             handlers.push(msg);
-            if handlers.len() == 3 {
+            if handlers.len() == 4 {
                 break;
             }
         }
