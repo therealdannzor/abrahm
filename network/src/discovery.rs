@@ -91,7 +91,10 @@ async fn peer_discovery_loop(
                 // For some reason there is a double connection on 127.0.0.1 and 192.168.0.32 on
                 // the same port which means we need to skip one of them. Not sure what this
                 // network interface represents but could be interesting to look into...
-                if multi_to_host_addr(address.clone()) == "192.168.0.32" {
+                // For tests this is 192.168.0.12 on the other hand.
+                if multi_to_host_addr(address.clone()) == "192.168.0.32"
+                    || multi_to_host_addr(address.clone()) == "192.168.0.12"
+                {
                     continue;
                 }
 
@@ -100,7 +103,7 @@ async fn peer_discovery_loop(
                 let socket = UdpSocket::bind(addr.clone()).await?;
                 let serv = Server {
                     socket,
-                    buf: vec![0; 248],
+                    buf: vec![0; 253],
                     stream_size: None,
                     ready_upgrade_mode: false,
                 };
@@ -238,7 +241,7 @@ impl Server {
                         tokio::time::sleep(time).await;
                     }
                 }
-                self.buf = vec![0; 248];
+                self.buf = vec![0; 253];
                 let bytes = match self.socket.try_recv(&mut self.buf) {
                     Ok(n) => n,
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
