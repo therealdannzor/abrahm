@@ -9,7 +9,6 @@ use crate::network::client_handle::MessagePeerHandle;
 use crate::network::common::create_short_message;
 use crate::network::discovery::{create_rnd_number, ValidatedPeer};
 use crate::network::utils::any_udp_socket;
-use crate::network::UpgradedPeerData;
 use crate::types::{block::Block, pool::TxPool};
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -132,13 +131,11 @@ pub async fn start_listeners(
     peers: Vec<String>,
     root_hash: String,
 ) -> Networking {
-    let (port, mut mph, rx_ug) =
+    let (backend_port, mut mph, rx_ug) =
         spawn_io_listeners(pk.clone(), sk.clone(), peers.clone(), root_hash.clone()).await;
 
-    let server_port = mph.get_host_port().await;
-
     let stream_handles =
-        spawn_peer_discovery_listener(pk.clone(), sk.clone(), server_port, peers.clone(), rx_ug)
+        spawn_peer_discovery_listener(pk.clone(), sk.clone(), backend_port, peers.clone(), rx_ug)
             .await;
 
     let mut net = Networking::new();
