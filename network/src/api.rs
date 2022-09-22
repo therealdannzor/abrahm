@@ -53,12 +53,12 @@ pub async fn spawn_handshake_loop(_upgraded: Vec<UpgradedPeerData>) {}
 
 // spawn_peer_discovery_listener finds the other peers on the same network.
 // It needs to know the host handshake loop to tell other peers to speak with it there.
-// This port is received by a succcessful call to `spawn_io_listeners`.
+// This port is received by a successful call to `spawn_io_listeners`.
 // When it has discovered all peers, it returns all [port, public_key] pairs.
 pub async fn spawn_peer_discovery_listener(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
-    server_port: String,
+    backend_port: String,
     mut validator_list: Vec<String>,
     mut ug_rx: UnboundedReceiver<UpgradedPeerData>,
 ) -> Vec<PeerStreamHandle> {
@@ -85,12 +85,13 @@ pub async fn spawn_peer_discovery_listener(
 
     let (tcp_listener, handshake_port) = get_tcp_and_addr().await;
     let tcp_listener = Arc::new(tcp_listener);
-    let h = handshake_port.clone();
+    // important to pass the backend port to the discovery broadcaster
+    let b = backend_port.clone();
     let join = tokio::spawn(async move {
         spawn_peer_discovery_loop(
             public_key,
             secret_key,
-            h,
+            b,
             tx_peer_discv,
             kill_tx,
             validator_list,
@@ -114,7 +115,10 @@ pub async fn spawn_peer_discovery_listener(
     let pf = peers_found.clone();
     let public_key = pk.clone();
     let secret_key = sk.clone();
-    let join = tokio::spawn(async move { ready_to_connect(public_key, secret_key, pf).await });
+    let join =
+        tokio::spawn(
+            async move { ready_to_connect(public_key, secret_key, pf, backend_port).await },
+        );
 
     let _ = join.await;
 
@@ -130,7 +134,7 @@ pub async fn spawn_peer_discovery_listener(
     let pf = peers_found.clone();
     let pk1 = pk.clone();
     let sk1 = sk.clone();
-    let join = tokio::spawn(async move { upgrade_server_backend(pk1, sk1, pf, server_port).await });
+    let join = tokio::spawn(async move { upgrade_server_backend(pk1, sk1, pf).await });
 
     let _ = join.await;
 
@@ -183,16 +187,13 @@ async fn upgrade_server_backend(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     peers: Vec<ValidatedPeer>,
-    handshake_port: String,
 ) {
     let socket = any_udp_socket().await;
 
     for i in 0..2 * peers.len() {
-        let mut address = "127.0.0.1:".to_string();
-        let port = peers[i % peers.len()].shake_port();
-        address.push_str(&port.clone());
-        let mut message = "UPGRD".to_string();
-        message.push_str(&handshake_port);
+        let port = peers[i % peers.len()].backend_port();
+        let address = create_peer_address(port);
+        let message = "UPGRD".to_string();
         let payload = create_p2p_message(pk.clone(), sk.clone(), &message);
 
         let random_num = create_rnd_number(4, 10).try_into().unwrap();
@@ -206,16 +207,21 @@ async fn upgrade_server_backend(
     }
 }
 
-async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<ValidatedPeer>) {
+async fn ready_to_connect(
+    pk: EcdsaPublicKey,
+    sk: EcdsaPrivateKey,
+    peers: Vec<ValidatedPeer>,
+    backend_port: String,
+) {
     log::info!("peer ready for connect phase");
     let five_to_eight = create_rnd_number(5, 9).try_into().unwrap();
     let socket = any_udp_socket().await;
 
     for i in 0..peers.len() {
-        let mut address = "127.0.0.1:".to_string();
-        let port = peers[i].disc_port();
-        address.push_str(&port.clone());
-        let payload = create_p2p_message(pk.clone(), sk.clone(), "READYREADY");
+        let address = create_peer_address(peers[i].disc_port());
+        let mut msg = "READY".to_string();
+        msg.push_str(&backend_port);
+        let payload = create_p2p_message(pk.clone(), sk.clone(), &msg);
         // sleep some random time between 5 and 8 seconds to not overflow the network
         let dur = tokio::time::Duration::from_secs(five_to_eight);
         tokio::time::sleep(dur).await;
@@ -224,6 +230,12 @@ async fn ready_to_connect(pk: EcdsaPublicKey, sk: EcdsaPrivateKey, peers: Vec<Va
             log::error!("ready message dispatch failed: {:?}", e);
         }
     }
+}
+
+fn create_peer_address(port: String) -> String {
+    let mut address = "127.0.0.1:".to_string();
+    address.push_str(&port);
+    address
 }
 
 pub async fn spawn_io_listeners(
