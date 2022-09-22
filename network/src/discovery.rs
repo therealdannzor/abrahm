@@ -23,13 +23,13 @@ use tokio::task::JoinHandle;
 pub async fn spawn_peer_discovery_loop(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
-    handshake_port: String,
+    backend_port: String,
     tx: Sender<ValidatedPeer>,
     kill: Sender<bool>,
     to_discover: Vec<String>,
 ) -> JoinHandle<()> {
     let join = tokio::spawn(async move {
-        match peer_discovery_loop(pk, sk, handshake_port, tx, kill, to_discover).await {
+        match peer_discovery_loop(pk, sk, backend_port, tx, kill, to_discover).await {
             Ok(()) => {}
             Err(e) => {
                 panic!("discovery loop failed: {:?}", e);
@@ -43,7 +43,7 @@ pub async fn spawn_peer_discovery_loop(
 async fn peer_discovery_loop(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
-    shake_port: String,
+    backend_port: String,
     tx: Sender<ValidatedPeer>,
     kill: Sender<bool>,
     to_discover: Vec<String>,
@@ -69,7 +69,7 @@ async fn peer_discovery_loop(
                         pk.clone(),
                         sk.clone(),
                         my_disc_port.clone(),
-                        shake_port.clone(),
+                        backend_port.clone(),
                     );
                     tokio::spawn(async move {
                         // send each new peer three discovery messages at each new discovery event
@@ -103,7 +103,7 @@ async fn peer_discovery_loop(
                 let socket = UdpSocket::bind(addr.clone()).await?;
                 let serv = Server {
                     socket,
-                    buf: vec![0; 253],
+                    buf: vec![0; 248],
                     stream_size: None,
                     ready_upgrade_mode: false,
                 };
@@ -122,18 +122,18 @@ async fn peer_discovery_loop(
 #[derive(Clone, Debug)]
 pub struct ValidatedPeer {
     disc_port: String,
-    shake_port: String,
+    backend_port: String,
     key: EcdsaPublicKey,
 }
 impl ValidatedPeer {
-    fn new(disc_port: Vec<u8>, shake_port: Vec<u8>, public_key: Vec<u8>) -> Self {
+    fn new(disc_port: Vec<u8>, backend_port: Vec<u8>, public_key: Vec<u8>) -> Self {
         let disc_port = match std::str::from_utf8(&disc_port) {
             Ok(s) => s.to_string(),
             Err(e) => {
                 panic!("this should not happen: {}", e);
             }
         };
-        let shake_port = match std::str::from_utf8(&shake_port) {
+        let backend_port = match std::str::from_utf8(&backend_port) {
             Ok(s) => s.to_string(),
             Err(e) => {
                 panic!("this should not happen: {}", e);
@@ -147,7 +147,7 @@ impl ValidatedPeer {
         };
         Self {
             disc_port,
-            shake_port,
+            backend_port,
             key,
         }
     }
@@ -155,8 +155,8 @@ impl ValidatedPeer {
         self.disc_port.clone()
     }
 
-    pub fn shake_port(&self) -> String {
-        self.shake_port.clone()
+    pub fn backend_port(&self) -> String {
+        self.backend_port.clone()
     }
 
     pub fn key(&self) -> EcdsaPublicKey {
@@ -214,7 +214,7 @@ impl Server {
                         } else {
                             let public_key_vec = public_key.as_ref().to_vec();
                             let disc_port = extract_discv_port_field(msg.clone());
-                            let shake_port = extract_server_port_field(msg);
+                            let backend_port = extract_server_port_field(msg);
                             if !peers_confirmed.contains(&public_hex) {
                                 // add peers found for the first time
                                 if let Some(_) = to_find.iter().position(|x| *x == public_hex) {
@@ -226,7 +226,7 @@ impl Server {
                                     }
                                 }
                                 let validated =
-                                    ValidatedPeer::new(disc_port, shake_port, public_key_vec);
+                                    ValidatedPeer::new(disc_port, backend_port, public_key_vec);
 
                                 let _ = tx.send(validated).await;
                             } else {
@@ -241,7 +241,7 @@ impl Server {
                         tokio::time::sleep(time).await;
                     }
                 }
-                self.buf = vec![0; 253];
+                self.buf = vec![0; 248];
                 let bytes = match self.socket.try_recv(&mut self.buf) {
                     Ok(n) => n,
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {

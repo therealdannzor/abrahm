@@ -115,8 +115,8 @@ pub fn verify_p2p_message(message: Vec<u8>) -> (bool, EcdsaPublicKey) {
     let (_, dummy_pk) = themis::keygen::gen_ec_key_pair().split();
     let default_err_resp = (false, dummy_pk);
     let full_length = message.len();
-    if full_length > 253 || full_length < 251 {
-        log::error!("message length not between 251 and 253");
+    if full_length > 249 || full_length < 247 {
+        log::error!("message length not between 247 and 249");
         return default_err_resp;
     }
     let public_key = match extract_pub_key_field(message.clone()) {
