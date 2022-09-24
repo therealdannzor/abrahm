@@ -85,7 +85,8 @@ pub async fn spawn_peer_discovery_listener(
 
     let (tcp_listener, handshake_port) = get_tcp_and_addr().await;
     let tcp_listener = Arc::new(tcp_listener);
-    // important to pass the backend port to the discovery broadcaster
+
+    // the backend port needs to be passed to both the discovery listener and upgrade step
     let b = backend_port.clone();
     let join = tokio::spawn(async move {
         spawn_peer_discovery_loop(
@@ -115,10 +116,8 @@ pub async fn spawn_peer_discovery_listener(
     let pf = peers_found.clone();
     let public_key = pk.clone();
     let secret_key = sk.clone();
-    let join =
-        tokio::spawn(
-            async move { ready_to_connect(public_key, secret_key, pf, backend_port).await },
-        );
+    let b = backend_port.clone();
+    let join = tokio::spawn(async move { ready_to_connect(public_key, secret_key, pf, b).await });
 
     let _ = join.await;
 
@@ -134,7 +133,8 @@ pub async fn spawn_peer_discovery_listener(
     let pf = peers_found.clone();
     let pk1 = pk.clone();
     let sk1 = sk.clone();
-    let join = tokio::spawn(async move { upgrade_server_backend(pk1, sk1, pf).await });
+    let join =
+        tokio::spawn(async move { upgrade_server_backend(pk1, sk1, pf, backend_port).await });
 
     let _ = join.await;
 
@@ -187,14 +187,17 @@ async fn upgrade_server_backend(
     pk: EcdsaPublicKey,
     sk: EcdsaPrivateKey,
     peers: Vec<ValidatedPeer>,
+    backend_port: String,
 ) {
     let socket = any_udp_socket().await;
 
     for i in 0..2 * peers.len() {
         let port = peers[i % peers.len()].backend_port();
         let address = create_peer_address(port);
-        let message = "UPGRD".to_string();
-        let payload = create_p2p_message(pk.clone(), sk.clone(), &message);
+
+        let mut msg = "UPGRD".to_string();
+        msg.push_str(&backend_port);
+        let payload = create_p2p_message(pk.clone(), sk.clone(), &msg);
 
         let random_num = create_rnd_number(4, 10).try_into().unwrap();
         // sleep some random time between to not overflow the network
