@@ -171,15 +171,15 @@ pub fn calculate_fee(amount: u16) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testcommons::generate_keys_as_str;
+    use crate::testcommons::generate_keys_as_str_and_type;
     use serial_test::serial;
     use tokio_test::{assert_err, assert_ok};
 
     fn setup(amount_keys: u8) -> Replay {
-        let keys = generate_keys_as_str(amount_keys);
+        let keys = generate_keys_as_str_and_type(amount_keys);
         let mut rep = Replay::new();
-        for i in 0..keys.len() {
-            let p = Peer(keys[i].clone(), 0);
+        for i in 0..keys.0.len() {
+            let p = Peer(keys.0[i].clone(), 0);
             rep.cache.insert(i as u8, p);
         }
         rep

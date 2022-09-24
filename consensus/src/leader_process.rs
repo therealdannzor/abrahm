@@ -143,17 +143,17 @@ impl ValidatorProcess {
 mod tests {
     use super::*;
     use crate::state::State;
-    use crate::testcommons::generate_keys_as_str;
+    use crate::testcommons::generate_keys_as_str_and_type;
     use std::iter::Iterator;
     use themis::keygen;
 
     #[test]
     fn leader_rotation() {
-        let set = generate_keys_as_str(4);
+        let set = generate_keys_as_str_and_type(4);
 
         // Go through a full cycle of validators with changing phase at each new view
-        let mut vp = ValidatorProcess::new(set[0].clone(), set.clone());
-        assert_eq!(set[0], vp.primary());
+        let mut vp = ValidatorProcess::new(set.0[0].clone(), set.0.clone());
+        assert_eq!(set.0[0], vp.primary());
         assert_eq!(State::new(0), vp.phase());
         assert_eq!(0, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -161,7 +161,7 @@ mod tests {
         vp.inc_v();
         vp.next_primary();
         vp.phase.next();
-        assert_eq!(set[1], vp.primary());
+        assert_eq!(set.0[1], vp.primary());
         assert_eq!(State::new(1), vp.phase());
         assert_eq!(1, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -169,7 +169,7 @@ mod tests {
         vp.inc_v();
         vp.next_primary();
         vp.phase.next();
-        assert_eq!(set[2], vp.primary());
+        assert_eq!(set.0[2], vp.primary());
         assert_eq!(State::new(2), vp.phase());
         assert_eq!(2, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -177,7 +177,7 @@ mod tests {
         vp.inc_v();
         vp.next_primary();
         vp.phase.next();
-        assert_eq!(set[3], vp.primary());
+        assert_eq!(set.0[3], vp.primary());
         assert_eq!(State::new(3), vp.phase());
         assert_eq!(3, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -185,7 +185,7 @@ mod tests {
         vp.inc_v();
         vp.next_primary();
         vp.phase.next();
-        assert_eq!(set[0], vp.primary());
+        assert_eq!(set.0[0], vp.primary());
         assert_eq!(State::new(0), vp.phase());
         assert_eq!(4, vp.view());
         assert_eq!(true, vp.is_normal());
@@ -193,7 +193,7 @@ mod tests {
 
         // Process interrupted because primary did not respond
         vp.phase.enter_vc();
-        assert_eq!(set[0], vp.primary());
+        assert_eq!(set.0[0], vp.primary());
         assert_eq!(State::new(4), vp.phase());
         vp.phase.next();
         assert_eq!(State::new(5), vp.phase());
@@ -212,8 +212,8 @@ mod tests {
     #[test]
     #[should_panic]
     fn less_than_three_other_validators() {
-        let vals = generate_keys_as_str(2);
-        let local_id = vals[0].clone();
-        ValidatorProcess::new(local_id, vals);
+        let vals = generate_keys_as_str_and_type(2);
+        let local_id = vals.0[0].clone();
+        ValidatorProcess::new(local_id, vals.0);
     }
 }

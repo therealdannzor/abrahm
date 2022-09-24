@@ -612,7 +612,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testcommons::generate_keys_as_str;
+    use crate::testcommons::generate_keys_as_str_and_type;
     use crate::transition::{Transact, Transition};
     use themis::keys::EcdsaPublicKey;
     use tokio_test::{assert_err, assert_ok};
@@ -642,8 +642,8 @@ mod tests {
     }
 
     fn setup() -> Engine {
-        let keys = generate_keys_as_str(4);
-        Engine::new(keys[0].clone(), keys)
+        let keys = generate_keys_as_str_and_type(4);
+        Engine::new(keys.0[0].clone(), keys.0.clone())
     }
 
     #[test]

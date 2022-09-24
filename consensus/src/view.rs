@@ -273,7 +273,7 @@ impl NewViewMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testcommons::generate_keys_as_str;
+    use crate::testcommons::generate_keys_as_str_and_type;
     use std::iter::Map;
 
     const DIG: &str = "dig"; // digest
@@ -281,9 +281,13 @@ mod tests {
 
     fn create_quorum_checkpoints(faulty: u8, n: SequenceNumber, d: &str) -> Vec<CheckPoint> {
         let mut vcp: Vec<CheckPoint> = Vec::new();
-        let keys = generate_keys_as_str(2 * faulty + 1);
+        let keys = generate_keys_as_str_and_type(2 * faulty + 1);
         for i in 0..2 * faulty + 1 {
-            vcp.push(CheckPoint::new(keys[i as usize].clone(), n, d.to_string()));
+            vcp.push(CheckPoint::new(
+                keys.0[i as usize].clone(),
+                n,
+                d.to_string(),
+            ));
         }
         vcp
     }
