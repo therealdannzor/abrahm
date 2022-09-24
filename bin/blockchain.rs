@@ -208,12 +208,26 @@ mod tests {
     use crate::swiss_knife::helper;
     use serial_test::serial;
     use std::convert::TryFrom;
+    use themis::keys::{EcdsaPrivateKey, EcdsaPublicKey};
     use tokio::sync::mpsc::{channel, Receiver, Sender};
 
     macro_rules! hashed {
         ($x:expr) => {
             helper::generate_hash_from_input($x)
         };
+    }
+
+    async fn new_network(
+        vals: Vec<String>,
+        pk: EcdsaPublicKey,
+        sk: EcdsaPrivateKey,
+        tx: Sender<Networking>,
+        root_hash: String,
+    ) {
+        tokio::spawn(async move {
+            let n = start_listeners(pk, sk, vals, root_hash).await;
+            let _ = tx.send(n).await;
+        });
     }
 
     #[test]
@@ -264,37 +278,16 @@ mod tests {
 
         let (tx, mut rx): (Sender<Networking>, Receiver<Networking>) = mpsc::channel(8);
 
-        let v1 = vals.clone();
-        let rh1 = root_hash.clone();
-        let tx1 = tx.clone();
-        tokio::spawn(async move {
-            let n1 = start_listeners(pk1, sk1, v1, rh1).await;
-            let _ = tx1.send(n1).await;
-        });
+        new_network(vals.clone(), pk1, sk1, tx.clone(), root_hash.clone()).await;
         sleep_one_half_second().await;
-        let v2 = vals.clone();
-        let rh2 = root_hash.clone();
-        let tx2 = tx.clone();
-        tokio::spawn(async move {
-            let n2 = start_listeners(pk2, sk2, v2, rh2.clone()).await;
-            let _ = tx2.send(n2).await;
-        });
+
+        new_network(vals.clone(), pk2, sk2, tx.clone(), root_hash.clone()).await;
         sleep_one_half_second().await;
-        let v3 = vals.clone();
-        let rh3 = root_hash.clone();
-        let tx3 = tx.clone();
-        tokio::spawn(async move {
-            let n3 = start_listeners(pk3, sk3, v3, rh3).await;
-            let _ = tx3.send(n3).await;
-        });
+
+        new_network(vals.clone(), pk3, sk3, tx.clone(), root_hash.clone()).await;
         sleep_one_half_second().await;
-        let v4 = vals.clone();
-        let rh4 = root_hash.clone();
-        let tx4 = tx.clone();
-        tokio::spawn(async move {
-            let n4 = start_listeners(pk4, sk4, v4, rh4).await;
-            let _ = tx4.send(n4).await;
-        });
+
+        new_network(vals.clone(), pk4, sk4, tx.clone(), root_hash.clone()).await;
 
         let mut handlers: Vec<Networking> = Vec::new();
         while let Some(msg) = rx.recv().await {
